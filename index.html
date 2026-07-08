@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="id" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMP IT Hidayatul Mubtadi-ien Compreng</title>
+    
+    <!-- Favicon Logo Sekolah -->
+    <link rel="icon" href="https://www.e-ujian.com/smpithm/logo">
+    
+    <!-- Tailwind CSS (via CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome untuk Ikon -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+    <!-- Konfigurasi Warna Sesuai Profil Sekolah -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Poppins', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: '#2a2c87',   // Biru Laut
+                        accent: '#85c226',    // Hijau Muda
+                        bgSoft: '#daffcc',    // Hijau Transparan/Background
+                        white: '#ffffff',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* CSS Custom untuk efek Parallax dan transisi */
+        .parallax {
+            background-attachment: fixed;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: cover;
+        }
+
+        /* Navbar Styles */
+        .glass-nav {
+            background: rgba(255, 255, 255, 0.80);
+            backdrop-filter: blur(25px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .transparent-nav {
+            background: transparent;
+            box-shadow: none;
+        }
+
+        /* Logic Pewarnaan Text Navbar (Initial vs Scrolled) */
+        
+        /* Kondisi Transparan (Awal) */
+        .transparent-nav .nav-item {
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.6); /* Bayangan agar terbaca */
+        }
+        
+        .transparent-nav .brand-text {
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.6);
+        }
+
+        /* Kondisi Scrolled (Putih) */
+        .glass-nav .nav-item {
+            color: #374151; /* Gray-700 */
+        }
+        
+        .glass-nav .brand-text-main {
+            color: #2a2c87; /* Primary */
+        }
+        .glass-nav .brand-text-sub {
+            color: #4b5563; /* Gray-600 */
+        }
+
+        /* Hover Effect (Berlaku di kedua kondisi) */
+        .nav-item:hover {
+            color: #85c226 !important; /* Accent Color */
+        }
+        
+        /* Animasi scroll reveal */
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+        
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        /* Skeleton Loading untuk Gambar */
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+        }
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <!-- NAVBAR -->
+    <nav id="navbar" class="fixed w-full z-50 transition-all duration-300 transparent-nav py-4">
+        <div class="container mx-auto px-6 flex justify-between items-center">
+            <!-- Logo Brand -->
+            <a href="#" class="flex items-center gap-3 group">
+                <!-- Logo Image -->
+                <img src="https://www.e-ujian.com/smpithm/logo" alt="Logo SMP IT" class="w-12 h-12 object-contain filter drop-shadow-md">
+                
+                <div class="flex flex-col">
+                    <span class="brand-text brand-text-main text-lg font-bold transition-colors leading-tight tracking-wide">SMP IT</span>
+                    <span class="brand-text brand-text-sub text-sm font-semibold transition-colors leading-tight">Hidayatul Mubtadi-ien</span>
+                </div>
+            </a>
+
+            <!-- Desktop Menu Container -->
+            <div class="hidden md:flex items-center gap-6">
+                <!-- Links -->
+                <div class="flex space-x-8 font-medium">
+                    <a href="#hero-section" class="nav-item transition duration-300">Beranda</a>
+                    <a href="#profil" class="nav-item transition duration-300">Profil</a>
+                    <a href="#akademik" class="nav-item transition duration-300">Akademik</a>
+                    <a href="#ppdb" class="nav-item transition duration-300">PPDB</a>
+                    <a href="#kontak" class="nav-item transition duration-300">Kontak</a>
+                </div>
+
+                <!-- Dynamic Auth Button (Desktop) -->
+                <!-- Default State: Login/Daftar (akan diubah JS jika login) -->
+                <a id="nav-auth-btn" href="login-siswa.html" class="bg-accent hover:bg-green-600 text-white px-5 py-2 rounded-full font-bold transition transform hover:scale-105 shadow-md text-sm flex items-center gap-2">
+                    <i class="fas fa-sign-in-alt"></i> <span>Login / Daftar</span>
+                </a>
+            </div>
+
+            <!-- Mobile Menu Button -->
+            <button id="mobile-menu-btn" class="md:hidden text-2xl focus:outline-none text-white transition-colors drop-shadow-md">
+                <i class="fas fa-bars"></i>
+            </button>
+        </div>
+
+        <!-- Mobile Menu Dropdown -->
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t mt-4 shadow-lg absolute w-full text-gray-800">
+            <a href="#hero-section" class="block py-3 px-6 hover:bg-bgSoft hover:text-accent">Beranda</a>
+            <a href="#profil" class="block py-3 px-6 hover:bg-bgSoft hover:text-accent">Profil</a>
+            <a href="#akademik" class="block py-3 px-6 hover:bg-bgSoft hover:text-accent">Akademik</a>
+            <a href="#ppdb" class="block py-3 px-6 hover:bg-bgSoft hover:text-accent">PPDB</a>
+            <a href="#kontak" class="block py-3 px-6 hover:bg-bgSoft hover:text-accent">Kontak</a>
+            
+            <!-- Dynamic Auth Button (Mobile) -->
+            <div class="border-t border-gray-100 p-4">
+                <a id="mobile-auth-btn" href="login-siswa.html" class="block text-center bg-primary text-white py-3 rounded-lg font-bold hover:bg-blue-900 transition">
+                    Login / Daftar
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO SECTION (Parallax) -->
+    <section id="hero-section" class="relative h-screen flex items-center justify-center parallax text-center px-4" 
+             style="background-image: linear-gradient(rgba(42, 44, 135, 0.9), rgba(133, 194, 38, 0.8));">
+        <div class="relative z-10 text-white max-w-4xl pt-20"> 
+            <span class="bg-accent px-3 py-1 rounded-full text-sm font-bold tracking-wide mb-4 inline-block uppercase animate-bounce shadow-lg">
+                NPSN: 70004822
+            </span>
+            <h1 class="text-4xl md:text-6xl font-bold mb-4 drop-shadow-lg">
+                SMP IT <br> Hidayatul Mubtadi-ien
+            </h1>
+            <p class="text-xl md:text-2xl font-light mb-8 italic drop-shadow-md">
+                "Mengaji - Berprestasi - Berakhlaq Terpuji"
+            </p>
+            <div class="flex flex-col md:flex-row gap-4 justify-center">
+                <a href="pendaftaran-siswa.html" class="bg-accent hover:bg-green-600 text-white px-8 py-3 rounded-full font-bold transition transform hover:scale-105 shadow-lg border border-transparent">
+                    Daftar Sekarang
+                </a>
+                <a href="#profil" class="bg-transparent border-2 border-white hover:bg-white hover:text-primary text-white px-8 py-3 rounded-full font-bold transition shadow-lg">
+                    Tentang Kami
+                </a>
+            </div>
+        </div>
+        
+        <!-- Wave Divider -->
+        <div class="absolute bottom-0 left-0 w-full overflow-hidden leading-none">
+            <svg class="relative block w-full h-[100px] md:h-[150px]" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 320" preserveAspectRatio="none">
+                <path fill="#daffcc" fill-opacity="1" d="M0,192L48,202.7C96,213,192,235,288,229.3C384,224,480,192,576,170.7C672,149,768,139,864,154.7C960,171,1056,213,1152,218.7C1248,224,1344,192,1392,176L1440,160V320H1392C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320H0Z"></path>
+            </svg>
+        </div>
+    </section>
+
+    <!-- PROFIL SEKOLAH -->
+    <section id="profil" class="py-20 bg-bgSoft">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16 reveal">
+                <h2 class="text-3xl font-bold text-primary mb-2">Profil Sekolah</h2>
+                <div class="w-20 h-1 bg-accent mx-auto rounded"></div>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-12 items-center mb-16">
+                <div class="reveal">
+                    <!-- Placeholder Image -->
+                    <img id="profil-img" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="Kegiatan Belajar" class="rounded-lg shadow-xl hover:shadow-2xl transition duration-300 w-full h-80 object-cover skeleton bg-gray-300">
+                </div>
+                <div class="reveal">
+                    <h3 class="text-2xl font-bold text-primary mb-4">Sejarah Singkat</h3>
+                    <p class="text-gray-700 leading-relaxed mb-6">
+                        Didirikan pada tahun 2019 oleh Ust. Ahmad Nurudin atas keprihatinan sahabatnya, Ust. Ahmad Syathori, terhadap anak-anak lulusan SD yang belum mampu membaca Al-Qur'an. 
+                    </p>
+                    <p class="text-gray-700 leading-relaxed">
+                        Sejak awal, sekolah ini berfokus pada pendidikan Islam berbasis pesantren, agar siswa tidak malu belajar agama dari nol. Sekolah berkembang pesat dari hanya 12 siswa (2019) menjadi 114 siswa total saat ini.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Visi Misi Cards -->
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="bg-white p-8 rounded-xl shadow-lg hover:-translate-y-2 transition duration-300 border-t-4 border-primary reveal">
+                    <div class="text-accent text-4xl mb-4"><i class="fas fa-eye"></i></div>
+                    <h3 class="text-xl font-bold text-primary mb-3">Visi</h3>
+                    <p class="text-gray-600">Terwujudnya Lembaga Pendidikan yang membentuk generasi berkepribadian islami dan berprestasi.</p>
+                </div>
+                <div class="bg-white p-8 rounded-xl shadow-lg hover:-translate-y-2 transition duration-300 border-t-4 border-accent reveal col-span-2">
+                    <div class="text-primary text-4xl mb-4"><i class="fas fa-bullseye"></i></div>
+                    <h3 class="text-xl font-bold text-primary mb-3">Misi Utama</h3>
+                    <ul class="space-y-2 text-gray-600">
+                        <li class="flex items-start"><i class="fas fa-check-circle text-accent mt-1 mr-2"></i> Melaksanakan Pembelajaran Al-Qur'an yang terpadu.</li>
+                        <li class="flex items-start"><i class="fas fa-check-circle text-accent mt-1 mr-2"></i> Membentuk manusia yang berkarakter Islami.</li>
+                        <li class="flex items-start"><i class="fas fa-check-circle text-accent mt-1 mr-2"></i> Mengembangkan aspek fikriyah, ruhiyah, dan jasadiyah secara seimbang.</li>
+                        <li class="flex items-start"><i class="fas fa-check-circle text-accent mt-1 mr-2"></i> Pembelajaran menyenangkan, efektif, dan islami.</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <!-- Kepala Sekolah -->
+             <div class="mt-16 bg-white rounded-2xl shadow-xl overflow-hidden reveal">
+                <div class="md:flex">
+                    <div class="md:shrink-0">
+                        <img class="h-48 w-full object-cover md:h-full md:w-48 bg-gray-200" src="https://ui-avatars.com/api/?name=Abdul+Manaf&background=2a2c87&color=fff" alt="Kepala Sekolah">
+                    </div>
+                    <div class="p-8">
+                        <div class="uppercase tracking-wide text-sm text-accent font-semibold">Kepala Sekolah</div>
+                        <h2 class="block mt-1 text-lg leading-tight font-medium text-black">Abdul Manaf, S.Pd.</h2>
+                        <p class="mt-2 text-gray-500">"Pemimpin dengan latar belakang pesantren salaf yang memiliki semangat tinggi dalam pengembangan pendidikan Islam modern."</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- AKADEMIK & PROGRAM -->
+    <section id="akademik" class="py-20 bg-white">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16 reveal">
+                <h2 class="text-3xl font-bold text-primary mb-2">Akademik & Program Unggulan</h2>
+                <div class="w-20 h-1 bg-accent mx-auto rounded mb-4"></div>
+                <p class="text-gray-600 max-w-2xl mx-auto">Kurikulum Merdeka dengan penguatan nilai-nilai pesantren, Al-Qur'an, dan Kitab Salaf.</p>
+            </div>
+
+            <div class="grid md:grid-cols-4 gap-6">
+                <!-- Card 1 -->
+                <div class="bg-gray-50 p-6 rounded-lg text-center hover:bg-primary hover:text-white group transition duration-300 reveal">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-white">
+                        <i class="fas fa-quran text-2xl text-primary"></i>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Tartil Al-Qur'an</h3>
+                    <p class="text-sm opacity-80">Target kelulusan khatam Al-Qur'an dengan bacaan yang fasih.</p>
+                </div>
+                <!-- Card 2 -->
+                <div class="bg-gray-50 p-6 rounded-lg text-center hover:bg-primary hover:text-white group transition duration-300 reveal">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-white">
+                        <i class="fas fa-laptop-code text-2xl text-primary"></i>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Informatika & AI</h3>
+                    <p class="text-sm opacity-80">Multimedia, Canva, Pemrograman Dasar, dan Pengenalan AI.</p>
+                </div>
+                <!-- Card 3 -->
+                <div class="bg-gray-50 p-6 rounded-lg text-center hover:bg-primary hover:text-white group transition duration-300 reveal">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-white">
+                        <i class="fas fa-book-open text-2xl text-primary"></i>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Kitab Kuning</h3>
+                    <p class="text-sm opacity-80">Mempelajari Nahwu Shorof (Jurumiyah), Taisirul Kholaq, & Mabadiul Fiqih.</p>
+                </div>
+                <!-- Card 4 -->
+                <div class="bg-gray-50 p-6 rounded-lg text-center hover:bg-primary hover:text-white group transition duration-300 reveal">
+                    <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-white">
+                        <i class="fas fa-film text-2xl text-primary"></i>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Filmaking</h3>
+                    <p class="text-sm opacity-80">Proyek khusus kelas 9 untuk mengembangkan kreativitas digital.</p>
+                </div>
+            </div>
+
+            <!-- Ekstrakurikuler -->
+            <div class="mt-16 bg-primary rounded-2xl p-8 md:p-12 text-white relative overflow-hidden reveal">
+                <!-- Decorative Circles -->
+                <div class="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 rounded-full bg-accent opacity-20"></div>
+                <div class="relative z-10 grid md:grid-cols-2 gap-8 items-center">
+                    <div>
+                        <h3 class="text-2xl font-bold mb-4">Kegiatan Ekstrakurikuler</h3>
+                        <p class="mb-6 opacity-90">Kami menyeimbangkan akademik dengan kegiatan positif untuk membangun karakter siswa.</p>
+                        <ul class="space-y-3">
+                            <li class="flex items-center"><i class="fas fa-star text-accent mr-3"></i> OSIS (Aktif sejak 2023)</li>
+                            <li class="flex items-center"><i class="fas fa-campground text-accent mr-3"></i> Pramuka (Gema Pramuka Juara Umum)</li>
+                            <li class="flex items-center"><i class="fas fa-drum text-accent mr-3"></i> Hadroh (Seni Musik Islam)</li>
+                            <li class="flex items-center"><i class="fas fa-running text-accent mr-3"></i> Senam Bersama & Olahraga</li>
+                        </ul>
+                    </div>
+                    <div class="text-center md:text-right">
+                        <div class="inline-block bg-white/10 backdrop-blur p-6 rounded-xl border border-white/20">
+                            <h4 class="text-4xl font-bold text-accent mb-2">6+ Piala</h4>
+                            <p>Diraih pada Gema Pramuka 2023 & 2024</p>
+                            <p class="text-sm mt-2 opacity-75">(Juara 1, 2, dan 3)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- STATISTIK SISWA -->
+    <section class="py-16 bg-accent/10 relative parallax" style="background-image: url('https://images.unsplash.com/photo-1577896337627-8013880e9819?ixlib=rb-1.2.1&auto=format&fit=crop&w=1950&q=80');">
+        <div class="absolute inset-0 bg-primary/80"></div>
+        <div class="container mx-auto px-6 relative z-10 text-center text-white">
+            <h2 class="text-3xl font-bold mb-12">Pertumbuhan Siswa Pesat</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
+                <div class="reveal">
+                    <div class="text-5xl font-bold text-accent mb-2">12</div>
+                    <div class="text-sm uppercase tracking-wide">Siswa Awal (2019)</div>
+                </div>
+                <div class="reveal">
+                    <div class="text-5xl font-bold text-accent mb-2">114</div>
+                    <div class="text-sm uppercase tracking-wide">Total Siswa Saat Ini</div>
+                </div>
+                <div class="reveal">
+                    <div class="text-5xl font-bold text-accent mb-2">39</div>
+                    <div class="text-sm uppercase tracking-wide">Siswa Baru 2024</div>
+                </div>
+                <div class="reveal">
+                    <div class="text-5xl font-bold text-accent mb-2">7</div>
+                    <div class="text-sm uppercase tracking-wide">Guru Mengaji</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- PPDB -->
+    <section id="ppdb" class="py-20 bg-white">
+        <div class="container mx-auto px-6">
+            <div class="grid md:grid-cols-2 gap-16 items-start">
+                <div class="reveal">
+                    <h2 class="text-3xl font-bold text-primary mb-6">Penerimaan Peserta Didik Baru</h2>
+                    <p class="text-gray-600 mb-6">Bergabunglah bersama kami untuk mencetak generasi Qur'ani yang berprestasi dan berteknologi.</p>
+                    
+                    <div class="bg-bgSoft p-6 rounded-lg border-l-4 border-accent mb-6">
+                        <h4 class="font-bold text-primary mb-2">Jadwal Pendaftaran (2026/2027)</h4>
+                        <p class="text-gray-700">Januari - Juni 2027</p>
+                    </div>
+
+                    <h4 class="font-bold text-lg mb-4 text-primary">Syarat Pendaftaran:</h4>
+                    <ul class="space-y-2 text-gray-600 mb-8">
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i> Ijazah SD/MI</li>
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i> Fotokopi KK & Akta Lahir</li>
+                        <li class="flex items-center"><i class="fas fa-check text-green-500 mr-2"></i> Pas Foto</li>
+                    </ul>
+
+                    <a href="https://wa.me/6282130769848" target="_blank" class="inline-block bg-primary text-white px-8 py-3 rounded-lg font-bold hover:bg-blue-900 transition shadow-lg">
+                        <i class="fab fa-whatsapp mr-2"></i> Hubungi Panitia
+                    </a>
+                </div>
+
+                <!-- Kartu Biaya -->
+                <div class="bg-white rounded-2xl shadow-2xl p-8 border border-gray-100 reveal relative">
+                    <div class="absolute top-0 right-0 bg-accent text-white px-4 py-1 rounded-bl-lg rounded-tr-lg font-bold text-sm">SPP GRATIS</div>
+                    <h3 class="text-2xl font-bold text-primary mb-4 text-center">Biaya PPM</h3>
+                    <p class="text-center text-gray-500 text-sm mb-6">Pembayaran Pengembangan Mutu (Dapat Dicicil)</p>
+                    
+                    <div class="space-y-4">
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span class="font-semibold text-gray-700">Kelas 7</span>
+                            <span class="font-bold text-primary text-xl">Rp 1.000.000</span>
+                        </div>
+                        <div class="flex justify-between items-center border-b pb-2">
+                            <span class="font-semibold text-gray-700">Kelas 8</span>
+                            <span class="font-bold text-primary text-xl">Rp 500.000</span>
+                        </div>
+                        <div class="flex justify-between items-center pb-2">
+                            <span class="font-semibold text-gray-700">Kelas 9</span>
+                            <span class="font-bold text-primary text-xl">Rp 1.000.000</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-8 bg-blue-50 p-4 rounded text-center text-sm text-gray-600">
+                        <p>Pembayaran via Transfer Bank / QRIS</p>
+                        <p class="mt-1">Tersedia layanan Login Siswa/Wali untuk cek pembayaran & raport digital.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Benefit & Alokasi Dana PPM -->
+            <div class="mt-20 reveal border-t border-gray-100 pt-16">
+                <h3 class="text-2xl font-bold text-center text-primary mb-4">Fasilitas & Alokasi Dana PPM</h3>
+                <div class="w-20 h-1 bg-accent mx-auto rounded mb-8"></div>
+                <p class="text-center text-gray-600 max-w-3xl mx-auto mb-12">
+                    Biaya Pengembangan Mutu (PPM) yang Anda bayarkan mencakup berbagai fasilitas, kegiatan, dan atribut penunjang pendidikan siswa selama 3 tahun, meliputi:
+                </p>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    <!-- Daftar Benefit -->
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-user-plus"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">PPDB</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-sync"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Daftar Ulang</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-money-bill-wave"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">SDP</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-users"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">MPLS</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-accent mb-3">
+                            <i class="fas fa-tshirt"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Atribut Sekolah</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-accent mb-3">
+                            <i class="fas fa-handshake"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Meeting Class</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-accent mb-3">
+                            <i class="fas fa-user-tie"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Jas Almamater</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-accent mb-3">
+                            <i class="fas fa-running"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Kaos Olahraga</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-edit"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Ujian Semester</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-book-quran"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Kitab Pelajaran</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 mb-3">
+                            <i class="fas fa-mosque"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">PHBI</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-3">
+                            <i class="fas fa-flag"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">PHBN</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-file-alt"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Sampul Raport</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-accent mb-3">
+                            <i class="fas fa-futbol"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Ekstrakurikuler</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center text-red-600 mb-3">
+                            <i class="fas fa-heartbeat"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">UKS</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-graduation-cap"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Akhirussanah</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-certificate"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Sampul Ijazah</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-file-signature"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Ujian Kelulusan</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600 mb-3">
+                            <i class="fas fa-book-reader"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">Zarkasi</span>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-xl flex flex-col items-center hover:bg-white hover:shadow-md transition duration-300 border border-transparent hover:border-gray-100">
+                        <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-primary mb-3">
+                            <i class="fas fa-laptop"></i>
+                        </div>
+                        <span class="text-sm font-semibold text-center text-gray-700">ANBK</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- GALERI GRID -->
+    <!-- Diberi ID 'home-gallery-container' untuk diisi via JS -->
+    <section class="py-20 bg-gray-50">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold text-primary">Galeri Kegiatan</h2>
+            </div>
+            
+            <div id="home-gallery-container" class="grid grid-cols-2 md:grid-cols-4 gap-4 auto-rows-[200px] mb-8">
+                <!-- Placeholder akan ditimpa oleh JS -->
+                 <div class="col-span-2 row-span-2 rounded-xl overflow-hidden shadow-lg group bg-gray-200 skeleton"></div>
+                 <div class="rounded-xl overflow-hidden shadow-lg group bg-gray-200 skeleton"></div>
+                 <div class="rounded-xl overflow-hidden shadow-lg group bg-gray-200 skeleton"></div>
+                 <div class="rounded-xl overflow-hidden shadow-lg group bg-gray-200 skeleton"></div>
+                 <div class="rounded-xl overflow-hidden shadow-lg group bg-gray-200 skeleton"></div>
+            </div>
+            
+            <!-- Tombol Lihat Semua Galeri -->
+            <div class="text-center reveal">
+                <a href="galeri.html" class="inline-block border-2 border-primary text-primary hover:bg-primary hover:text-white px-8 py-3 rounded-full font-bold transition duration-300">
+                    Lihat Semua Galeri <i class="fas fa-arrow-right ml-2"></i>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER & KONTAK -->
+    <footer id="kontak" class="bg-primary text-white pt-16 pb-8">
+        <div class="container mx-auto px-6">
+            <div class="grid md:grid-cols-3 gap-12 mb-12">
+                <!-- Kolom 1: Alamat -->
+                <div>
+                    <h3 class="text-xl font-bold mb-4 text-accent">Lokasi Kampus</h3>
+                    <p class="leading-relaxed opacity-80 mb-4">
+                        Gang Yayasan, Dusun Sukaseneng RT 026 RW 010 <br>
+                        Desa Compreng, Kec. Compreng <br>
+                        Kabupaten Subang - 41258
+                    </p>
+                    <a href="https://maps.app.goo.gl/HJLWMjkeyqt7K4Ki7" target="_blank" class="text-accent hover:text-white underline text-sm">
+                        Lihat di Google Maps <i class="fas fa-external-link-alt ml-1"></i>
+                    </a>
+                </div>
+
+                <!-- Kolom 2: Kontak -->
+                <div>
+                    <h3 class="text-xl font-bold mb-4 text-accent">Hubungi Kami</h3>
+                    <ul class="space-y-3">
+                        <li class="flex items-center gap-3">
+                            <i class="fab fa-whatsapp w-6"></i> 
+                            <a href="https://wa.me/6282130772123" target="_blank" class="hover:text-accent">Admin: +62 821-3077-2123</a>
+                        </li>
+                        <li class="flex items-center gap-3">
+                            <i class="fas fa-envelope w-6"></i> smpit.mubtadihidayatul58@gmail.com
+                        </li>
+                        <li class="flex items-center gap-3">
+                            <i class="fas fa-user-tie w-6"></i> 
+                            <a href="http://wa.me/6285321732223" target="_blank" class="hover:text-accent"> Kepsek: +62 853-2173-2223</a>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Kolom 3: Sosmed & Links -->
+                <div>
+                    <h3 class="text-xl font-bold mb-4 text-accent">Ikuti Kami</h3>
+                    <div class="flex space-x-4 mb-6">
+                        <a href="https://www.instagram.com/smp.it_hm/" class="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-accent transition">
+                            <i class="fab fa-instagram text-xl"></i>
+                        </a>
+                        <a href="https://www.youtube.com/@YPIHidayatulMubtadi-ien" class="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-red-600 transition">
+                            <i class="fab fa-youtube text-xl"></i>
+                        </a>
+                        <a href="https://web.facebook.com/profile.php?id=100063489356545" class="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center hover:bg-blue-600 transition">
+                            <i class="fab fa-facebook-f text-xl"></i>
+                        </a>
+                    </div>
+                    <div class="mt-4">
+                        <p class="font-bold text-sm mb-2">Layanan Digital:</p>
+                        <div class="flex gap-2">
+                            <!-- Tombol Login Guru sekarang mengarah ke login-guru.html -->
+                            <a href="login-guru.html" class="bg-accent text-primary px-3 py-1 rounded text-sm font-bold hover:bg-white inline-block text-center">Login Guru</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Copyright -->
+            <div class="border-t border-white/20 pt-8 text-center text-sm opacity-60">
+                <p>&copy; 2026 SMP IT Hidayatul Mubtadi-ien Compreng. All Rights Reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+        // 1. Navbar Scroll Effect
+        const navbar = document.getElementById('navbar');
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                navbar.classList.remove('transparent-nav', 'py-4');
+                navbar.classList.add('glass-nav', 'py-2');
+                mobileMenuBtn.classList.remove('text-white');
+                mobileMenuBtn.classList.add('text-primary');
+            } else {
+                navbar.classList.add('transparent-nav', 'py-4');
+                navbar.classList.remove('glass-nav', 'py-2');
+                mobileMenuBtn.classList.add('text-white');
+                mobileMenuBtn.classList.remove('text-primary');
+            }
+        });
+
+        // 2. Mobile Menu Toggle
+        const mobileMenu = document.getElementById('mobile-menu');
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // 3. Scroll Reveal Animation
+        function reveal() {
+            var reveals = document.querySelectorAll(".reveal");
+            for (var i = 0; i < reveals.length; i++) {
+                var windowHeight = window.innerHeight;
+                var elementTop = reveals[i].getBoundingClientRect().top;
+                var elementVisible = 150;
+                if (elementTop < windowHeight - elementVisible) {
+                    reveals[i].classList.add("active");
+                }
+            }
+        }
+        window.addEventListener("scroll", reveal);
+        reveal();
+
+        // 4. LOGIC AMBIL GAMBAR DARI DRIVE (LANDING PAGE ASSETS)
+        // URL SCRIPT ANDA (Pastikan update jika deploy baru)
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw7eSoHxYApJJ8ht18mWXHHl_ZOcb7BteVgUp5xb-348wS0GX5rQWqackypGsPKDcKR-w/exec'; 
+
+        async function fetchLandingAssets() {
+            try {
+                // Request dengan parameter type=landing
+                const response = await fetch(SCRIPT_URL + '?type=landing');
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    const data = result.data;
+
+                    // A. Update Hero Section (Bagian Judul)
+                    if (data.hero) {
+                        const heroSection = document.getElementById('hero-section');
+                        // Gunakan gradien yang sama tapi ganti URL gambarnya
+                        heroSection.style.backgroundImage = `linear-gradient(rgba(42, 44, 135, 0.6), rgba(133, 194, 38, 0.5)), url('${data.hero}')`;
+                    }
+
+                    // B. Update Foto Profil (Bagian Tentang)
+                    if (data.profil) {
+                        const profilImg = document.getElementById('profil-img');
+                        profilImg.src = data.profil;
+                        profilImg.classList.remove('skeleton'); // Hapus efek loading
+                    }
+
+                    // C. Update Galeri Depan (Bagian Galeri)
+                    if (data.galeri && data.galeri.length > 0) {
+                        const galleryContainer = document.getElementById('home-gallery-container');
+                        let htmlContent = '';
+
+                        // Kita butuh minimal 5 foto untuk layout grid yang bagus
+                        // Grid Layout: 
+                        // Item 1: Col-span-2 Row-span-2 (Besar)
+                        // Item 2-5: Biasa
+
+                        data.galeri.forEach((img, index) => {
+                            let cssClass = "";
+                            if (index === 0) {
+                                cssClass = "col-span-2 row-span-2"; // Foto pertama jadi besar
+                            }
+                            
+                            htmlContent += `
+                                <div class="${cssClass} rounded-xl overflow-hidden shadow-lg group reveal">
+                                    <img src="${img.url}" alt="Kegiatan ${index + 1}" class="w-full h-full object-cover group-hover:scale-110 transition duration-500">
+                                </div>
+                            `;
+                        });
+                        
+                        galleryContainer.innerHTML = htmlContent;
+                    }
+                }
+            } catch (error) {
+                console.error("Gagal mengambil aset landing page:", error);
+            }
+        }
+
+        // Jalankan fetch saat halaman dimuat
+        fetchLandingAssets();
+
+        // 5. Logic Tombol Auth Navbar (Baru)
+        function convertToDirectLink(url) {
+            if (!url) return "";
+            if (url.includes('drive.google.com')) {
+                let match = url.match(/\/d\/(.+?)(\/|$)/);
+                if (match) return "https://lh3.googleusercontent.com/d/" + match[1];
+                match = url.match(/id=(.+?)($|&)/);
+                if (match) return "https://lh3.googleusercontent.com/d/" + match[1];
+            }
+            return url;
+        }
+
+        function checkAuthStatus() {
+            const navBtn = document.getElementById('nav-auth-btn');
+            const mobileBtn = document.getElementById('mobile-auth-btn');
+            
+            // Cek session Guru dan Siswa
+            const guruSession = localStorage.getItem('user_guru');
+            const siswaSession = localStorage.getItem('user_siswa');
+
+            if (guruSession) {
+                // Jika Guru Login
+                try {
+                    const userData = JSON.parse(guruSession);
+                    const nama = userData.nama || 'Guru';
+                    const fotoUrl = (userData.foto && userData.foto.length > 10 && !userData.foto.includes('Tidak ada'))
+                        ? convertToDirectLink(userData.foto)
+                        : `https://ui-avatars.com/api/?name=${encodeURIComponent(nama)}&background=85c226&color=fff&size=64`;
+
+                    if(navBtn) {
+                        navBtn.href = 'dashboard-guru.html';
+                        navBtn.innerHTML = `<img src="${fotoUrl}" alt="Foto" class="w-7 h-7 rounded-full object-cover border-2 border-white/50" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(nama)}&background=85c226&color=fff&size=64'"> <span>${nama.split(' ')[0]}</span>`;
+                        navBtn.classList.remove('bg-accent');
+                        navBtn.classList.add('bg-primary');
+                    }
+                    if(mobileBtn) {
+                        mobileBtn.href = 'dashboard-guru.html';
+                        mobileBtn.innerHTML = `<img src="${fotoUrl}" alt="Foto" class="w-6 h-6 rounded-full object-cover inline-block mr-2 border border-white/50" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(nama)}&background=85c226&color=fff&size=64'"> Dashboard Guru`;
+                        mobileBtn.classList.remove('bg-primary');
+                        mobileBtn.classList.add('bg-accent');
+                    }
+                } catch(e) {
+                    if(navBtn) {
+                        navBtn.href = 'dashboard-guru.html';
+                        navBtn.innerHTML = '<i class="fas fa-tachometer-alt"></i> <span>Dashboard Guru</span>';
+                        navBtn.classList.remove('bg-accent');
+                        navBtn.classList.add('bg-primary');
+                    }
+                }
+            } else if (siswaSession) {
+                // Jika Siswa Login
+                try {
+                    const siswaData = JSON.parse(siswaSession);
+                    const namaSiswa = siswaData.nama || siswaData.nama_siswa || 'Siswa';
+                    if(navBtn) {
+                        navBtn.href = 'dashboard-siswa.html';
+                        navBtn.innerHTML = `<i class="fas fa-user-graduate"></i> <span>${namaSiswa.split(' ')[0]}</span>`;
+                        navBtn.classList.remove('bg-accent');
+                        navBtn.classList.add('bg-primary');
+                    }
+                    if(mobileBtn) {
+                        mobileBtn.href = 'dashboard-siswa.html';
+                        mobileBtn.textContent = 'Dashboard Siswa';
+                        mobileBtn.classList.remove('bg-primary');
+                        mobileBtn.classList.add('bg-accent');
+                    }
+                } catch(e) {
+                    if(navBtn) {
+                        navBtn.href = 'dashboard-siswa.html';
+                        navBtn.innerHTML = '<i class="fas fa-user-graduate"></i> <span>Dashboard Siswa</span>';
+                        navBtn.classList.remove('bg-accent');
+                        navBtn.classList.add('bg-primary');
+                    }
+                }
+            }
+        }
+        
+        // Jalankan cek auth saat load
+        checkAuthStatus();
+
+    </script>
+</body>
+</html>

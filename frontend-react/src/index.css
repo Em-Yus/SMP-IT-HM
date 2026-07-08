@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+@layer utilities {
+  .scrollbar-custom::-webkit-scrollbar {
+    width: 6px;
+  }
+  .scrollbar-custom::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-custom::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+  }
+  .scrollbar-custom::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+  }
+}
+
+/* CSS Custom untuk efek Parallax dan transisi (Landing Page) */
+.parallax {
+  background-attachment: fixed;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+.glass-nav {
+  background: rgba(255, 255, 255, 0.80);
+  backdrop-filter: blur(25px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+.transparent-nav {
+  background: transparent;
+  box-shadow: none;
+}
+.transparent-nav .nav-item, .transparent-nav .brand-text {
+  color: #ffffff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.6);
+}
+.glass-nav .nav-item {
+  color: #374151;
+}
+.glass-nav .brand-text-main {
+  color: #2a2c87;
+}
+.glass-nav .brand-text-sub {
+  color: #4b5563;
+}
+.nav-item:hover {
+  color: #85c226 !important;
+}
+.reveal { opacity: 0; transform: translateY(30px); transition: all 0.8s cubic-bezier(0.17, 0.55, 0.55, 1); }
+.reveal-left { opacity: 0; transform: translateX(-50px); transition: all 0.8s cubic-bezier(0.17, 0.55, 0.55, 1); }
+.reveal-right { opacity: 0; transform: translateX(50px); transition: all 0.8s cubic-bezier(0.17, 0.55, 0.55, 1); }
+.reveal-scale { opacity: 0; transform: scale(0.9); transition: all 0.8s cubic-bezier(0.17, 0.55, 0.55, 1); }
+.reveal.active, .reveal-left.active, .reveal-right.active, .reveal-scale.active {
+  opacity: 1; transform: translate(0, 0) scale(1);
+}
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-15px); }
+  100% { transform: translateY(0px); }
+}
+.float-anim { animation: float 4s ease-in-out infinite; }
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(-45deg, rgba(42, 44, 135, 0.6), rgba(30, 58, 138, 0.5), rgba(133, 194, 38, 0.5), rgba(101, 163, 13, 0.4));
+  background-size: 400% 400%;
+  animation: gradientShift 15s ease infinite;
+  z-index: 1;
+}
+.hover-glow:hover { box-shadow: 0 0 20px rgba(133, 194, 38, 0.4); }
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s infinite;
+}
+@keyframes loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
