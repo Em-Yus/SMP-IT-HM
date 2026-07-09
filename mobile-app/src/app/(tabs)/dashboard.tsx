@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Animatable from 'react-native-animatable';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -56,7 +57,11 @@ export default function DashboardScreen() {
       } else {
         setIsNotificationDenied(false);
       }
-      token = (await Notifications.getExpoPushTokenAsync({ projectId: 'your-project-id' })).data;
+      const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+      if (!projectId) {
+        console.warn('Project ID not found in app.json');
+      }
+      token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     }
     return token;
   };
@@ -64,10 +69,13 @@ export default function DashboardScreen() {
   const registerPushToken = async (userNipd: string) => {
     const token = await registerForPushNotificationsAsync();
     if (token && userNipd) {
-      // Simpan token ke Supabase
-      const { error } = await supabase
-        .from('user_push_tokens')
-        .upsert({ nipd: userNipd, expo_push_token: token }, { onConflict: 'expo_push_token' });
+      // Simpan token ke Supabase dengan cara yang lebih aman (tanpa butuh UNIQUE constraint)
+      const { data: existing } = await supabase.from('user_push_tokens').select('id').eq('nipd', userNipd).maybeSingle();
+      if (existing) {
+        await supabase.from('user_push_tokens').update({ expo_push_token: token }).eq('id', existing.id);
+      } else {
+        await supabase.from('user_push_tokens').insert({ nipd: userNipd, expo_push_token: token });
+      }
     }
   };
 
@@ -110,19 +118,63 @@ export default function DashboardScreen() {
       
       let kehadiranRate = 0;
       if (presensi && presensi.length > 0) {
-        const hadir = presensi.filter(p => p.status === 'H').length;
+        const hadir = presensi.filter(p => ['Hadir', 'Terlambat', 'H', 'T'].includes(p.status)).length;
         kehadiranRate = Math.round((hadir / presensi.length) * 100);
       }
 
-      // 2. Saldo
-      const { data: saldo } = await supabase
-        .from('tb_saldo_siswa')
-        .select('sisa_tagihan')
-        .eq('siswa_id', user.id);
-        
+      // 2. Tagihan Aktif
       let totalTagihan = 0;
-      if (saldo && saldo.length > 0) {
-        totalTagihan = saldo.reduce((sum, item) => sum + (Number(item.sisa_tagihan) || 0), 0);
+      try {
+        const d = new Date();
+        const m = d.getMonth() + 1;
+        const y = d.getFullYear();
+        const semester = 'Tahunan'; // Tagihan biasanya diset 'Tahunan'
+        const tahunPelajaran = m >= 7 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+
+        let tingkatSiswa = 7;
+        if (user.kelas) {
+          const { data: kelasData } = await supabase.from('data_kelas').select('tingkat').eq('nama_kelas', user.kelas).maybeSingle();
+          if (kelasData?.tingkat) tingkatSiswa = kelasData.tingkat;
+        }
+
+        let tipeSiswa = 'Siswa Baru';
+        if (user.status_siswa) {
+          const statusLower = String(user.status_siswa).toLowerCase();
+          if (statusLower === 'baru') tipeSiswa = 'Siswa Baru';
+          else if (statusLower === 'pindahan') {
+            if (tingkatSiswa === 8) tipeSiswa = 'Pindahan Kelas 8';
+            else if (tingkatSiswa === 9) tipeSiswa = 'Pindahan Kelas 9';
+          } else {
+            tipeSiswa = user.status_siswa;
+          }
+        }
+
+        // A. Total Biaya
+        const { data: configData } = await supabase.from('biaya_pengembangan_mutu').select('data_anggaran')
+          .eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester).eq('tipe_siswa', tipeSiswa).maybeSingle();
+        let totalBiaya = 0;
+        if (configData?.data_anggaran) {
+          configData.data_anggaran.forEach((item: any) => {
+            const cost = item[`tingkat${tingkatSiswa}`] || item[`kelas${tingkatSiswa}`] || 0;
+            totalBiaya += Number(cost);
+          });
+        }
+
+        // B. Total Pemasukan
+        const { data: pemasukanData } = await supabase.from('tb_pemasukan_siswa').select('jumlah_bayar')
+          .eq('siswa_id', user.id).eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester);
+        const totalPemasukan = (pemasukanData || []).reduce((sum, item) => sum + (Number(item.jumlah_bayar) || 0), 0);
+
+        // C. Saldo & Subsidi
+        const { data: saldoData } = await supabase.from('tb_saldo_siswa').select('saldo_sebelumnya, subsidi_pip')
+          .eq('siswa_id', user.id).eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester).maybeSingle();
+        const saldoSblm = Number(saldoData?.saldo_sebelumnya) || 0;
+        const subsidi = Number(saldoData?.subsidi_pip) || 0;
+
+        totalTagihan = totalBiaya + saldoSblm - subsidi - totalPemasukan;
+        if (totalTagihan < 0) totalTagihan = 0;
+      } catch (e) {
+        console.error('Error calculating tagihan:', e);
       }
 
       // 3. Jadwal Hari Ini

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "mobile-app",
+    "name": "Siswa SMP IT HM",
     "slug": "mobile-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -18,7 +18,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.emyusvibecoder.mobileapp"
+      "package": "com.emyusvibecoder.siswasmpithm",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -29,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#2a2c87",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
