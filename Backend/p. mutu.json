@@ -1,0 +1,142 @@
+[
+    {
+        "id": 2,
+        "uraian": "MPLS",
+        "tingkat7": 50000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 3,
+        "uraian": "Daftar Ulang",
+        "tingkat7": 50000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 4,
+        "uraian": "SDP",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 5,
+        "uraian": "Attribut",
+        "tingkat7": 50000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 6,
+        "uraian": "Lomba antar kelas",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 7,
+        "uraian": "Jas Almamater",
+        "tingkat7": 200000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 8,
+        "uraian": "Kaos Olahraga",
+        "tingkat7": 150000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 9,
+        "uraian": "Ujian Semester",
+        "tingkat7": 100000,
+        "tingkat8": 100000,
+        "tingkat9": 100000
+    },
+    {
+        "id": 10,
+        "uraian": "Kitab",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 11,
+        "uraian": "PHBI",
+        "tingkat7": 25000,
+        "tingkat8": 25000,
+        "tingkat9": 25000
+    },
+    {
+        "id": 20,
+        "uraian": "PHBN",
+        "tingkat7": 25000,
+        "tingkat8": 25000,
+        "tingkat9": 25000
+    },
+    {
+        "id": 12,
+        "uraian": "Sampul Raport",
+        "tingkat7": 50000,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 13,
+        "uraian": "OSIS",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 21,
+        "uraian": "Pramuka",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 14,
+        "uraian": "UKS",
+        "tingkat7": 50000,
+        "tingkat8": 50000,
+        "tingkat9": 50000
+    },
+    {
+        "id": 15,
+        "uraian": "Akhirussanah",
+        "tingkat7": 100000,
+        "tingkat8": 100000,
+        "tingkat9": 200000
+    },
+    {
+        "id": 16,
+        "uraian": "Sampul Ijazah",
+        "tingkat7": 0,
+        "tingkat8": 0,
+        "tingkat9": 50000
+    },
+    {
+        "id": 17,
+        "uraian": "Ujian Kelulusan",
+        "tingkat7": 0,
+        "tingkat8": 0,
+        "tingkat9": 200000
+    },
+    {
+        "id": 18,
+        "uraian": "Zarkasi",
+        "tingkat7": 0,
+        "tingkat8": 0,
+        "tingkat9": 0
+    },
+    {
+        "id": 19,
+        "uraian": "TKA",
+        "tingkat7": 0,
+        "tingkat8": 0,
+        "tingkat9": 150000
+    }
+]

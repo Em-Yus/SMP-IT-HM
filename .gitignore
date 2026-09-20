@@ -1,2 +1,18 @@
 # Local Netlify folder
 .netlify
+
+# Build artifacts
+frontend-react/dist/
+dist/
+build/
+.expo/
+
+# Node modules
+node_modules/
+
+*.apk
+
+*.apk
+
+*firebase-adminsdk*.json
+.env

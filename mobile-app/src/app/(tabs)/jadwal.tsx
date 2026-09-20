@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { Clock, User, BookOpen } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Animatable from 'react-native-animatable';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useLocalSearchParams } from 'expo-router';
+import { getOperationalDayIndex, getOperationalDayName } from '../../utils/dateUtils';
 
 const DAYS = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
@@ -13,12 +15,33 @@ export default function JadwalScreen() {
   const [jadwalData, setJadwalData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const params = useLocalSearchParams();
+  
   useEffect(() => {
-    // Set hari ini secara default
+    // Set hari ini secara default (pergantian hari pukul 18.00 WIB)
     const daysMap = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const today = daysMap[new Date().getDay()];
+    let targetDayIndex = getOperationalDayIndex();
+    
+    // Jika notifikasi 'besok' ditekan
+    if (params.besok === 'true') {
+      targetDayIndex = (targetDayIndex + 1) % 7;
+    }
+    
+    const targetDay = daysMap[targetDayIndex];
+    // Jika hari ini/besok minggu, arahkan ke Senin
+    setSelectedHari(targetDay === 'Minggu' ? 'Senin' : targetDay);
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\\app\\(tabs)\\jadwal.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    // Set hari ini secara default (pergantian hari pukul 18.00 WIB)
+    const today = getOperationalDayName();
     // Jika hari ini minggu, arahkan ke Senin
     setSelectedHari(today === 'Minggu' ? 'Senin' : today);
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   useEffect(() => {
@@ -58,18 +81,21 @@ export default function JadwalScreen() {
       if (dataKelasRes) {
         const { data: jadwal } = await supabase
           .from('jadwal_pelajaran')
-          .select('jam_ke, waktu, is_istirahat, data_mapel(nama_mapel), data_guru(nama)')
+          .select('jam_ke, waktu, is_istirahat, data_mapel(nama_mapel), data_guru(nama), master_jam(urutan, waktu_mulai, waktu_selesai)')
           .eq('hari', selectedHari)
-          .or(`kelas_id.eq.${dataKelasRes.id},is_istirahat.eq.true`)
-          .order('jam_ke', { ascending: true });
+          .or(`kelas_id.eq.${dataKelasRes.id},is_istirahat.eq.true`);
           
         if (jadwal) {
-          const formattedJadwal = jadwal.map((j: any) => ({
-            jam_ke: j.jam_ke,
-            waktu: j.waktu,
-            mapel: j.is_istirahat ? 'ISTIRAHAT' : (j.data_mapel?.nama_mapel || '-'),
-            guru: j.is_istirahat ? '-' : (j.data_guru?.nama || '-'),
-            is_istirahat: j.is_istirahat
+          const j = jadwal as any[];
+          j.sort((a,b) => (a.master_jam?.urutan || 999) - (b.master_jam?.urutan || 999));
+          const formattedJadwal = j.map((item: any) => ({
+            jam_ke: item.jam_ke,
+            waktu: item.master_jam?.waktu_mulai 
+              ? `${item.master_jam.waktu_mulai.substring(0, 5)} - ${item.master_jam.waktu_selesai?.substring(0, 5)}`
+              : item.waktu,
+            mapel: item.is_istirahat ? 'ISTIRAHAT' : (item.data_mapel?.nama_mapel || '-'),
+            guru: item.is_istirahat ? '-' : (item.data_guru?.nama || '-'),
+            is_istirahat: item.is_istirahat
           }));
           
           // Beri jeda sedikit agar animasi keluar masuk terasa
@@ -113,7 +139,7 @@ export default function JadwalScreen() {
               >
                 {isSelected ? (
                   <LinearGradient
-                    colors={['#4f46e5', '#3b82f6']} // indigo-600 to blue-500
+                    colors={['#2a2c87', '#85c226']} // indigo-600 to blue-500
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={[styles.dayButton, styles.dayButtonSelected]}
@@ -135,7 +161,7 @@ export default function JadwalScreen() {
       <ScrollView contentContainerStyle={styles.contentContainer}>
         {loading ? (
           <View style={styles.centerBox}>
-            <ActivityIndicator size="large" color="#4f46e5" />
+            <ActivityIndicator size="large" color="#2a2c87" />
           </View>
         ) : jadwalData.length === 0 ? (
           <Animatable.View animation="fadeIn" style={styles.emptyBox}>
@@ -188,7 +214,7 @@ export default function JadwalScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb', // gray-50
+    backgroundColor: '#daffcc', // gray-50
   },
   header: {
     paddingTop: 48,
@@ -196,7 +222,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   headerTitle: {
     fontSize: 24,
@@ -250,7 +276,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: '#daffcc',
   },
   emptyText: {
     color: '#9ca3af',
@@ -276,7 +302,7 @@ const styles = StyleSheet.create({
   timeSection: {
     width: 90,
     borderRightWidth: 1,
-    borderRightColor: '#f3f4f6',
+    borderRightColor: '#daffcc',
     paddingRight: 12,
     marginRight: 12,
     justifyContent: 'center',
@@ -289,7 +315,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   badgeNormal: {
-    backgroundColor: '#eff6ff', // blue-50
+    backgroundColor: '#daffcc', // blue-50
   },
   badgeIstirahat: {
     backgroundColor: '#ffedd5', // orange-100
@@ -298,7 +324,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: 'bold',
   },
-  textBlue: { color: '#2563eb' },
+  textBlue: { color: '#2a2c87' },
   textOrange: { color: '#ea580c' },
   timeRow: {
     flexDirection: 'row',

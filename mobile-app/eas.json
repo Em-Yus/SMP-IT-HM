@@ -8,18 +8,24 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      }
+      },
+      "channel": "development"
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "channel": "preview",
+      "env": {
+        "APP_VARIANT": "preview"
       }
     },
     "production": {
       "android": {
-        "buildType": "app-bundle"
-      }
+        "buildType": "apk"
+      },
+      "channel": "production"
     }
   },
   "submit": {

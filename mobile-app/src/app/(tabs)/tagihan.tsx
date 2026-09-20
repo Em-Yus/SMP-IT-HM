@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {  View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { Wallet, CheckCircle, ReceiptText, AlertCircle, TrendingUp, History } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,6 +21,15 @@ export default function TagihanScreen() {
 
   useEffect(() => {
     fetchKeuangan();
+    
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in Tagihan');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+      setLoading(true);
+      fetchKeuangan();
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchKeuangan = async () => {
@@ -29,9 +38,12 @@ export default function TagihanScreen() {
       const localUserStr = await AsyncStorage.getItem('user_siswa');
       const { data: { session } } = await supabase.auth.getSession();
       
+      let userLocal = localUserStr ? JSON.parse(localUserStr) : null;
       let user = null;
-      if (localUserStr) {
-        user = JSON.parse(localUserStr);
+      
+      if (userLocal?.nipd) {
+        const { data } = await supabase.from('data_siswa').select('*').eq('nipd', userLocal.nipd).maybeSingle();
+        user = data || userLocal;
       } else if (session?.user?.email) {
         const { data } = await supabase.from('data_siswa').select('*').eq('email', session.user.email).maybeSingle();
         user = data;
@@ -42,45 +54,66 @@ export default function TagihanScreen() {
         return;
       }
 
-      // 1. Tentukan Tingkat Siswa
+      // 1. Baca tahun_ajaran dari data_siswa
+      const now = new Date();
+      const currentYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+      const defaultTahun = `${currentYear}/${currentYear + 1}`;
+      const tahunPelajaran = user.tahun_ajaran || defaultTahun;
+      const semester = 'Tahunan'; // Default tagihan tahunan
+
+      // 2. Tentukan Tingkat Siswa dari tabel data_kelas
       let tingkatSiswa = 7;
       if (user.kelas) {
-        const kls = user.kelas.toString().toLowerCase();
-        if (kls.includes('7') || kls.includes('vii')) tingkatSiswa = 7;
-        else if (kls.includes('8') || kls.includes('viii')) tingkatSiswa = 8;
-        else if (kls.includes('9') || kls.includes('ix')) tingkatSiswa = 9;
+        const { data: kelasData } = await supabase
+          .from('data_kelas')
+          .select('id, tingkat')
+          .ilike('nama_kelas', user.kelas)
+          .maybeSingle();
+
+        if (kelasData && kelasData.tingkat) {
+          tingkatSiswa = kelasData.tingkat;
+        } else {
+          // Fallback: Ekstrak angka dari nama kelas (misal "9a" -> 9)
+          const match = String(user.kelas).match(/\d+/);
+          if (match) {
+            tingkatSiswa = parseInt(match[0], 10);
+          }
+        }
       }
 
-      // 2. Tentukan Tipe Siswa
+      // 3. Tentukan Tipe Siswa berdasarkan status_siswa di data_siswa
       let tipeSiswa = 'Siswa Baru';
       if (user.status_siswa) {
-        const statusLower = user.status_siswa.toLowerCase();
+        const statusLower = String(user.status_siswa).toLowerCase();
         if (statusLower === 'baru') {
           tipeSiswa = 'Siswa Baru';
         } else if (statusLower === 'pindahan') {
-          if (tingkatSiswa === 8) tipeSiswa = 'Pindahan Kelas 8';
-          else if (tingkatSiswa === 9) tipeSiswa = 'Pindahan Kelas 9';
-          else tipeSiswa = 'Siswa Baru'; 
+          // Hitung tingkat saat siswa MASUK berdasarkan selisih tahun
+          // Contoh: masuk 2025/2026, sekarang 2026/2027, kelas 9 → masuk di kelas 8
+          const now = new Date();
+          const currentSchoolYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+          const entryYear = parseInt((tahunPelajaran || '').split('/')[0]) || currentSchoolYear;
+          const yearsPassed = Math.max(0, currentSchoolYear - entryYear);
+          const entryTingkat = Math.max(7, tingkatSiswa - yearsPassed);
+          tipeSiswa = `Pindahan Kelas ${entryTingkat}`;
         } else {
           tipeSiswa = user.status_siswa;
         }
       }
 
-      // 3. Fetch Tahun/Semester dari Saldo Terakhir atau Default
+      // 4. Fetch Saldo & Subsidi (pakai tahunPelajaran dari data_siswa)
       const { data: saldoData } = await supabase
         .from('tb_saldo_siswa')
         .select('*')
         .eq('siswa_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('tahun_pelajaran', tahunPelajaran)
+        .eq('semester', semester)
         .maybeSingle();
 
-      const tahunPelajaran = saldoData?.tahun_pelajaran || '2025/2026';
-      const semester = saldoData?.semester || 'Tahunan';
       const saldoAwal = Number(saldoData?.saldo_sebelumnya) || 0;
       const subsidi = Number(saldoData?.subsidi_pip) || 0;
 
-      // 4. Fetch Biaya Pengembangan Mutu
+      // 5. Fetch Biaya Pengembangan Mutu (pakai tahunPelajaran dari data_siswa)
       const { data: configData } = await supabase
         .from('biaya_pengembangan_mutu')
         .select('data_anggaran')
@@ -105,14 +138,14 @@ export default function TagihanScreen() {
           }
         });
       }
-      setRincianBiaya(extractedItems);
-      setTotalTagihan(calculatedTagihan);
-
-      // 5. Fetch Riwayat Pembayaran
+      
+      // 6. Fetch Riwayat Pembayaran (pakai tahunPelajaran yang sama)
       const { data: pemasukan } = await supabase
         .from('tb_pemasukan_siswa')
         .select('*')
         .eq('siswa_id', user.id)
+        .eq('tahun_pelajaran', tahunPelajaran)
+        .eq('semester', semester)
         .order('tanggal', { ascending: false })
         .order('created_at', { ascending: false });
 
@@ -124,7 +157,31 @@ export default function TagihanScreen() {
       // 6. Kalkulasi Final
       const totalBayarFinal = totalPemasukan + saldoAwal + subsidi;
       const sisa = calculatedTagihan - totalBayarFinal;
+
+      // Alokasi Pembayaran (Waterfall)
+      let remainingAlloc = totalBayarFinal;
+      const allocatedItems = extractedItems.map(item => {
+        let statusText = '';
+        let statusCode = '';
+
+        if (remainingAlloc >= item.biaya) {
+          statusText = 'LUNAS';
+          statusCode = 'LUNAS';
+          remainingAlloc -= item.biaya;
+        } else if (remainingAlloc > 0) {
+          statusText = `Kurang Rp ${Number(item.biaya - remainingAlloc).toLocaleString('id-ID')}`;
+          statusCode = 'KURANG';
+          remainingAlloc = 0;
+        } else {
+          statusText = 'Belum Dibayar';
+          statusCode = 'BELUM';
+        }
+
+        return { ...item, statusText, statusCode };
+      });
       
+      setRincianBiaya(allocatedItems);
+      setTotalTagihan(calculatedTagihan);
       setTotalTerbayar(totalBayarFinal);
       setSisaTagihan(sisa > 0 ? sisa : 0);
       
@@ -226,11 +283,28 @@ export default function TagihanScreen() {
                 >
                   <View style={styles.rincianCard}>
                     <View style={styles.iconContainerBlue}>
-                      <TrendingUp size={20} color="#3b82f6" />
+                      <TrendingUp size={20} color="#85c226" />
                     </View>
                     <View style={styles.rincianInfo}>
                       <Text style={styles.rincianUraian}>{item.uraian}</Text>
                       <Text style={styles.rincianAmount}>{formatRupiah(item.biaya)}</Text>
+                      {item.statusText && (
+                        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+                          <View style={[
+                            styles.statusBadge, 
+                            item.statusCode === 'LUNAS' ? { backgroundColor: '#ecfdf5', borderColor: '#d1fae5' } : 
+                            item.statusCode === 'KURANG' ? { backgroundColor: '#fffbeb', borderColor: '#fef3c7' } : 
+                            { backgroundColor: '#fef2f2', borderColor: '#fee2e2' }
+                          ]}>
+                            <Text style={[
+                              styles.statusLunas,
+                              item.statusCode === 'LUNAS' ? { color: '#10b981' } : 
+                              item.statusCode === 'KURANG' ? { color: '#d97706' } : 
+                              { color: '#ef4444' }
+                            ]}>{item.statusText}</Text>
+                          </View>
+                        </View>
+                      )}
                     </View>
                   </View>
                 </Animatable.View>
@@ -282,7 +356,7 @@ export default function TagihanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#daffcc',
   },
   header: {
     paddingTop: 48,
@@ -290,7 +364,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   headerTitle: {
     fontSize: 24,
@@ -425,7 +499,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#eff6ff', // blue-50
+    backgroundColor: '#daffcc', // blue-50
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 16,

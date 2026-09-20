@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Platform, Linking, DeviceEventEmitter, ToastAndroid } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
-import { CalendarDays, Wallet, Award, Clock, ChevronRight, Megaphone, Bell, Trophy, Book, FileText } from 'lucide-react-native';
+import { CalendarDays, Wallet, Award, Clock, ChevronRight, Megaphone, Bell, Trophy, Book, FileText, Tent, Laptop } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Animatable from 'react-native-animatable';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import { getOperationalDayName } from '../../utils/dateUtils';
+import { scheduleSiswaReminders } from '../../services/scheduleNotificationHelper';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -22,6 +24,7 @@ Notifications.setNotificationHandler({
 export default function DashboardScreen() {
   const [userData, setUserData] = useState<any>(null);
   const [isNotificationDenied, setIsNotificationDenied] = useState(false);
+  const [activeCbtExam, setActiveCbtExam] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>({
     kehadiran: 0,
     tagihan: 0,
@@ -31,6 +34,14 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     fetchSessionAndData();
+    
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in Dashboard Siswa');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+      fetchSessionAndData();
+    });
+
+    return () => listener.remove();
   }, []);
 
   const registerForPushNotificationsAsync = async () => {
@@ -102,9 +113,36 @@ export default function DashboardScreen() {
         setUserData(siswaData);
         fetchDashboardData(siswaData);
         registerPushToken(siswaData.nipd);
+        scheduleDailyReminder();
       }
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const scheduleDailyReminder = async () => {
+    try {
+      const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+      const existing = scheduled.find(n => n.content.title === "siapkan buku pelajaran besok!");
+      
+      if (!existing) {
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: "siapkan buku pelajaran besok!",
+            body: "Jangan lupa periksa jadwal pelajaran untuk hari esok.",
+            sound: true,
+            data: { route: '/(tabs)/jadwal?besok=true' },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DAILY,
+            hour: 20,
+            minute: 0,
+          } as any,
+        });
+        console.log('Daily reminder scheduled for 20:00');
+      }
+    } catch (e) {
+      console.log('Error scheduling daily reminder:', e);
     }
   };
 
@@ -125,31 +163,48 @@ export default function DashboardScreen() {
       // 2. Tagihan Aktif
       let totalTagihan = 0;
       try {
-        const d = new Date();
-        const m = d.getMonth() + 1;
-        const y = d.getFullYear();
-        const semester = 'Tahunan'; // Tagihan biasanya diset 'Tahunan'
-        const tahunPelajaran = m >= 7 ? `${y}/${y + 1}` : `${y - 1}/${y}`;
+        const semester = 'Tahunan';
+        const now = new Date();
+        const currentYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+        const defaultTahun = `${currentYear}/${currentYear + 1}`;
+        const tahunPelajaran = user.tahun_ajaran || defaultTahun;
 
         let tingkatSiswa = 7;
         if (user.kelas) {
-          const { data: kelasData } = await supabase.from('data_kelas').select('tingkat').eq('nama_kelas', user.kelas).maybeSingle();
-          if (kelasData?.tingkat) tingkatSiswa = kelasData.tingkat;
+          // Pertama coba ambil dari tabel data_kelas dengan ilike (case-insensitive)
+          const { data: kelasData } = await supabase.from('data_kelas').select('tingkat').ilike('nama_kelas', user.kelas).maybeSingle();
+          if (kelasData?.tingkat) {
+            tingkatSiswa = kelasData.tingkat;
+          } else {
+            // Fallback: Ekstrak angka dari nama kelas (misal "9a" -> 9)
+            const match = String(user.kelas).match(/\d+/);
+            if (match) {
+              tingkatSiswa = parseInt(match[0], 10);
+            }
+          }
         }
 
+
+        // Tentukan Tipe Siswa berdasarkan status_siswa di data_siswa
         let tipeSiswa = 'Siswa Baru';
         if (user.status_siswa) {
           const statusLower = String(user.status_siswa).toLowerCase();
-          if (statusLower === 'baru') tipeSiswa = 'Siswa Baru';
-          else if (statusLower === 'pindahan') {
-            if (tingkatSiswa === 8) tipeSiswa = 'Pindahan Kelas 8';
-            else if (tingkatSiswa === 9) tipeSiswa = 'Pindahan Kelas 9';
+          if (statusLower === 'baru') {
+            tipeSiswa = 'Siswa Baru';
+          } else if (statusLower === 'pindahan') {
+            // Hitung tingkat saat siswa MASUK berdasarkan selisih tahun
+            const now = new Date();
+            const currentSchoolYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+            const entryYear = parseInt((tahunPelajaran || '').split('/')[0]) || currentSchoolYear;
+            const yearsPassed = Math.max(0, currentSchoolYear - entryYear);
+            const entryTingkat = Math.max(7, tingkatSiswa - yearsPassed);
+            tipeSiswa = `Pindahan Kelas ${entryTingkat}`;
           } else {
             tipeSiswa = user.status_siswa;
           }
         }
 
-        // A. Total Biaya
+        // A. Total Biaya (pakai tahunPelajaran dari data_siswa)
         const { data: configData } = await supabase.from('biaya_pengembangan_mutu').select('data_anggaran')
           .eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester).eq('tipe_siswa', tipeSiswa).maybeSingle();
         let totalBiaya = 0;
@@ -160,12 +215,12 @@ export default function DashboardScreen() {
           });
         }
 
-        // B. Total Pemasukan
-        const { data: pemasukanData } = await supabase.from('tb_pemasukan_siswa').select('jumlah_bayar')
+        // B. Total Pemasukan (pakai tahunPelajaran yang sama)
+        const { data: pemasukanData } = await supabase.from('tb_pemasukan_siswa').select('nominal')
           .eq('siswa_id', user.id).eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester);
-        const totalPemasukan = (pemasukanData || []).reduce((sum, item) => sum + (Number(item.jumlah_bayar) || 0), 0);
+        const totalPemasukan = (pemasukanData || []).reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
 
-        // C. Saldo & Subsidi
+        // C. Saldo & Subsidi (pakai tahunPelajaran yang sama)
         const { data: saldoData } = await supabase.from('tb_saldo_siswa').select('saldo_sebelumnya, subsidi_pip')
           .eq('siswa_id', user.id).eq('tahun_pelajaran', tahunPelajaran).eq('semester', semester).maybeSingle();
         const saldoSblm = Number(saldoData?.saldo_sebelumnya) || 0;
@@ -177,9 +232,8 @@ export default function DashboardScreen() {
         console.error('Error calculating tagihan:', e);
       }
 
-      // 3. Jadwal Hari Ini
-      const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-      const today = days[new Date().getDay()];
+      // 3. Jadwal Hari Ini (pergantian hari pukul 18.00 WIB)
+      const today = getOperationalDayName();
       
       let jadwalHariIni: any[] = [];
       if (user.kelas) {
@@ -190,21 +244,25 @@ export default function DashboardScreen() {
           .maybeSingle();
 
         if (dataKelasRes) {
+          scheduleSiswaReminders(dataKelasRes.id);
           const { data: jadwal } = await supabase
             .from('jadwal_pelajaran')
-            .select('jam_ke, waktu, is_istirahat, data_mapel(nama_mapel), data_guru(nama)')
+            .select('jam_ke, waktu, is_istirahat, data_mapel(nama_mapel), data_guru(nama), master_jam(urutan, waktu_mulai, waktu_selesai)')
             .eq('hari', today)
-            .or(`kelas_id.eq.${dataKelasRes.id},is_istirahat.eq.true`)
-            .order('jam_ke', { ascending: true })
-            .limit(5);
+            .or(`kelas_id.eq.${dataKelasRes.id},is_istirahat.eq.true`);
             
           if (jadwal) {
-             jadwalHariIni = jadwal.map((j: any) => ({
-               jam_ke: j.jam_ke,
-               waktu: j.waktu,
-               mapel: j.is_istirahat ? 'ISTIRAHAT' : (j.data_mapel?.nama_mapel || '-'),
-               guru: j.is_istirahat ? '-' : (j.data_guru?.nama || '-'),
-               is_istirahat: j.is_istirahat
+             const j = jadwal as any[];
+             j.sort((a,b) => (a.master_jam?.urutan || 999) - (b.master_jam?.urutan || 999));
+             const top5 = j.slice(0, 5);
+             jadwalHariIni = top5.map((item: any) => ({
+               jam_ke: item.jam_ke,
+               waktu: item.master_jam?.waktu_mulai 
+                 ? `${item.master_jam.waktu_mulai.substring(0, 5)} - ${item.master_jam.waktu_selesai?.substring(0, 5)}`
+                 : item.waktu,
+               mapel: item.is_istirahat ? 'ISTIRAHAT' : (item.data_mapel?.nama_mapel || '-'),
+               guru: item.is_istirahat ? '-' : (item.data_guru?.nama || '-'),
+               is_istirahat: item.is_istirahat
              }));
           }
         }
@@ -228,6 +286,51 @@ export default function DashboardScreen() {
         jadwal: jadwalHariIni,
         rataRata: avgNilai
       });
+
+      // 5. Cek Ujian CBT Aktif Hari Ini & Jam Sekarang
+      try {
+        let kelasId = user.kelas_id;
+        if (!kelasId && user.kelas) {
+          const { data: kData } = await supabase.from('data_kelas').select('id').ilike('nama_kelas', user.kelas).maybeSingle();
+          if (kData) kelasId = kData.id;
+        }
+
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const todayStr = `${year}-${month}-${day}`;
+        const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+        let cbtQuery = supabase
+          .from('cbt_jadwal_ujian')
+          .select(`
+            id, nama_ujian, jenis_ujian, tanggal_ujian, jam_mulai, jam_selesai, durasi_menit, status,
+            data_mapel(nama_mapel)
+          `)
+          .eq('tanggal_ujian', todayStr);
+
+        if (kelasId) {
+          cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+        } else {
+          cbtQuery = cbtQuery.is('kelas_id', null);
+        }
+
+        const { data: jadwals } = await cbtQuery;
+
+        if (jadwals && jadwals.length > 0) {
+          const active = jadwals.find((j: any) => {
+            const mulai = j.jam_mulai?.slice(0, 5) || '00:00';
+            const selesai = j.jam_selesai?.slice(0, 5) || '23:59';
+            return currentTime >= mulai && currentTime <= selesai;
+          });
+          setActiveCbtExam(active || null);
+        } else {
+          setActiveCbtExam(null);
+        }
+      } catch (cbtErr) {
+        console.error('Error checking active CBT exam:', cbtErr);
+      }
       
     } catch (err) {
       console.error(err);
@@ -261,7 +364,7 @@ export default function DashboardScreen() {
           <Text style={styles.subtitle}>Selamat datang di Portal Siswa SIAKAD.</Text>
         </View>
         <TouchableOpacity onPress={() => router.push('/pengumuman')}>
-          <Bell size={24} color="#6b7280" />
+          <Bell size={24} color="#6C757D" />
         </TouchableOpacity>
       </Animatable.View>
 
@@ -288,7 +391,7 @@ export default function DashboardScreen() {
       <View style={styles.metricsContainer}>
         {/* Kehadiran */}
         <Animatable.View animation="bounceInRight" delay={100} duration={800}>
-          <LinearGradient colors={['#f59e0b', '#ea580c']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+          <LinearGradient colors={['#3740A1', '#1E257F']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
             <CalendarDays size={80} color="#fff" style={styles.cardIconBg} />
             <Text style={styles.cardTitle}>Kehadiran Anda</Text>
             <Text style={styles.cardValue}>{metrics.kehadiran}%</Text>
@@ -298,7 +401,7 @@ export default function DashboardScreen() {
 
         {/* Tagihan */}
         <Animatable.View animation="bounceInRight" delay={200} duration={800}>
-          <LinearGradient colors={['#3b82f6', '#1d4ed8']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+          <LinearGradient colors={['#FFC736', '#FFB703']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
             <Wallet size={80} color="#fff" style={styles.cardIconBg} />
             <Text style={styles.cardTitle}>Tagihan Aktif</Text>
             <Text style={styles.cardValue} numberOfLines={1}>{formatRupiah(metrics.tagihan)}</Text>
@@ -308,7 +411,7 @@ export default function DashboardScreen() {
 
         {/* Nilai */}
         <Animatable.View animation="bounceInRight" delay={300} duration={800}>
-          <LinearGradient colors={['#10b981', '#047857']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+          <LinearGradient colors={['#9EEA5A', '#84D43F']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
             <Award size={80} color="#fff" style={styles.cardIconBg} />
             <Text style={styles.cardTitle}>Rata-rata Nilai</Text>
             <Text style={styles.cardValue}>{metrics.rataRata}</Text>
@@ -322,43 +425,82 @@ export default function DashboardScreen() {
         <Text style={styles.sectionTitle}>Akses Cepat</Text>
         <View style={styles.quickAccessGrid}>
           <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/nilai')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#eef2ff' }]}>
-              <Award size={24} color="#4f46e5" />
+            <View style={[styles.qaIconBox, { backgroundColor: '#ECEEFF' }]}>
+              <Award size={24} color="#1E257F" />
             </View>
             <Text style={styles.qaText}>Nilai</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/presensi')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#ecfdf5' }]}>
-              <CalendarDays size={24} color="#10b981" />
+          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/jadwal')}>
+            <View style={[styles.qaIconBox, { backgroundColor: '#F2FBEB' }]}>
+              <CalendarDays size={24} color="#84D43F" />
             </View>
-            <Text style={styles.qaText}>Presensi</Text>
+            <Text style={styles.qaText}>Jadwal</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/rapor')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#fef2f2' }]}>
-              <FileText size={24} color="#ef4444" />
+            <View style={[styles.qaIconBox, { backgroundColor: '#FCECEE' }]}>
+              <FileText size={24} color="#E63946" />
             </View>
             <Text style={styles.qaText}>Rapor</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/mengaji')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#fdf4ff' }]}>
-              <Book size={24} color="#d946ef" />
+            <View style={[styles.qaIconBox, { backgroundColor: '#E5F7FB' }]}>
+              <Book size={24} color="#00B4D8" />
             </View>
             <Text style={styles.qaText}>Mengaji</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/prestasi')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#fffbeb' }]}>
-              <Trophy size={24} color="#f59e0b" />
+            <View style={[styles.qaIconBox, { backgroundColor: '#FFF8E5' }]}>
+              <Trophy size={24} color="#FFB703" />
             </View>
             <Text style={styles.qaText}>Prestasi</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/ekskul' as any)}>
+            <View style={[styles.qaIconBox, { backgroundColor: '#E9F9F8' }]}>
+              <Tent size={24} color="#2EC4B6" />
+            </View>
+            <Text style={styles.qaText}>Ekskul</Text>
+          </TouchableOpacity>
+          {activeCbtExam && (
+            <TouchableOpacity 
+              style={[styles.quickAccessBtn, { borderColor: '#ef4444', borderWidth: 1.5, backgroundColor: '#FFF5F5' }]} 
+              onPress={() => router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } })}
+            >
+              <View style={[styles.qaIconBox, { backgroundColor: '#FEE2E2' }]}>
+                <Laptop size={24} color="#dc2626" />
+              </View>
+              <Text style={[styles.qaText, { color: '#dc2626', fontWeight: 'bold' }]}>
+                Ujian CBT
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
+
+        {/* Banner Ujian Aktif */}
+        {activeCbtExam && (
+          <TouchableOpacity
+            style={styles.activeExamBanner}
+            onPress={() => router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } })}
+            activeOpacity={0.85}
+          >
+            <View style={styles.activeExamHeader}>
+              <View style={styles.pulseDot} />
+              <Text style={styles.activeExamBadgeText}>Ujian CBT Sedang Berlangsung</Text>
+            </View>
+            <Text style={styles.activeExamTitle}>
+              {activeCbtExam.data_mapel?.nama_mapel || activeCbtExam.nama_ujian}
+            </Text>
+            <Text style={styles.activeExamSub}>
+              Pukul {activeCbtExam.jam_mulai?.slice(0, 5)} - {activeCbtExam.jam_selesai?.slice(0, 5)} WIB • Klik untuk Memulai
+            </Text>
+          </TouchableOpacity>
+        )}
       </Animatable.View>
 
       {/* Jadwal Hari Ini */}
       <Animatable.View animation="fadeInUp" delay={400} duration={600} style={styles.section}>
         <View style={styles.sectionHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Clock size={18} color="#3b82f6" />
+            <Clock size={18} color="#1E257F" />
             <Text style={styles.sectionTitle}>Jadwal Kelas Hari Ini</Text>
           </View>
           <TouchableOpacity onPress={() => router.push('/jadwal')}>
@@ -397,7 +539,7 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f3f4f6', // gray-100
+    backgroundColor: '#F8F9FA',
   },
   scrollContent: {
     padding: 16,
@@ -411,16 +553,16 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#1f2937',
+    color: '#1A1818',
   },
   subtitle: {
     fontSize: 14,
-    color: '#6b7280',
+    color: '#6C757D',
     marginTop: 4,
   },
   logoutBtn: {
     padding: 8,
-    backgroundColor: '#fee2e2', // red-100
+    backgroundColor: '#FCECEE',
     borderRadius: 8,
   },
   metricsContainer: {
@@ -459,8 +601,8 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   quickAccessBtn: {
-    width: '30%', // Menyisakan 10% ruang untuk gap
-    backgroundColor: '#fff',
+    width: '30%',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
@@ -481,10 +623,10 @@ const styles = StyleSheet.create({
   qaText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#374151',
+    color: '#1A1818',
   },
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
@@ -499,30 +641,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#E2E8F0',
     paddingBottom: 12,
   },
-  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#1f2937', marginLeft: 8 },
-  linkText: { fontSize: 13, color: '#4f46e5', fontWeight: 'bold' },
-  emptyBox: { backgroundColor: '#f9fafb', padding: 20, borderRadius: 8, alignItems: 'center' },
-  emptyText: { color: '#9ca3af', fontSize: 13 },
+  sectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#1A1818', marginLeft: 8 },
+  linkText: { fontSize: 13, color: '#1E257F', fontWeight: 'bold' },
+  emptyBox: { backgroundColor: '#F1F3F5', padding: 20, borderRadius: 8, alignItems: 'center' },
+  emptyText: { color: '#ADB5BD', fontSize: 13 },
   logoutText: {
-    color: '#ef4444',
+    color: '#E63946',
     fontWeight: 'bold',
   },
   warningBanner: {
-    backgroundColor: '#ef4444',
+    backgroundColor: '#E63946',
     borderRadius: 16,
     padding: 16,
     marginBottom: 20,
     elevation: 4,
-    shadowColor: '#ef4444',
+    shadowColor: '#E63946',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
   },
   warningTitle: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: 'bold',
     marginLeft: 8,
@@ -534,7 +676,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   warningBtn: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginTop: 12,
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -542,7 +684,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningBtnText: {
-    color: '#ef4444',
+    color: '#E63946',
     fontWeight: 'bold',
     fontSize: 14,
   },
@@ -555,8 +697,8 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   jadwalIstirahat: {
-    backgroundColor: '#fff7ed', // orange-50
-    borderColor: '#ffedd5', // orange-100
+    backgroundColor: '#FFF8E5',
+    borderColor: '#FFEDC2',
     borderRadius: 8,
     padding: 8,
   },
@@ -567,23 +709,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginRight: 12,
   },
-  timeBoxNormal: { backgroundColor: '#eff6ff' },
-  timeBoxIstirahat: { backgroundColor: '#ffedd5' },
+  timeBoxNormal: { backgroundColor: '#ECEEFF' },
+  timeBoxIstirahat: { backgroundColor: '#FFE399' },
   jadwalTime: { fontSize: 12, fontWeight: 'bold' },
-  timeNormal: { color: '#2563eb' },
-  timeIstirahat: { color: '#ea580c' },
+  timeNormal: { color: '#1E257F' },
+  timeIstirahat: { color: '#FFB703' },
   jadwalInfo: { flex: 1 },
-  jadwalMapel: { fontSize: 14, fontWeight: 'bold', color: '#1f2937' },
-  mapelIstirahat: { color: '#ea580c' },
-  jadwalGuru: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  jadwalBadge: { backgroundColor: '#f3f4f6', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
-  jadwalBadgeText: { fontSize: 10, fontWeight: 'bold', color: '#9ca3af' },
+  jadwalMapel: { fontSize: 14, fontWeight: 'bold', color: '#1A1818' },
+  mapelIstirahat: { color: '#FFB703' },
+  jadwalGuru: { fontSize: 12, color: '#6C757D', marginTop: 2 },
+  jadwalBadge: { backgroundColor: '#F1F3F5', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  jadwalBadgeText: { fontSize: 10, fontWeight: 'bold', color: '#6C757D' },
   pengumumanItem: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#FFFFFF',
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#E2E8F0',
     marginBottom: 12,
   },
   pengumumanHeader: {
@@ -597,15 +739,52 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#1e3a8a', // blue-900
+    color: '#1E257F',
     lineHeight: 20,
   },
   pengumumanDateBadge: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#FFB703',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
   },
-  pengumumanDate: { fontSize: 9, fontWeight: 'bold', color: '#fff' },
-  pengumumanText: { fontSize: 13, color: '#4b5563', lineHeight: 20 },
+  pengumumanDate: { fontSize: 9, fontWeight: 'bold', color: '#FFFFFF' },
+  pengumumanText: { fontSize: 13, color: '#6C757D', lineHeight: 20 },
+  activeExamBanner: {
+    marginTop: 14,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+  },
+  activeExamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  pulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#DC2626',
+  },
+  activeExamBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#DC2626',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  activeExamTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#991B1B',
+  },
+  activeExamSub: {
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 2,
+  },
 });

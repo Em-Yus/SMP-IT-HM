@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { BookOpen, Award, FileText, ChevronLeft } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +13,15 @@ export default function NilaiScreen() {
 
   useEffect(() => {
     fetchNilai();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\nilai.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchNilai();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchNilai = async () => {
@@ -132,12 +141,12 @@ export default function NilaiScreen() {
       <ScrollView contentContainerStyle={styles.contentContainer} showsVerticalScrollIndicator={false}>
         {loading ? (
           <View style={styles.centerBox}>
-            <ActivityIndicator size="large" color="#4f46e5" />
+            <ActivityIndicator size="large" color="#2a2c87" />
           </View>
         ) : nilaiData.length === 0 ? (
           <Animatable.View animation="fadeIn" style={styles.emptyBox}>
             <LinearGradient
-              colors={['#f3f4f6', '#e5e7eb']}
+              colors={['#daffcc', '#e5e7eb']}
               style={styles.emptyIconBg}
             >
               <FileText size={48} color="#9ca3af" />
@@ -158,7 +167,7 @@ export default function NilaiScreen() {
             >
               <View style={styles.card}>
                 <View style={styles.cardIcon}>
-                  <BookOpen size={20} color="#4f46e5" />
+                  <BookOpen size={20} color="#2a2c87" />
                 </View>
                 <View style={styles.cardContent}>
                   <Text style={styles.mapelText}>{item.nama_mapel}</Text>
@@ -180,7 +189,7 @@ export default function NilaiScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#daffcc',
   },
   header: {
     flexDirection: 'row',
@@ -190,13 +199,13 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   backBtn: {
     padding: 8,
     marginRight: 12,
     marginLeft: -8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     borderRadius: 12,
   },
   headerTextContainer: {
@@ -219,7 +228,7 @@ const styles = StyleSheet.create({
   filterContainer: {
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   filterScroll: {
     paddingHorizontal: 20,
@@ -230,14 +239,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     borderWidth: 1,
     borderColor: '#e5e7eb',
     marginRight: 8,
   },
   filterChipActive: {
-    backgroundColor: '#4f46e5',
-    borderColor: '#4f46e5',
+    backgroundColor: '#2a2c87',
+    borderColor: '#2a2c87',
   },
   filterChipText: {
     fontSize: 13,
@@ -287,13 +296,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   refreshBtn: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#daffcc',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,
   },
   refreshBtnText: {
-    color: '#3b82f6',
+    color: '#85c226',
     fontWeight: 'bold',
     fontSize: 14,
   },
@@ -333,7 +342,7 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   nilaiBadge: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#2a2c87',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 12,

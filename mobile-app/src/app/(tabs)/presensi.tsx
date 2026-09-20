@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { UserCheck, UserX, UserMinus, ChevronLeft, CalendarCheck } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,10 +14,21 @@ export default function PresensiScreen() {
   const [statHadir, setStatHadir] = useState(0);
   const [statIzin, setStatIzin] = useState(0);
   const [statSakit, setStatSakit] = useState(0);
+  const [statTerlambat, setStatTerlambat] = useState(0);
+  const [statBolos, setStatBolos] = useState(0);
   const [statAlpa, setStatAlpa] = useState(0);
 
   useEffect(() => {
     fetchPresensi();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\presensi.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchPresensi();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchPresensi = async () => {
@@ -51,18 +62,22 @@ export default function PresensiScreen() {
         if (presensi) {
           setPresensiData(presensi);
           
-          let h = 0, i = 0, s = 0, a = 0;
+          let h = 0, i = 0, s = 0, t = 0, b = 0, a = 0;
           presensi.forEach(p => {
             const status = (p.status || '').toLowerCase();
             if (status.includes('hadir')) h++;
             else if (status.includes('izin')) i++;
             else if (status.includes('sakit')) s++;
+            else if (status.includes('terlambat')) t++;
+            else if (status.includes('bolos')) b++;
             else a++;
           });
           
           setStatHadir(h);
           setStatIzin(i);
           setStatSakit(s);
+          setStatTerlambat(t);
+          setStatBolos(b);
           setStatAlpa(a);
         }
       }
@@ -77,8 +92,10 @@ export default function PresensiScreen() {
   const getStatusColor = (status: string) => {
     const s = status.toLowerCase();
     if (s.includes('hadir')) return '#10b981'; // green
-    if (s.includes('izin')) return '#3b82f6'; // blue
+    if (s.includes('izin')) return '#8b5cf6'; // purple
     if (s.includes('sakit')) return '#f59e0b'; // amber
+    if (s.includes('terlambat')) return '#f97316'; // orange
+    if (s.includes('bolos')) return '#6366f1'; // indigo
     return '#ef4444'; // red
   };
   
@@ -87,6 +104,7 @@ export default function PresensiScreen() {
     if (s.includes('hadir')) return <UserCheck size={20} color={color} />;
     if (s.includes('izin')) return <UserMinus size={20} color={color} />;
     if (s.includes('sakit')) return <UserMinus size={20} color={color} />;
+    if (s.includes('bolos')) return <UserX size={20} color={color} />;
     return <UserX size={20} color={color} />;
   };
 
@@ -123,20 +141,26 @@ export default function PresensiScreen() {
                 <Text style={[styles.statValue, { color: '#10b981' }]}>{statHadir}</Text>
                 <Text style={styles.statLabel}>Hadir</Text>
               </View>
-              <View style={styles.statDivider} />
               <View style={styles.statBox}>
-                <Text style={[styles.statValue, { color: '#3b82f6' }]}>{statIzin}</Text>
+                <Text style={[styles.statValue, { color: '#8b5cf6' }]}>{statIzin}</Text>
                 <Text style={styles.statLabel}>Izin</Text>
               </View>
-              <View style={styles.statDivider} />
               <View style={styles.statBox}>
                 <Text style={[styles.statValue, { color: '#f59e0b' }]}>{statSakit}</Text>
                 <Text style={styles.statLabel}>Sakit</Text>
               </View>
-              <View style={styles.statDivider} />
+              
+              <View style={styles.statBox}>
+                <Text style={[styles.statValue, { color: '#f97316' }]}>{statTerlambat}</Text>
+                <Text style={styles.statLabel}>Terlambat</Text>
+              </View>
+              <View style={styles.statBox}>
+                <Text style={[styles.statValue, { color: '#6366f1' }]}>{statBolos}</Text>
+                <Text style={styles.statLabel}>Bolos</Text>
+              </View>
               <View style={styles.statBox}>
                 <Text style={[styles.statValue, { color: '#ef4444' }]}>{statAlpa}</Text>
-                <Text style={styles.statLabel}>Alpa</Text>
+                <Text style={styles.statLabel}>Alfa</Text>
               </View>
             </Animatable.View>
 
@@ -193,7 +217,7 @@ export default function PresensiScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#daffcc',
   },
   header: {
     flexDirection: 'row',
@@ -203,13 +227,13 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   backBtn: {
     padding: 8,
     marginRight: 12,
     marginLeft: -8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     borderRadius: 12,
   },
   headerTextContainer: {
@@ -235,9 +259,12 @@ const styles = StyleSheet.create({
   },
   statsContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     backgroundColor: '#fff',
     borderRadius: 20,
-    padding: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 15,
     marginBottom: 24,
     elevation: 4,
     shadowColor: '#000',
@@ -246,13 +273,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   statBox: {
-    flex: 1,
+    width: '33%',
     alignItems: 'center',
-  },
-  statDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: '#f3f4f6',
+    paddingVertical: 10,
   },
   statValue: {
     fontSize: 24,

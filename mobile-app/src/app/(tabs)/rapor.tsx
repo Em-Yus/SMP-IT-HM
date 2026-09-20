@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { FileText, ChevronLeft, Award } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +13,15 @@ export default function RaporScreen() {
 
   useEffect(() => {
     fetchRapor();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\rapor.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchRapor();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchRapor = async () => {
@@ -120,7 +129,7 @@ export default function RaporScreen() {
         ) : (
           <Animatable.View animation="fadeInUp" duration={600}>
             {/* Hero Card */}
-            <LinearGradient colors={['#6366f1', '#4338ca']} style={styles.heroCard} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+            <LinearGradient colors={['#6366f1', '#2a2c87']} style={styles.heroCard} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
               <Award size={80} color="rgba(255,255,255,0.2)" style={styles.heroIconBg} />
               <Text style={styles.heroSubtitle}>Nilai Rata-rata Keseluruhan</Text>
               <Text style={styles.heroTitle}>{rataRata}</Text>
@@ -163,12 +172,12 @@ export default function RaporScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  container: { flex: 1, backgroundColor: '#daffcc' },
   header: {
     flexDirection: 'row', alignItems: 'center', paddingTop: 48, paddingHorizontal: 20, paddingBottom: 20,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#daffcc',
   },
-  backBtn: { padding: 8, marginRight: 12, marginLeft: -8, backgroundColor: '#f3f4f6', borderRadius: 12 },
+  backBtn: { padding: 8, marginRight: 12, marginLeft: -8, backgroundColor: '#daffcc', borderRadius: 12 },
   headerTextContainer: { flex: 1 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#111827' },
   headerSubtitle: { fontSize: 14, color: '#6b7280', marginTop: 2 },

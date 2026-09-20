@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { Trophy, ChevronLeft, Medal, Star } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -13,6 +13,15 @@ export default function PrestasiScreen() {
 
   useEffect(() => {
     fetchPrestasi();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\prestasi.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchPrestasi();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchPrestasi = async () => {
@@ -115,7 +124,7 @@ export default function PrestasiScreen() {
 
             {/* Ekskul Section */}
             <View style={styles.sectionHeader}>
-              <Star size={20} color="#3b82f6" />
+              <Star size={20} color="#85c226" />
               <Text style={styles.sectionTitle}>Ekstrakurikuler</Text>
             </View>
 
@@ -128,8 +137,8 @@ export default function PrestasiScreen() {
             ) : (
               ekskulData.map((item, idx) => (
                 <View key={`eks-${item.id || idx}`} style={styles.card}>
-                  <View style={[styles.cardIcon, { backgroundColor: '#eff6ff' }]}>
-                    <Star size={24} color="#3b82f6" />
+                  <View style={[styles.cardIcon, { backgroundColor: '#daffcc' }]}>
+                    <Star size={24} color="#85c226" />
                   </View>
                   <View style={styles.cardContent}>
                     <Text style={styles.cardTitle}>{item.data_ekskul?.nama_ekskul || 'Ekstrakurikuler'}</Text>
@@ -153,12 +162,12 @@ export default function PrestasiScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f9fafb' },
+  container: { flex: 1, backgroundColor: '#daffcc' },
   header: {
     flexDirection: 'row', alignItems: 'center', paddingTop: 48, paddingHorizontal: 20, paddingBottom: 20,
-    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#f3f4f6',
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#daffcc',
   },
-  backBtn: { padding: 8, marginRight: 12, marginLeft: -8, backgroundColor: '#f3f4f6', borderRadius: 12 },
+  backBtn: { padding: 8, marginRight: 12, marginLeft: -8, backgroundColor: '#daffcc', borderRadius: 12 },
   headerTextContainer: { flex: 1 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#111827' },
   headerSubtitle: { fontSize: 14, color: '#6b7280', marginTop: 2 },
@@ -179,5 +188,5 @@ const styles = StyleSheet.create({
   cardSubtitle: { fontSize: 14, color: '#4b5563', marginBottom: 2 },
   cardDesc: { fontSize: 13, color: '#6b7280' },
   badge: { backgroundColor: '#dbeafe', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-  badgeText: { color: '#2563eb', fontWeight: 'bold', fontSize: 12 },
+  badgeText: { color: '#2a2c87', fontWeight: 'bold', fontSize: 12 },
 });

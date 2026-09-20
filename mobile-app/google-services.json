@@ -7,6 +7,44 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:21803542376:android:d6b1e714c36c983ab6d8dd",
+        "android_client_info": {
+          "package_name": "com.emyusdev.smpithm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNftAT71xl8KlGtoD7dgyUkVYHz9LQGbs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:21803542376:android:d6b1e714c36c983ab6d8dd",
+        "android_client_info": {
+          "package_name": "com.emyusdev.smpithm.preview"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNftAT71xl8KlGtoD7dgyUkVYHz9LQGbs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:21803542376:android:2ab49544959b9931b6d8dd",
         "android_client_info": {
           "package_name": "com.emyusvibecoder.siswasmpithm"

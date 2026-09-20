@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { Bell, ChevronLeft } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -11,6 +11,15 @@ export default function PengumumanScreen() {
 
   useEffect(() => {
     fetchPengumuman();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\pengumuman.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchPengumuman();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchPengumuman = async () => {
@@ -90,7 +99,7 @@ export default function PengumumanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#daffcc',
   },
   header: {
     flexDirection: 'row',
@@ -100,13 +109,13 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   backBtn: {
     padding: 8,
     marginRight: 12,
     marginLeft: -8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     borderRadius: 12,
   },
   headerTextContainer: {
@@ -191,7 +200,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     marginBottom: 12,
   },
   cardContent: {

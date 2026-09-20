@@ -1,16 +1,19 @@
 import { Tabs } from 'expo-router';
 import { Home, CalendarDays, Wallet, User } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+  
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
-        tabBarActiveTintColor: '#4f46e5', // indigo-600
+        tabBarActiveTintColor: '#85c226', // Hijau SMP IT HM
         tabBarInactiveTintColor: '#9ca3af', // gray-400
         tabBarStyle: {
-          paddingBottom: 5,
-          height: 60,
+          paddingBottom: insets.bottom + 5,
+          height: 60 + insets.bottom,
         },
       }}
     >
@@ -22,9 +25,9 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="jadwal"
+        name="presensi"
         options={{
-          title: 'Jadwal',
+          title: 'Presensi',
           tabBarIcon: ({ color, size }) => <CalendarDays color={color} size={size} />,
         }}
       />
@@ -43,17 +46,17 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="jadwal"
+        options={{
+          href: null,
+          title: 'Jadwal',
+        }}
+      />
+      <Tabs.Screen
         name="nilai"
         options={{
           href: null,
           title: 'Nilai Akademik',
-        }}
-      />
-      <Tabs.Screen
-        name="presensi"
-        options={{
-          href: null,
-          title: 'Presensi',
         }}
       />
       <Tabs.Screen
@@ -82,6 +85,13 @@ export default function TabsLayout() {
         options={{
           href: null,
           title: 'Pengumuman',
+        }}
+      />
+      <Tabs.Screen
+        name="ekskul"
+        options={{
+          href: null,
+          title: 'Ekstrakurikuler',
         }}
       />
     </Tabs>

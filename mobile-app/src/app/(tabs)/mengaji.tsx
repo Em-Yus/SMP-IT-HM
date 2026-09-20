@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import {   View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity , DeviceEventEmitter , ToastAndroid, Platform } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { Book, ChevronLeft, MapPin, User, Star } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,9 +10,19 @@ export default function MengajiScreen() {
   const [loading, setLoading] = useState(true);
   const [kelasData, setKelasData] = useState<any>(null);
   const [namaKelas, setNamaKelas] = useState<string>('');
+  const [anggota, setAnggota] = useState<any[]>([]);
 
   useEffect(() => {
     fetchMengajiData();
+  
+    const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
+      console.log('Global refresh triggered in ' + 'src\app\(tabs)\mengaji.tsx');
+      if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
+    fetchMengajiData();
+  
+    });
+
+    return () => listener.remove();
   }, []);
 
   const fetchMengajiData = async () => {
@@ -45,6 +55,18 @@ export default function MengajiScreen() {
           .maybeSingle();
           
         if (data) setKelasData(data);
+        
+        const { data: members } = await supabase
+          .from('data_siswa')
+          .select('id, nama, kelas, status_keaktifan')
+          .eq('kelas_mengaji', userKelasMengaji)
+          .order('nama', { ascending: true });
+          
+        if (members) {
+          // Hanya tampilkan yang aktif
+          const activeMembers = members.filter(m => m.status_keaktifan !== 'Lulus/Keluar');
+          setAnggota(activeMembers);
+        }
       }
       
       setLoading(false);
@@ -94,7 +116,7 @@ export default function MengajiScreen() {
             <View style={styles.infoCard}>
               <View style={styles.infoRow}>
                 <View style={[styles.iconBox, { backgroundColor: '#eef2ff' }]}>
-                  <User size={24} color="#4f46e5" />
+                  <User size={24} color="#2a2c87" />
                 </View>
                 <View style={styles.infoTextContainer}>
                   <Text style={styles.infoLabel}>Pengajar (Ust/Ustz)</Text>
@@ -115,6 +137,25 @@ export default function MengajiScreen() {
               </View>
             </View>
 
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Teman Mengaji ({anggota.length})</Text>
+            
+            <View style={styles.anggotaContainer}>
+              {anggota.map((item, index) => (
+                <View key={item.id || index} style={styles.anggotaItem}>
+                  <View style={styles.anggotaAvatar}>
+                    <Text style={styles.anggotaAvatarText}>{item.nama?.charAt(0) || 'S'}</Text>
+                  </View>
+                  <View style={styles.anggotaTextContainer}>
+                    <Text style={styles.anggotaName}>{item.nama}</Text>
+                    <Text style={styles.anggotaClass}>Kelas {item.kelas || '-'}</Text>
+                  </View>
+                </View>
+              ))}
+              {anggota.length === 0 && (
+                <Text style={styles.emptyText}>Belum ada anggota kelas mengaji.</Text>
+              )}
+            </View>
+
           </Animatable.View>
         )}
         <View style={{ height: 40 }} />
@@ -126,7 +167,7 @@ export default function MengajiScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#daffcc',
   },
   header: {
     flexDirection: 'row',
@@ -136,13 +177,13 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
+    borderBottomColor: '#daffcc',
   },
   backBtn: {
     padding: 8,
     marginRight: 12,
     marginLeft: -8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#daffcc',
     borderRadius: 12,
   },
   headerTextContainer: {
@@ -251,13 +292,61 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   infoValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
     color: '#1f2937',
+    fontWeight: '600',
   },
   divider: {
     height: 1,
-    backgroundColor: '#f3f4f6',
-    marginVertical: 16,
+    backgroundColor: '#daffcc',
+    marginVertical: 4,
+    marginLeft: 60,
   },
+  anggotaContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    elevation: 2,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3,
+  },
+  anggotaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  anggotaAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#85c226',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  anggotaAvatarText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 18,
+  },
+  anggotaTextContainer: {
+    flex: 1,
+  },
+  anggotaName: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#1f2937',
+  },
+  anggotaClass: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#6b7280',
+    fontStyle: 'italic',
+    padding: 20,
+  }
 });
