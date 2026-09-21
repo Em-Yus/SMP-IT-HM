@@ -24,7 +24,8 @@ import {
   AlertCircle,
   Lock,
   FileQuestion,
-  Award
+  Award,
+  Building
 } from 'lucide-react-native';
 import { supabase } from '../../services/supabaseClient';
 
@@ -53,37 +54,119 @@ export default function CbtJadwalSiswa() {
       const parsedSiswa = JSON.parse(userStr);
       setSiswa(parsedSiswa);
 
-      // Cari kelas_id siswa jika ada
-      let kelasId = null;
-      if (parsedSiswa.kelas) {
-        const { data: kelasData } = await supabase
-          .from('data_kelas')
-          .select('id')
-          .eq('nama_kelas', parsedSiswa.kelas)
-          .maybeSingle();
-        if (kelasData) kelasId = kelasData.id;
+      // Ambil data siswa segar dari Supabase
+      const { data: dbSiswa } = await supabase
+        .from('data_siswa')
+        .select('id, nama, kelas, status_keaktifan')
+        .eq('id', parsedSiswa.id)
+        .maybeSingle();
+
+      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+        Alert.alert(
+          'Akses Ditolak',
+          `Akun Anda berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang dapat melihat dan mengikuti ujian CBT.`,
+          [{ text: 'Kembali', onPress: () => router.back() }]
+        );
+        setJadwalList([]);
+        setLoading(false);
+        return;
       }
 
-      // Ambil jadwal ujian yang relevan
+      const kelasSiswa = dbSiswa?.kelas || parsedSiswa.kelas || '';
+
+      // Tentukan kelasId dan tingkatSiswa
+      let kelasId = null;
+      let tingkatSiswa: string | null = null;
+      if (kelasSiswa) {
+        const { data: kelasData } = await supabase
+          .from('data_kelas')
+          .select('id, tingkat')
+          .ilike('nama_kelas', kelasSiswa.trim())
+          .maybeSingle();
+        if (kelasData) {
+          kelasId = kelasData.id;
+          if (kelasData.tingkat) tingkatSiswa = String(kelasData.tingkat);
+        }
+      }
+
+      if (!tingkatSiswa && kelasSiswa) {
+        const upper = kelasSiswa.toUpperCase().trim();
+        if (upper.includes('VII') && !upper.includes('VIII')) tingkatSiswa = '7';
+        else if (upper.includes('VIII')) tingkatSiswa = '8';
+        else if (upper.includes('IX')) tingkatSiswa = '9';
+        else {
+          const m = upper.match(/\b([789])\b/);
+          if (m) tingkatSiswa = m[1];
+        }
+      }
+
+      // 1. Cek apakah siswa ini terdaftar di cbt_peserta_ruang
+      const { data: pRuangData } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('jadwal_id, ruang_id, nomor_meja, data_ruang(nama_ruang)')
+        .eq('siswa_id', parsedSiswa.id);
+
+      const pRuangMap = new Map();
+      (pRuangData || []).forEach((pr: any) => {
+        pRuangMap.set(Number(pr.jadwal_id), pr);
+      });
+      const allocatedJadwalIds = Array.from(pRuangMap.keys());
+
+      // 2. Ambil jadwal ujian yang relevan
       let query = supabase
         .from('cbt_jadwal_ujian')
         .select(`
           id, nama_ujian, jenis_ujian, tanggal_ujian, jam_mulai, jam_selesai, durasi_menit, status,
           mapel_id, data_mapel(nama_mapel),
           guru_id, data_guru:data_guru!cbt_jadwal_ujian_guru_id_fkey(nama),
-          bank_soal_id, cbt_bank_soal(judul, total_soal)
+          bank_soal_id, cbt_bank_soal(id, judul, total_soal, tingkat_kelas)
         `)
         .order('tanggal_ujian', { ascending: true })
         .order('jam_mulai', { ascending: true });
 
-      if (kelasId) {
+      if (allocatedJadwalIds.length > 0) {
+        if (kelasId) {
+          query = query.or(`id.in.(${allocatedJadwalIds.join(',')}),kelas_id.eq.${kelasId},kelas_id.is.null`);
+        } else {
+          query = query.or(`id.in.(${allocatedJadwalIds.join(',')}),kelas_id.is.null`);
+        }
+      } else if (kelasId) {
         query = query.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
       }
 
       const { data: jadwalData, error: jadwalErr } = await query;
       if (jadwalErr) throw jadwalErr;
 
-      setJadwalList(jadwalData || []);
+      // Ambil bank soal yang cocok dengan tingkat kelas siswa
+      const { data: availableBanks } = await supabase
+        .from('cbt_bank_soal')
+        .select('id, mapel_id, tingkat_kelas')
+        .or(`tingkat_kelas.eq.${tingkatSiswa || '0'},tingkat_kelas.eq.Semua`);
+
+      const availableMapelIds = new Set((availableBanks || []).map(b => Number(b.mapel_id)));
+      const availableBankIds = new Set((availableBanks || []).map(b => Number(b.id)));
+
+      const filteredJadwalByGrade = (jadwalData || []).filter((j: any) => {
+        // Jika siswa dialokasikan di cbt_peserta_ruang, PASTI BERHAK MENGIKUTI
+        if (pRuangMap.has(Number(j.id))) return true;
+
+        if (j.bank_soal_id && availableBankIds.has(Number(j.bank_soal_id))) return true;
+        if (j.mapel_id && availableMapelIds.has(Number(j.mapel_id))) return true;
+        const bTingkat = Array.isArray(j.cbt_bank_soal)
+          ? j.cbt_bank_soal[0]?.tingkat_kelas
+          : j.cbt_bank_soal?.tingkat_kelas;
+        if (!bTingkat || bTingkat === 'Semua') return true;
+        return false;
+      }).map((j: any) => {
+        const pr = pRuangMap.get(Number(j.id));
+        return {
+          ...j,
+          ruang_nama: pr?.data_ruang?.nama_ruang || null,
+          nomor_meja: pr?.nomor_meja || null
+        };
+      });
+
+      setJadwalList(filteredJadwalByGrade);
 
       // Ambil sesi ujian siswa untuk jadwal-jadwal ini
       if (jadwalData && jadwalData.length > 0 && parsedSiswa.id) {
@@ -296,6 +379,14 @@ export default function CbtJadwalSiswa() {
                         {jadwal.cbt_bank_soal?.total_soal ? `${jadwal.cbt_bank_soal.total_soal} Butir Soal` : 'Soal CBT'}
                       </Text>
                     </View>
+                    {jadwal.ruang_nama && (
+                      <View style={styles.metaRow}>
+                        <Building size={15} color="#2563eb" />
+                        <Text style={[styles.metaText, { color: '#1e40af', fontWeight: 'bold' }]}>
+                          Ruang: {jadwal.ruang_nama}{jadwal.nomor_meja ? ` • Meja #${jadwal.nomor_meja}` : ''}
+                        </Text>
+                      </View>
+                    )}
                     {jadwal.data_guru?.nama && (
                       <View style={styles.metaRow}>
                         <UserCheck size={15} color="#6b7280" />

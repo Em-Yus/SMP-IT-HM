@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { User, BookOpen, Clock, CalendarDays, Award, Megaphone, Wallet, ChevronRight } from 'lucide-react';
+import { User, BookOpen, Clock, CalendarDays, Award, Megaphone, Wallet, ChevronRight, Laptop } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { getOperationalDayName } from '../utils/dateUtils';
 
@@ -257,10 +257,49 @@ export default function DashboardSiswa() {
         if (!sessionStr) return;
         const u = JSON.parse(sessionStr);
 
+        // Validasi status keaktifan: Hanya siswa Aktif yang berhak melihat dan mengakses ujian aktif
+        const { data: dbCheckSiswa } = await supabase
+          .from('data_siswa')
+          .select('status_keaktifan')
+          .eq('id', u.id)
+          .maybeSingle();
+
+        if (dbCheckSiswa?.status_keaktifan && dbCheckSiswa.status_keaktifan.toLowerCase() !== 'aktif') {
+          setActiveExam(null);
+          return;
+        }
+
         let kelasId = u.kelas_id;
-        if (!kelasId && u.kelas) {
-          const { data: kData } = await supabase.from('data_kelas').select('id').ilike('nama_kelas', u.kelas).maybeSingle();
-          if (kData) kelasId = kData.id;
+        let tingkatSiswa = null;
+        if (u.kelas) {
+          const { data: kData } = await supabase.from('data_kelas').select('id, tingkat').ilike('nama_kelas', u.kelas).maybeSingle();
+          if (kData) {
+            kelasId = kData.id;
+            if (kData.tingkat) tingkatSiswa = String(kData.tingkat);
+          }
+        }
+
+        if (!tingkatSiswa && u.kelas) {
+          const upper = u.kelas.toUpperCase().trim();
+          if (upper.includes('VII') && !upper.includes('VIII')) tingkatSiswa = '7';
+          else if (upper.includes('VIII')) tingkatSiswa = '8';
+          else if (upper.includes('IX')) tingkatSiswa = '9';
+          else {
+            const m = upper.match(/\b([789])\b/);
+            if (m) tingkatSiswa = m[1];
+          }
+        }
+
+        // Cek alokasi ruangan siswa di cbt_peserta_ruang
+        let allocatedJadwalIds = [];
+        if (u.id) {
+          const { data: pRuangData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select('jadwal_id')
+            .eq('siswa_id', u.id);
+          if (pRuangData && pRuangData.length > 0) {
+            allocatedJadwalIds = pRuangData.map(p => Number(p.jadwal_id)).filter(Boolean);
+          }
         }
 
         const now = new Date();
@@ -275,23 +314,40 @@ export default function DashboardSiswa() {
           .select(`
             *,
             data_mapel(nama_mapel),
-            data_ruang(nama_ruang)
-          `)
-          .eq('tanggal_ujian', todayStr);
+            data_ruang(nama_ruang),
+            cbt_bank_soal(id, tingkat_kelas)
+          `);
 
-        if (kelasId) {
-          cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+        if (allocatedJadwalIds.length > 0) {
+          cbtQuery = cbtQuery.or(`id.in.(${allocatedJadwalIds.join(',')}),tanggal_ujian.eq.${todayStr}`);
         } else {
-          cbtQuery = cbtQuery.is('kelas_id', null);
+          cbtQuery = cbtQuery.eq('tanggal_ujian', todayStr);
+          if (kelasId) {
+            cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+          } else {
+            cbtQuery = cbtQuery.is('kelas_id', null);
+          }
         }
 
         const { data: jadwals } = await cbtQuery;
 
         if (jadwals && jadwals.length > 0) {
           const active = jadwals.find(j => {
+            const isAllocated = allocatedJadwalIds.includes(Number(j.id));
+            const isToday = j.tanggal_ujian === todayStr;
             const mulai = j.jam_mulai?.slice(0, 5) || '00:00';
             const selesai = j.jam_selesai?.slice(0, 5) || '23:59';
-            return currentTime >= mulai && currentTime <= selesai;
+            const inTime = isToday && (currentTime >= mulai && currentTime <= selesai);
+            const isStatusActive = j.status === 'aktif' || j.status === 'berlangsung';
+
+            if (!inTime && !isStatusActive) return false;
+
+            if (isAllocated) return true;
+
+            const bTingkat = j.cbt_bank_soal?.tingkat_kelas;
+            if (!bTingkat || bTingkat === 'Semua' || bTingkat === tingkatSiswa) return true;
+
+            return false;
           });
           setActiveExam(active || null);
         } else {
@@ -345,6 +401,26 @@ export default function DashboardSiswa() {
           </Link>
         </div>
       )}
+
+      {/* Quick Access Jadwal & Ujian CBT (Selalu Muncul) */}
+      <div className="mb-6 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-primary flex items-center justify-center shrink-0">
+            <Laptop size={22} />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-gray-800">Ujian Berbasis Komputer (CBT)</h4>
+            <p className="text-xs text-gray-500">Lihat jadwal ujian, alokasi ruang ujian, dan nomor meja Anda.</p>
+          </div>
+        </div>
+        <Link
+          to="/cbt/jadwal-siswa"
+          className="px-4 py-2 bg-primary hover:bg-primary/90 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm shrink-0 self-end sm:self-auto"
+        >
+          <span>Buka Jadwal CBT</span>
+          <ChevronRight size={14} />
+        </Link>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         <div className="bg-gradient-to-br from-orange-500 to-accent rounded-xl p-6 text-white shadow-lg relative overflow-hidden">

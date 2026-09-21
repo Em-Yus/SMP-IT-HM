@@ -6,7 +6,8 @@ import {
   Calendar, Clock, BookOpen, Users, ShieldAlert, Plus, Edit3,
   Trash2, Video, Award, FileText, CheckCircle2, AlertTriangle,
   FileCheck, Printer, ArrowUpDown, Filter, LayoutGrid, List,
-  Settings, Eye, ShieldCheck, X
+  Settings, Eye, ShieldCheck, X, Building, Shuffle, Check,
+  Search, RotateCcw
 } from 'lucide-react';
 import CbtPengaturanUjianModal from '../../components/cbt/CbtPengaturanUjianModal';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
@@ -33,7 +34,20 @@ export default function CbtJadwalUjian() {
   const [viewMode, setViewMode] = useState('card'); // 'card' | 'list'
   const [filterHari, setFilterHari] = useState(() => getOperationalDayName());
   const [filterGuru, setFilterGuru] = useState('');
-  const [sortBy, setSortBy] = useState('jam_asc'); // 'jam_asc' | 'jam_desc' | 'mapel_asc' | 'mapel_desc'
+  const [sortBy, setSortBy] = useState('jam_asc');
+
+  // States Pengaturan Ruang Peserta
+  const [isRuangPesertaModalOpen, setIsRuangPesertaModalOpen] = useState(false);
+  const [targetJadwalForRuang, setTargetJadwalForRuang] = useState(null);
+  const [modeRuang, setModeRuang] = useState('default'); // 'default' | 'acak' | 'custom'
+  const [selectedActiveRuangIds, setSelectedActiveRuangIds] = useState([]);
+  const [siswaPesertaList, setSiswaPesertaList] = useState([]);
+  const [alokasiRuangMap, setAlokasiRuangMap] = useState({});
+  const [customTargetRuangId, setCustomTargetRuangId] = useState('');
+  const [loadingRuangPeserta, setLoadingRuangPeserta] = useState(false);
+  const [savingRuangPeserta, setSavingRuangPeserta] = useState(false);
+  const [searchSiswaRuang, setSearchSiswaRuang] = useState('');
+  const [filterKelasRuang, setFilterKelasRuang] = useState('Semua');
 
   // Modal Pilih Kelas (Untuk Tombol Soal Ujian)
   const [isKelasModalOpen, setIsKelasModalOpen] = useState(false);
@@ -135,7 +149,7 @@ export default function CbtJadwalUjian() {
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle(),
-          supabase.from('data_kelas').select('id, nama_kelas').order('nama_kelas'),
+          supabase.from('data_kelas').select('id, nama_kelas, ruang_id').order('nama_kelas'),
           supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
           supabase.from('data_guru').select('id, nama').order('nama'),
           supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
@@ -350,8 +364,354 @@ export default function CbtJadwalUjian() {
     return acc;
   }, {});
 
-  const handlePrintRekap = () => {
-    window.print();
+  const handlePrintRekap = async () => {
+    try {
+      const [lembagaRes, panitiaRes, sopRes, guruRes] = await Promise.all([
+        supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
+        supabase.from('cbt_struktur_panitia').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('data_guru').select('id, nama, nip'),
+      ]);
+
+      const lembaga = lembagaRes.data || {};
+      const sop = sopRes.data || activeSop || {};
+      const panitia = panitiaRes.data || activePanitia || {};
+      const allGuru = guruRes.data || [];
+
+      let ketuaNama = 'Ketua Panitia';
+      let ketuaNip = '-';
+      if (panitia.ketua_panitia_guru_id) {
+        const found = allGuru.find((g) => Number(g.id) === Number(panitia.ketua_panitia_guru_id));
+        if (found) {
+          ketuaNama = found.nama;
+          ketuaNip = found.nip || '-';
+        }
+      }
+
+      const kepsekNama = lembaga.kepala_sekolah || 'Kepala Sekolah';
+      const kepsekNip = lembaga.nip_kepala_sekolah || '-';
+
+      const sorted = [...jadwalList].sort((a, b) => {
+        return (a.tanggal_ujian || '').localeCompare(b.tanggal_ujian || '') || (a.jam_mulai || '').localeCompare(b.jam_mulai || '');
+      });
+
+      const formatDateIndo = (dateStr) => {
+        if (!dateStr) return '-';
+        const d = new Date(dateStr);
+        const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+        const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+        return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+      };
+
+      const rowsHtml = sorted.map((j, idx) => `
+        <tr style="height:32px; ${idx % 2 === 1 ? 'background-color:#f9fafb;' : ''}">
+          <td style="border:1px solid #000; text-align:center; font-weight:bold;">${idx + 1}</td>
+          <td style="border:1px solid #000; padding:0 8px; font-weight:600;">${formatDateIndo(j.tanggal_ujian)}</td>
+          <td style="border:1px solid #000; text-align:center; font-family:monospace;">${j.jam_mulai?.substring(0, 5)} - ${j.jam_selesai?.substring(0, 5)}</td>
+          <td style="border:1px solid #000; text-align:center;">${j.durasi_menit}m</td>
+          <td style="border:1px solid #000; text-align:center; font-weight:bold;">${j.jenis_ujian || 'CBT'}</td>
+          <td style="border:1px solid #000; padding:0 8px; font-weight:700;">${j.data_mapel?.nama_mapel || j.nama_ujian}</td>
+        </tr>
+      `).join('');
+
+      let ttdKetuaHtml = '';
+      if (sop?.tanda_tangan_ketua) {
+        if (sop.tanda_tangan_ketua.startsWith('<svg')) {
+          ttdKetuaHtml = `<div style="height:65px; display:flex; align-items:center; justify-content:center;">${sop.tanda_tangan_ketua}</div>`;
+        } else {
+          ttdKetuaHtml = `<img src="${sop.tanda_tangan_ketua}" style="max-height:65px; max-width:160px; object-fit:contain;" />`;
+        }
+      } else {
+        ttdKetuaHtml = '<div style="height:65px;"></div>';
+      }
+
+      const printHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Jadwal Pelaksanaan Ujian CBT - ${lembaga.nama_lembaga || 'SMP IT HM'}</title>
+          <style>
+            @page { size: A4 portrait; margin: 15mm; }
+            body { font-family: 'Times New Roman', Times, serif; font-size: 11pt; color: #000; line-height: 1.3; margin: 0; padding: 20px; }
+            .header-table { width: 100%; border-collapse: collapse; border-bottom: 3px double #000; padding-bottom: 8px; margin-bottom: 12px; }
+            .kop-title { font-size: 15pt; font-weight: bold; text-transform: uppercase; margin: 0; }
+            .kop-sub { font-size: 9pt; margin: 2px 0; }
+            .doc-title { text-align: center; font-weight: bold; text-decoration: underline; font-size: 13pt; text-transform: uppercase; margin: 12px 0 2px 0; }
+            .content-table { width: 100%; border-collapse: collapse; border: 1px solid #000; font-size: 10pt; font-family: Arial, sans-serif; margin-top: 14px; }
+            .content-table th { border: 1px solid #000; background-color: #f1f5f9; padding: 6px 4px; font-weight: bold; text-align: center; }
+            .ttd-container { margin-top: 35px; display: flex; justify-content: space-between; page-break-inside: avoid; }
+            .ttd-box { width: 45%; text-align: center; font-size: 10.5pt; }
+          </style>
+        </head>
+        <body>
+          <table class="header-table">
+            <tr>
+              <td style="width: 75px; text-align: center; vertical-align: middle;">
+                ${lembaga.logo_url ? `<img src="${lembaga.logo_url}" style="width: 65px; height: 65px; object-fit: contain;" />` : ''}
+              </td>
+              <td style="text-align: center; vertical-align: middle;">
+                <div style="font-size: 11pt; font-weight: bold; text-transform: uppercase;">${lembaga.nama_yayasan || 'YAYASAN HIDAYATUL MUBTADI-IEN'}</div>
+                <div class="kop-title">${lembaga.nama_lembaga || 'SMP IT HIDAYATUL MUBTADI-IEN'}</div>
+                <div class="kop-sub">NPSN: ${lembaga.npsn || '70004822'} | ${lembaga.alamat || 'Subang, Jawa Barat'}</div>
+                <div class="kop-sub" style="font-size: 8pt; color: #444;">Telp: ${lembaga.telepon || '-'} | Email: ${lembaga.email || '-'}</div>
+              </td>
+            </tr>
+          </table>
+
+          <div class="doc-title">JADWAL PELAKSANAAN UJIAN BERBASIS KOMPUTER (CBT)</div>
+          <div style="text-align: center; font-size: 10pt; font-weight: bold; margin-bottom: 12px;">TAHUN AJARAN ${sop.tahun_ajaran || '2025/2026'}</div>
+
+          <table class="content-table">
+            <thead>
+              <tr>
+                <th style="width: 32px;">No</th>
+                <th style="width: 150px; text-align: left; padding-left: 8px;">Hari, Tanggal</th>
+                <th style="width: 95px;">Waktu (WIB)</th>
+                <th style="width: 55px;">Durasi</th>
+                <th style="width: 65px;">Jenis</th>
+                <th style="text-align: left; padding-left: 8px;">Mata Pelajaran</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="6" style="text-align:center; padding:15px;">Belum ada jadwal ujian yang terdaftar.</td></tr>'}
+            </tbody>
+          </table>
+
+          <div class="ttd-container">
+            <div class="ttd-box">
+              <p style="margin: 0;">Mengetahui,</p>
+              <p style="margin: 2px 0 0 0; font-weight: bold;">Kepala Sekolah,</p>
+              <div style="height: 65px;"></div>
+              <p style="margin: 0; font-weight: bold; text-decoration: underline;">${kepsekNama}</p>
+              <p style="margin: 2px 0 0 0; font-size: 9pt; color: #444;">NIP. ${kepsekNip}</p>
+            </div>
+            <div class="ttd-box">
+              <p style="margin: 0;">${sop.titimangsa_tempat || 'Compreng'}, ${formatDateIndo(sop.titimangsa_tanggal || new Date().toISOString().split('T')[0])}</p>
+              <p style="margin: 2px 0 0 0; font-weight: bold;">Ketua Panitia CBT,</p>
+              ${ttdKetuaHtml}
+              <p style="margin: 0; font-weight: bold; text-decoration: underline;">${ketuaNama}</p>
+              <p style="margin: 2px 0 0 0; font-size: 9pt; color: #444;">NIP. ${ketuaNip}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      let iframe = document.getElementById('print-rekap-iframe');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'print-rekap-iframe';
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        document.body.appendChild(iframe);
+      }
+      const doc = iframe.contentWindow.document;
+      doc.open();
+      doc.write(printHtml);
+      doc.close();
+      iframe.contentWindow.focus();
+      setTimeout(() => {
+        iframe.contentWindow.print();
+      }, 500);
+    } catch (e) {
+      console.error('Error print rekap on web:', e);
+      window.print();
+    }
+  };
+
+  // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Bukan Kantor)
+  const getRuangDefaultForSiswa = (siswa, kList, rList) => {
+    const sKelas = (siswa?.kelas || '').trim().toLowerCase();
+
+    // 1. Cek dari data_kelas yang memiliki ruang_id bukan kantor/teras
+    const matchedK = (kList || []).find((k) => (k.nama_kelas || '').trim().toLowerCase() === sKelas);
+    if (matchedK && matchedK.ruang_id) {
+      const foundR = (rList || []).find((r) => Number(r.id) === Number(matchedK.ruang_id));
+      if (
+        foundR &&
+        !foundR.nama_ruang.toLowerCase().includes('kantor') &&
+        !foundR.nama_ruang.toLowerCase().includes('teras')
+      ) {
+        return String(foundR.id);
+      }
+    }
+
+    const nonKantor = (rList || []).filter((r) => {
+      const nr = (r.nama_ruang || '').toLowerCase();
+      return !nr.includes('kantor') && !nr.includes('teras');
+    });
+
+    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang
+    if (sKelas.includes('vii') || sKelas.startsWith('7')) {
+      const r7 = nonKantor.find(
+        (r) => r.nama_ruang.toLowerCase().includes('7') || r.nama_ruang.toLowerCase().includes('vii')
+      );
+      if (r7) return String(r7.id);
+    }
+    if (sKelas.includes('viii') || sKelas.startsWith('8')) {
+      const r8 = nonKantor.find(
+        (r) => r.nama_ruang.toLowerCase().includes('8') || r.nama_ruang.toLowerCase().includes('viii')
+      );
+      if (r8) return String(r8.id);
+    }
+    if (sKelas.includes('ix-a') || sKelas.includes('9-a') || sKelas.includes('9a')) {
+      const r9a = nonKantor.find((r) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9a') || nr.includes('ixa');
+      });
+      if (r9a) return String(r9a.id);
+    }
+    if (sKelas.includes('ix-b') || sKelas.includes('9-b') || sKelas.includes('9b')) {
+      const r9b = nonKantor.find((r) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9b') || nr.includes('ixb');
+      });
+      if (r9b) return String(r9b.id);
+    }
+    if (sKelas.includes('ix') || sKelas.startsWith('9')) {
+      const r9 = nonKantor.find(
+        (r) => r.nama_ruang.toLowerCase().includes('9') || r.nama_ruang.toLowerCase().includes('ix')
+      );
+      if (r9) return String(r9.id);
+    }
+
+    if (matchedK && matchedK.ruang_id) return String(matchedK.ruang_id);
+    if (nonKantor.length > 0) return String(nonKantor[0].id);
+    return rList?.[0] ? String(rList[0].id) : '1';
+  };
+
+  // Handlers Pengaturan Ruang Peserta
+  const handleOpenRuangPesertaModal = async (jadwal) => {
+    const target = jadwal || (jadwalList.length > 0 ? jadwalList[0] : null);
+    if (!target) {
+      Swal.fire('Peringatan', 'Tidak ada jadwal ujian yang dipilih.', 'warning');
+      return;
+    }
+    setTargetJadwalForRuang(target);
+    setIsRuangPesertaModalOpen(true);
+    setLoadingRuangPeserta(true);
+
+    try {
+      const { data: sData } = await supabase
+        .from('data_siswa')
+        .select('id, nama, nipd, nisn, kelas, status_keaktifan')
+        .eq('status_keaktifan', 'Aktif')
+        .neq('kelas', 'Calon Siswa')
+        .order('kelas', { ascending: true })
+        .order('nama', { ascending: true });
+
+      const allSiswa = sData || [];
+      setSiswaPesertaList(allSiswa);
+
+      const { data: existingAlloc } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('siswa_id, ruang_id')
+        .eq('jadwal_id', target.id);
+
+      const currentMode = target.mode_ruang || 'default';
+      setModeRuang(currentMode);
+
+      const allRIds = (ruangList || []).map((r) => String(r.id));
+      setSelectedActiveRuangIds(allRIds);
+
+      const newMap = {};
+      if (existingAlloc && existingAlloc.length > 0) {
+        existingAlloc.forEach((a) => {
+          newMap[String(a.siswa_id)] = String(a.ruang_id);
+        });
+      } else {
+        allSiswa.forEach((s) => {
+          const targetRId = getRuangDefaultForSiswa(s, kelasList, ruangList);
+          newMap[String(s.id)] = String(targetRId);
+        });
+      }
+      setAlokasiRuangMap(newMap);
+
+      // Inisialisasi ruangan target untuk mode custom (prioritas ruang kelas non kantor)
+      const firstClassroom = (ruangList || []).find((r) => !r.nama_ruang.toLowerCase().includes('kantor')) || ruangList?.[0];
+      if (firstClassroom) {
+        setCustomTargetRuangId(String(firstClassroom.id));
+      }
+    } catch (err) {
+      console.error('Error open pengaturan ruang peserta on web:', err);
+    } finally {
+      setLoadingRuangPeserta(false);
+    }
+  };
+
+  const handleAcakRuangan = () => {
+    if (selectedActiveRuangIds.length === 0) {
+      Swal.fire('Peringatan', 'Silakan pilih minimal 1 ruangan untuk pengacakan.', 'warning');
+      return;
+    }
+    const shuffled = [...siswaPesertaList];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    const newMap = {};
+    shuffled.forEach((s, idx) => {
+      const rId = selectedActiveRuangIds[idx % selectedActiveRuangIds.length];
+      newMap[String(s.id)] = String(rId);
+    });
+    setAlokasiRuangMap(newMap);
+    Swal.fire('Berhasil Diacak', `${shuffled.length} peserta telah diacak merata ke ${selectedActiveRuangIds.length} ruangan aktif.`, 'success');
+  };
+
+  const handleResetToDefault = () => {
+    const defMap = {};
+    siswaPesertaList.forEach((s) => {
+      const targetRId = getRuangDefaultForSiswa(s, kelasList, ruangList);
+      defMap[String(s.id)] = String(targetRId);
+    });
+    setAlokasiRuangMap(defMap);
+  };
+
+  const handleSavePengaturanRuang = async () => {
+    if (!targetJadwalForRuang?.id) return;
+    try {
+      setSavingRuangPeserta(true);
+
+      await supabase
+        .from('cbt_jadwal_ujian')
+        .update({ mode_ruang: modeRuang })
+        .eq('id', targetJadwalForRuang.id);
+
+      // Hapus alokasi lama untuk jadwal ini agar alokasi baru tersimpan bersih
+      await supabase
+        .from('cbt_peserta_ruang')
+        .delete()
+        .eq('jadwal_id', targetJadwalForRuang.id);
+
+      const payload = Object.entries(alokasiRuangMap)
+        .filter(([_, rId]) => Boolean(rId))
+        .map(([sId, rId], idx) => ({
+          jadwal_id: targetJadwalForRuang.id,
+          siswa_id: Number(sId),
+          ruang_id: Number(rId),
+          nomor_meja: idx + 1,
+        }));
+
+      if (payload.length > 0) {
+        const { error } = await supabase.from('cbt_peserta_ruang').insert(payload);
+        if (error) throw error;
+      }
+
+      Swal.fire('Sukses', `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}!`, 'success');
+      setIsRuangPesertaModalOpen(false);
+      fetchInitialData();
+    } catch (err) {
+      console.error('Error save ruang peserta:', err);
+      Swal.fire('Gagal Menyimpan', err.message || 'Terjadi kesalahan sistem.', 'error');
+    } finally {
+      setSavingRuangPeserta(false);
+    }
   };
 
   return (
@@ -428,6 +788,18 @@ export default function CbtJadwalUjian() {
             >
               <Settings size={16} className="text-gray-600" />
               <span>Pengaturan Ujian</span>
+            </button>
+          )}
+
+          {/* Tombol Pengaturan Ruang Peserta */}
+          {isOPSOrPanitia && (
+            <button
+              onClick={() => handleOpenRuangPesertaModal(null)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-800 font-bold text-xs rounded-xl border border-blue-200 shadow-sm transition"
+              title="Pengaturan Ruang Peserta Ujian"
+            >
+              <Building size={16} className="text-blue-600" />
+              <span>Ruang Peserta</span>
             </button>
           )}
 
@@ -791,6 +1163,14 @@ export default function CbtJadwalUjian() {
                           </button>
 
                           <button
+                            onClick={() => navigate(`/cbt/cetak/hadir-pengawas/${j.id}`)}
+                            className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
+                            title="Daftar Hadir Pengawas"
+                          >
+                            <Printer size={14} /> Hadir Pengawas
+                          </button>
+
+                          <button
                             onClick={() => navigate(`/cbt/cetak/berita-acara/${j.id}`)}
                             className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
                           >
@@ -1055,6 +1435,444 @@ export default function CbtJadwalUjian() {
               >
                 <BookOpen size={14} />
                 <span>Lanjut ke Soal</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal Pengaturan Ruang Peserta (Default, Acak, Custom) */}
+      {isRuangPesertaModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col shadow-2xl animate-in zoom-in-95">
+            {/* Header Modal */}
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-blue-50 text-blue-700 rounded-xl">
+                  <Building size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-gray-800">Pengaturan Ruang Peserta</h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    {targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsRuangPesertaModalOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-xl hover:bg-gray-100 transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body Modal */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+              {loadingRuangPeserta ? (
+                <div className="py-16 text-center text-gray-400 font-medium text-xs">
+                  Memuat data siswa & ruangan...
+                </div>
+              ) : (
+                <>
+                  {/* Mode Tabs */}
+                  <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1.5 rounded-xl text-xs font-bold">
+                    <button
+                      onClick={() => {
+                        setModeRuang('default');
+                        handleResetToDefault();
+                      }}
+                      className={`py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition ${
+                        modeRuang === 'default'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-white/60'
+                      }`}
+                    >
+                      <span>Default (Kelas)</span>
+                    </button>
+                    <button
+                      onClick={() => setModeRuang('acak')}
+                      className={`py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition ${
+                        modeRuang === 'acak'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-white/60'
+                      }`}
+                    >
+                      <Shuffle size={14} />
+                      <span>Acak Ruangan</span>
+                    </button>
+                    <button
+                      onClick={() => setModeRuang('custom')}
+                      className={`py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 transition ${
+                        modeRuang === 'custom'
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'text-gray-600 hover:bg-white/60'
+                      }`}
+                    >
+                      <Users size={14} />
+                      <span>Custom</span>
+                    </button>
+                  </div>
+
+                  {/* Mode 1: Default (Sesuai Kelas Masing-masing Siswa) */}
+                  {modeRuang === 'default' && (
+                    <div className="space-y-3">
+                      <div className="p-3.5 bg-blue-50/70 border border-blue-100 rounded-xl text-xs text-blue-900">
+                        <p className="font-bold">Mode Default (Sesuai Kelas Siswa)</p>
+                        <p className="text-[11px] text-blue-700 mt-0.5">
+                          Setiap siswa otomatis ditempatkan di ruang kelasnya masing-masing (bukan kantor).
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-bold text-gray-700">Ringkasan Penempatan Ruang Kelas :</p>
+                          <button
+                            type="button"
+                            onClick={handleResetToDefault}
+                            className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1"
+                          >
+                            <RotateCcw size={12} /> Terapkan Ulang Ruang Kelas
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {kelasList.map((k) => {
+                            const count = siswaPesertaList.filter(
+                              (s) => (s.kelas || '').toLowerCase() === (k.nama_kelas || '').toLowerCase()
+                            ).length;
+                            const sampleSiswa = siswaPesertaList.find(
+                              (s) => (s.kelas || '').toLowerCase() === (k.nama_kelas || '').toLowerCase()
+                            );
+                            const rId = sampleSiswa
+                              ? (alokasiRuangMap[String(sampleSiswa.id)] || getRuangDefaultForSiswa(sampleSiswa, kelasList, ruangList))
+                              : getRuangDefaultForSiswa({ kelas: k.nama_kelas }, kelasList, ruangList);
+                            const r = ruangList.find((ru) => String(ru.id) === String(rId));
+                            return (
+                              <div
+                                key={k.id}
+                                className="p-3 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between"
+                              >
+                                <div>
+                                  <p className="text-xs font-black text-gray-800">Kelas {k.nama_kelas}</p>
+                                  <p className="text-[11px] text-gray-500">{count} Siswa Terdaftar</p>
+                                </div>
+                                <span className="px-2.5 py-1 bg-white border border-gray-200 text-primary font-bold text-xs rounded-lg flex items-center gap-1">
+                                  <Building size={12} className="text-blue-600" />
+                                  {r?.nama_ruang || 'Ruang Kelas'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mode 2: Acak Ruangan */}
+                  {modeRuang === 'acak' && (
+                    <div className="space-y-3">
+                      <div className="p-3.5 bg-blue-50/70 border border-blue-100 rounded-xl text-xs text-blue-900">
+                        <p className="font-bold">Mode Acak Ruangan (Distribusi Merata)</p>
+                        <p className="text-[11px] text-blue-700 mt-0.5">
+                          Pilih ruangan-ruangan yang aktif digunakan, lalu klik tombol "Acak Ruangan Sekarang".
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-bold text-gray-700 mb-2">Pilih Ruangan yang Aktif :</p>
+                        <div className="flex flex-wrap gap-2">
+                          {ruangList.map((r) => {
+                            const isChecked = selectedActiveRuangIds.includes(String(r.id));
+                            return (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => {
+                                  if (isChecked) {
+                                    setSelectedActiveRuangIds((prev) => prev.filter((id) => id !== String(r.id)));
+                                  } else {
+                                    setSelectedActiveRuangIds((prev) => [...prev, String(r.id)]);
+                                  }
+                                }}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition ${
+                                  isChecked
+                                    ? 'bg-primary text-white border-primary shadow-sm'
+                                    : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                                }`}
+                              >
+                                <span className="w-3.5 h-3.5 rounded border flex items-center justify-center text-[10px]">
+                                  {isChecked ? '✓' : ''}
+                                </span>
+                                <span>{r.nama_ruang}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={handleAcakRuangan}
+                          className="w-full py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs rounded-xl shadow flex items-center justify-center gap-2 transition"
+                        >
+                          <Shuffle size={15} />
+                          <span>Acak Ruangan Sekarang</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-2 pt-2">
+                        <p className="text-xs font-bold text-gray-700">Hasil Distribusi per Ruangan :</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {ruangList
+                            .filter((r) => selectedActiveRuangIds.includes(String(r.id)))
+                            .map((r) => {
+                              const count = Object.values(alokasiRuangMap).filter(
+                                (rId) => String(rId) === String(r.id)
+                              ).length;
+                              return (
+                                <div
+                                  key={r.id}
+                                  className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl flex items-center justify-between"
+                                >
+                                  <div>
+                                    <p className="text-xs font-black text-gray-800">{r.nama_ruang}</p>
+                                    <p className="text-[11px] text-gray-500">Ruang Ujian CBT</p>
+                                  </div>
+                                  <span className="px-2.5 py-1 bg-emerald-600 text-white font-extrabold text-xs rounded-lg">
+                                    {count} Siswa
+                                  </span>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Mode 3: Custom (UI/UX & Logika Checklist Seperti Ruang Ngaji) */}
+                  {modeRuang === 'custom' && (
+                    <div className="space-y-4">
+                      {/* Pilihan Ruangan Tujuan */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
+                          <Building size={14} className="text-primary" />
+                          <span>Pilih Ruangan Tujuan Penempatan :</span>
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {ruangList.map((r) => {
+                            const isSelected = String(customTargetRuangId) === String(r.id);
+                            const countInThisRoom = Object.values(alokasiRuangMap).filter(
+                              (rId) => String(rId) === String(r.id)
+                            ).length;
+                            return (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => setCustomTargetRuangId(String(r.id))}
+                                className={`px-3 py-2 rounded-xl text-xs font-bold border transition flex items-center gap-1.5 ${
+                                  isSelected
+                                    ? 'bg-primary text-white border-primary shadow-sm'
+                                    : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                                }`}
+                              >
+                                <span>{r.nama_ruang}</span>
+                                <span
+                                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                                    isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'
+                                  }`}
+                                >
+                                  {countInThisRoom}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Info Ruangan Aktif */}
+                      <div className="p-3 bg-blue-50/70 border border-blue-100 rounded-xl flex items-center justify-between text-xs text-blue-900">
+                        <div>
+                          <p className="font-bold">
+                            Ruangan Aktif: {ruangList.find((r) => String(r.id) === String(customTargetRuangId))?.nama_ruang || 'Pilih Ruangan'}
+                          </p>
+                          <p className="text-[11px] text-blue-700 mt-0.5">
+                            Centang siswa di bawah untuk menempatkannya ke ruangan ini (cukup gunakan checklist).
+                          </p>
+                        </div>
+                        <div className="bg-white px-3 py-1.5 rounded-lg border border-blue-200 text-primary font-black text-xs shadow-xs">
+                          {Object.values(alokasiRuangMap).filter((rId) => String(rId) === String(customTargetRuangId)).length} Dicentang
+                        </div>
+                      </div>
+
+                      {/* Filter & Search */}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                          <input
+                            type="text"
+                            placeholder="Cari nama, NISN, atau kelas..."
+                            value={searchSiswaRuang}
+                            onChange={(e) => setSearchSiswaRuang(e.target.value)}
+                            className="w-full text-xs border border-gray-200 rounded-xl pl-8 pr-3 py-2.5 outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                        <select
+                          value={filterKelasRuang}
+                          onChange={(e) => setFilterKelasRuang(e.target.value)}
+                          className="text-xs border border-gray-200 rounded-xl p-2.5 bg-white font-bold text-gray-700 outline-none focus:ring-2 focus:ring-primary"
+                        >
+                          <option value="Semua">Semua Kelas</option>
+                          {kelasList.map((k) => (
+                            <option key={k.id} value={k.nama_kelas}>
+                              Kelas {k.nama_kelas}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Tabel Siswa dengan Checklist */}
+                      {(() => {
+                        const filteredSiswa = siswaPesertaList.filter((s) => {
+                          const matchKls =
+                            filterKelasRuang === 'Semua' ||
+                            (s.kelas || '').toLowerCase() === filterKelasRuang.toLowerCase();
+                          const matchQuery =
+                            !searchSiswaRuang ||
+                            (s.nama || '').toLowerCase().includes(searchSiswaRuang.toLowerCase()) ||
+                            (s.nisn || '').includes(searchSiswaRuang) ||
+                            (s.nipd || '').includes(searchSiswaRuang);
+                          return matchKls && matchQuery;
+                        });
+
+                        const isAllFilteredChecked =
+                          filteredSiswa.length > 0 &&
+                          filteredSiswa.every((s) => String(alokasiRuangMap[String(s.id)]) === String(customTargetRuangId));
+
+                        const handleToggleAll = (checked) => {
+                          setAlokasiRuangMap((prev) => {
+                            const next = { ...prev };
+                            filteredSiswa.forEach((s) => {
+                              if (checked) {
+                                next[String(s.id)] = String(customTargetRuangId);
+                              } else if (String(next[String(s.id)]) === String(customTargetRuangId)) {
+                                delete next[String(s.id)];
+                              }
+                            });
+                            return next;
+                          });
+                        };
+
+                        const handleToggleSiswa = (siswaId) => {
+                          setAlokasiRuangMap((prev) => {
+                            const next = { ...prev };
+                            const cur = String(next[String(siswaId)]);
+                            if (cur === String(customTargetRuangId)) {
+                              delete next[String(siswaId)];
+                            } else {
+                              next[String(siswaId)] = String(customTargetRuangId);
+                            }
+                            return next;
+                          });
+                        };
+
+                        return (
+                          <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-xl">
+                            <table className="w-full text-left text-xs">
+                              <thead className="bg-gray-100 text-gray-700 font-bold sticky top-0 z-10 border-b border-gray-200">
+                                <tr>
+                                  <th className="p-2.5 w-12 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={isAllFilteredChecked}
+                                      onChange={(e) => handleToggleAll(e.target.checked)}
+                                      className="w-4 h-4 cursor-pointer text-primary rounded"
+                                    />
+                                  </th>
+                                  <th className="p-2.5">Nama Siswa</th>
+                                  <th className="p-2.5">Kelas Asal</th>
+                                  <th className="p-2.5">Ruang Saat Ini</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100">
+                                {filteredSiswa.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={4} className="p-6 text-center text-gray-400">
+                                      Tidak ada siswa yang sesuai pencarian.
+                                    </td>
+                                  </tr>
+                                ) : (
+                                  filteredSiswa.map((s) => {
+                                    const assignedRuangId = alokasiRuangMap[String(s.id)];
+                                    const isChecked = String(assignedRuangId) === String(customTargetRuangId);
+                                    const assignedRuang = ruangList.find((r) => String(r.id) === String(assignedRuangId));
+
+                                    return (
+                                      <tr
+                                        key={s.id}
+                                        onClick={() => handleToggleSiswa(s.id)}
+                                        className={`cursor-pointer transition hover:bg-blue-50/60 ${
+                                          isChecked ? 'bg-blue-50/40' : ''
+                                        }`}
+                                      >
+                                        <td className="p-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                                          <input
+                                            type="checkbox"
+                                            checked={isChecked}
+                                            onChange={() => handleToggleSiswa(s.id)}
+                                            className="w-4 h-4 cursor-pointer text-primary rounded"
+                                          />
+                                        </td>
+                                        <td className="p-2.5 font-bold text-gray-800">
+                                          <div>{s.nama}</div>
+                                          <div className="text-[10px] text-gray-400 font-mono">
+                                            NISN: {s.nisn || '-'} • NIPD: {s.nipd || '-'}
+                                          </div>
+                                        </td>
+                                        <td className="p-2.5 font-semibold text-gray-600">Kelas {s.kelas}</td>
+                                        <td className="p-2.5">
+                                          {isChecked ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-bold text-[11px]">
+                                              ✓ {assignedRuang?.nama_ruang || 'Ruang Ini'}
+                                            </span>
+                                          ) : assignedRuang ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-bold text-[11px]">
+                                              {assignedRuang.nama_ruang}
+                                            </span>
+                                          ) : (
+                                            <span className="text-gray-400 italic text-[11px]">Belum ada ruang</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Footer Modal */}
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => setIsRuangPesertaModalOpen(false)}
+                disabled={savingRuangPeserta}
+                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-200 rounded-xl transition"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePengaturanRuang}
+                disabled={savingRuangPeserta}
+                className="px-5 py-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
+              >
+                {savingRuangPeserta ? 'Menyimpan...' : 'Simpan Alokasi Ruang'}
               </button>
             </div>
           </div>

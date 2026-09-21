@@ -36,7 +36,7 @@ export default function CbtUjianSiswa() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Hook Edge AI Pengawasan Wajah MediaPipe
-  const { videoRef, faceStatus, violationCount, headAngles } = useEdgeFaceLandmarker({
+  const { videoRef, faceStatus, violationCount, headAngles, cameraActive } = useEdgeFaceLandmarker({
     enabled: currentStep === 'soal' && !isBlocked,
     sampleIntervalMs: 400, // 300ms - 500ms
     debounceThresholdMs: 2500, // 2.0s - 3.0s
@@ -86,6 +86,64 @@ export default function CbtUjianSiswa() {
       }
     },
   });
+
+  // Ref untuk faceStatus agar selalu terbaca nilai terbaru tanpa re-trigger effect
+  const faceStatusRef = useRef('normal');
+  useEffect(() => {
+    faceStatusRef.current = faceStatus;
+  }, [faceStatus]);
+
+  // Realtime Broadcast Kamera Siswa ke Ruang Pengawas
+  // PENTING: faceStatus TIDAK masuk ke deps array — gunakan faceStatusRef
+  // agar channel tidak di-teardown setiap 400ms saat AI update status wajah.
+  useEffect(() => {
+    if (currentStep !== 'soal' || isBlocked || !jadwalId || !currentSiswa?.id) return;
+
+    const channelName = `cbt_exam_${jadwalId}`;
+    const channel = supabase.channel(channelName);
+
+    // Tunggu subscribe selesai baru mulai kirim frame
+    let intervalId = null;
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 120;
+        const ctx = canvas.getContext('2d');
+
+        const sendFrame = () => {
+          const video = videoRef.current;
+          if (!video || video.readyState < 2 || !ctx) return;
+          try {
+            ctx.drawImage(video, 0, 0, 160, 120);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.35);
+            channel.send({
+              type: 'broadcast',
+              event: 'student_video_feed',
+              payload: {
+                siswaId: currentSiswa.id,
+                sesiId: sesiSiswa?.id,
+                image: dataUrl,
+                faceStatus: faceStatusRef.current,
+                timestamp: Date.now(),
+              },
+            });
+          } catch (err) {
+            // Safe ignore
+          }
+        };
+
+        // Kirim frame pertama segera, lalu setiap 3 detik
+        sendFrame();
+        intervalId = setInterval(sendFrame, 3000);
+      }
+    });
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      supabase.removeChannel(channel);
+    };
+  }, [currentStep, isBlocked, jadwalId, currentSiswa?.id, sesiSiswa?.id]);
 
   // Anti-Cheat: Deteksi Tab Switch / Blur Browser
   useEffect(() => {
@@ -142,6 +200,50 @@ export default function CbtUjianSiswa() {
       }
       setCurrentSiswa(storedSiswa);
 
+      // Ambil data siswa segar dari Supabase & tentukan tingkat kelas
+      const { data: dbSiswa } = await supabase
+        .from('data_siswa')
+        .select('id, nama, kelas, nisn, nipd, status_keaktifan')
+        .eq('id', storedSiswa.id)
+        .maybeSingle();
+
+      // Validasi status keaktifan siswa (Hanya siswa Aktif yang boleh mengakses ujian CBT)
+      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Akses Ujian Ditolak',
+          text: `Akun siswa Anda saat ini berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang berhak mengakses dan mengerjakan ujian CBT.`,
+          confirmButtonText: 'Kembali ke Dashboard',
+          confirmButtonColor: '#2a2c87',
+          allowOutsideClick: false,
+        }).then(() => navigate('/dashboard-siswa'));
+        return;
+      }
+
+      const kelasSiswa = dbSiswa?.kelas || storedSiswa.kelas || '';
+      let tingkatSiswa = null;
+
+      if (kelasSiswa) {
+        const { data: kData } = await supabase
+          .from('data_kelas')
+          .select('tingkat')
+          .ilike('nama_kelas', kelasSiswa.trim())
+          .maybeSingle();
+        if (kData?.tingkat) {
+          tingkatSiswa = String(kData.tingkat);
+        }
+      }
+      if (!tingkatSiswa && kelasSiswa) {
+        const upper = kelasSiswa.toUpperCase().trim();
+        if (upper.includes('VII') && !upper.includes('VIII')) tingkatSiswa = '7';
+        else if (upper.includes('VIII')) tingkatSiswa = '8';
+        else if (upper.includes('IX')) tingkatSiswa = '9';
+        else {
+          const m = upper.match(/\b([789])\b/);
+          if (m) tingkatSiswa = m[1];
+        }
+      }
+
       // Ambil Jadwal
       const { data: jData, error: jErr } = await supabase
         .from('cbt_jadwal_ujian')
@@ -150,7 +252,7 @@ export default function CbtUjianSiswa() {
           data_mapel(nama_mapel),
           data_ruang(nama_ruang),
           pengawas:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama),
-          cbt_bank_soal(id, total_soal)
+          cbt_bank_soal(id, total_soal, tingkat_kelas)
         `)
         .eq('id', jadwalId)
         .single();
@@ -173,21 +275,44 @@ export default function CbtUjianSiswa() {
         blokir_keluar_browser: true,
       });
 
-      // Ambil Butir Soal
-      let targetBankId = jData.bank_soal_id;
-      if (!targetBankId && jData.mapel_id) {
-        const { data: bData } = await supabase
+      // Ambil Butir Soal dengan pencocokan kelas ketat
+      let targetBank = null;
+      if (jData.cbt_bank_soal?.id) {
+        const bTingkat = String(jData.cbt_bank_soal.tingkat_kelas || '');
+        if (!bTingkat || bTingkat === 'Semua' || (tingkatSiswa && bTingkat === tingkatSiswa)) {
+          targetBank = jData.cbt_bank_soal;
+        }
+      }
+
+      // Jika bank soal bawaan tidak sesuai tingkat kelas siswa, cari bank soal mapel ini yang sesuai kelas siswa
+      if (!targetBank && jData.mapel_id && tingkatSiswa) {
+        const { data: matchedBank } = await supabase
           .from('cbt_bank_soal')
-          .select('id')
+          .select('id, tingkat_kelas')
           .eq('mapel_id', jData.mapel_id)
+          .eq('tingkat_kelas', tingkatSiswa)
           .order('id', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (bData?.id) {
-          targetBankId = bData.id;
-          supabase.from('cbt_jadwal_ujian').update({ bank_soal_id: bData.id }).eq('id', jadwalId).then();
+
+        if (matchedBank?.id) {
+          targetBank = matchedBank;
         }
       }
+
+      // Jika tidak ditemukan bank soal untuk tingkat kelas siswa, tolak akses
+      if (!targetBank) {
+        const kelasLabel = tingkatSiswa ? `Kelas ${tingkatSiswa}` : (kelasSiswa || 'kelas Anda');
+        Swal.fire({
+          icon: 'warning',
+          title: 'Akses Ujian Ditolak',
+          text: `Bank soal untuk tingkat ${kelasLabel} belum tersedia pada ujian ini.`,
+          confirmButtonColor: '#2a2c87',
+        }).then(() => navigate('/cbt/jadwal'));
+        return;
+      }
+
+      const targetBankId = targetBank.id;
 
       const { data: sData } = await supabase
         .from('cbt_soal')
@@ -953,6 +1078,7 @@ export default function CbtUjianSiswa() {
               ref={videoRef}
               playsInline
               muted
+              autoPlay
               className="w-full h-full object-cover -scale-x-100"
             />
             <div
@@ -963,6 +1089,12 @@ export default function CbtUjianSiswa() {
               <Video size={10} />
               <span>{faceStatus === 'normal' ? 'AI OK' : 'ANOMALI'}</span>
             </div>
+            {cameraActive && (
+              <div className="absolute bottom-1 right-1 flex items-center gap-1 px-1.5 py-0.5 bg-black/60 rounded text-[7px] text-emerald-400 font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                <span>LIVE</span>
+              </div>
+            )}
           </div>
         </div>
       )}

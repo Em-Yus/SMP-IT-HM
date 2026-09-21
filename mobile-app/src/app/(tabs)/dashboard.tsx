@@ -287,12 +287,39 @@ export default function DashboardScreen() {
         rataRata: avgNilai
       });
 
-      // 5. Cek Ujian CBT Aktif Hari Ini & Jam Sekarang
+      // 5. Cek Ujian CBT Aktif Hari Ini & Terdaftar
       try {
         let kelasId = user.kelas_id;
-        if (!kelasId && user.kelas) {
-          const { data: kData } = await supabase.from('data_kelas').select('id').ilike('nama_kelas', user.kelas).maybeSingle();
-          if (kData) kelasId = kData.id;
+        let tingkatSiswa: string | null = null;
+        if (user.kelas) {
+          const { data: kData } = await supabase.from('data_kelas').select('id, tingkat').ilike('nama_kelas', user.kelas).maybeSingle();
+          if (kData) {
+            kelasId = kData.id;
+            if (kData.tingkat) tingkatSiswa = String(kData.tingkat);
+          }
+        }
+
+        if (!tingkatSiswa && user.kelas) {
+          const upper = user.kelas.toUpperCase().trim();
+          if (upper.includes('VII') && !upper.includes('VIII')) tingkatSiswa = '7';
+          else if (upper.includes('VIII')) tingkatSiswa = '8';
+          else if (upper.includes('IX')) tingkatSiswa = '9';
+          else {
+            const m = upper.match(/\b([789])\b/);
+            if (m) tingkatSiswa = m[1];
+          }
+        }
+
+        // Cek alokasi ruangan siswa di cbt_peserta_ruang
+        let allocatedJadwalIds: number[] = [];
+        if (user.id) {
+          const { data: pRuangData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select('jadwal_id')
+            .eq('siswa_id', user.id);
+          if (pRuangData && pRuangData.length > 0) {
+            allocatedJadwalIds = pRuangData.map((p: any) => Number(p.jadwal_id)).filter(Boolean);
+          }
         }
 
         const now = new Date();
@@ -306,23 +333,45 @@ export default function DashboardScreen() {
           .from('cbt_jadwal_ujian')
           .select(`
             id, nama_ujian, jenis_ujian, tanggal_ujian, jam_mulai, jam_selesai, durasi_menit, status,
-            data_mapel(nama_mapel)
-          `)
-          .eq('tanggal_ujian', todayStr);
+            mapel_id, bank_soal_id,
+            data_mapel(nama_mapel),
+            cbt_bank_soal(id, tingkat_kelas)
+          `);
 
-        if (kelasId) {
-          cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+        // Filter jadwal hari ini atau yang sedang aktif
+        if (allocatedJadwalIds.length > 0) {
+          cbtQuery = cbtQuery.or(`id.in.(${allocatedJadwalIds.join(',')}),tanggal_ujian.eq.${todayStr}`);
         } else {
-          cbtQuery = cbtQuery.is('kelas_id', null);
+          cbtQuery = cbtQuery.eq('tanggal_ujian', todayStr);
+          if (kelasId) {
+            cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+          } else {
+            cbtQuery = cbtQuery.is('kelas_id', null);
+          }
         }
 
         const { data: jadwals } = await cbtQuery;
 
         if (jadwals && jadwals.length > 0) {
           const active = jadwals.find((j: any) => {
+            // Prioritas 1: Jika siswa dialokasikan di peserta_ruang untuk jadwal ini
+            const isAllocated = allocatedJadwalIds.includes(Number(j.id));
+
+            const isToday = j.tanggal_ujian === todayStr;
             const mulai = j.jam_mulai?.slice(0, 5) || '00:00';
             const selesai = j.jam_selesai?.slice(0, 5) || '23:59';
-            return currentTime >= mulai && currentTime <= selesai;
+            const inTime = isToday && (currentTime >= mulai && currentTime <= selesai);
+            const isStatusActive = j.status === 'aktif' || j.status === 'berlangsung';
+
+            if (!inTime && !isStatusActive) return false;
+
+            if (isAllocated) return true;
+
+            // Jika bukan via peserta ruang, cek bank soal
+            const bTingkat = j.cbt_bank_soal?.tingkat_kelas;
+            if (!bTingkat || bTingkat === 'Semua' || bTingkat === tingkatSiswa) return true;
+
+            return false;
           });
           setActiveCbtExam(active || null);
         } else {
@@ -424,6 +473,28 @@ export default function DashboardScreen() {
       <Animatable.View animation="fadeInUp" delay={350} duration={600} style={styles.quickAccessContainer}>
         <Text style={styles.sectionTitle}>Akses Cepat</Text>
         <View style={styles.quickAccessGrid}>
+          {/* Menu Ujian CBT (Selalu Muncul Permanen) */}
+          <TouchableOpacity 
+            style={[
+              styles.quickAccessBtn, 
+              activeCbtExam && { borderColor: '#ef4444', borderWidth: 1.5, backgroundColor: '#FFF5F5' }
+            ]} 
+            onPress={() => {
+              if (activeCbtExam) {
+                router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } });
+              } else {
+                router.push('/cbt-jadwal-siswa' as any);
+              }
+            }}
+          >
+            <View style={[styles.qaIconBox, { backgroundColor: activeCbtExam ? '#FEE2E2' : '#FEE2E2' }]}>
+              <Laptop size={24} color="#dc2626" />
+            </View>
+            <Text style={[styles.qaText, { color: '#dc2626', fontWeight: 'bold' }]}>
+              Ujian CBT
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/nilai')}>
             <View style={[styles.qaIconBox, { backgroundColor: '#ECEEFF' }]}>
               <Award size={24} color="#1E257F" />
@@ -460,19 +531,6 @@ export default function DashboardScreen() {
             </View>
             <Text style={styles.qaText}>Ekskul</Text>
           </TouchableOpacity>
-          {activeCbtExam && (
-            <TouchableOpacity 
-              style={[styles.quickAccessBtn, { borderColor: '#ef4444', borderWidth: 1.5, backgroundColor: '#FFF5F5' }]} 
-              onPress={() => router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } })}
-            >
-              <View style={[styles.qaIconBox, { backgroundColor: '#FEE2E2' }]}>
-                <Laptop size={24} color="#dc2626" />
-              </View>
-              <Text style={[styles.qaText, { color: '#dc2626', fontWeight: 'bold' }]}>
-                Ujian CBT
-              </Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {/* Banner Ujian Aktif */}

@@ -45,7 +45,8 @@ export const menusConfig = [
     group: "Ujian CBT & Asesmen",
     items: [
       { to: "/cbt/sop-ujian", icon: FileCheck, label: "SOP" },
-      { to: "/cbt/jadwal", icon: CalendarDays, label: "Jadwal Ujian" }
+      { to: "/cbt/jadwal", icon: CalendarDays, label: "Jadwal Ujian" },
+      { to: "/cbt/bank-soal", icon: BookOpen, label: "Paket Soal" }
     ]
   },
   {

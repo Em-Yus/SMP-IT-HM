@@ -72,6 +72,7 @@ import CbtBankSoal from './pages/cbt/CbtBankSoal';
 import CbtRuangPengawas from './pages/cbt/CbtRuangPengawas';
 import CbtLegerNilai from './pages/cbt/CbtLegerNilai';
 import CbtUjianSiswa from './pages/cbt/CbtUjianSiswa';
+import CbtJadwalSiswa from './pages/cbt/CbtJadwalSiswa';
 import CbtDaftarHadirPrint from './components/cbt/CbtDaftarHadirPrint';
 import CbtBeritaAcaraPrint from './components/cbt/CbtBeritaAcaraPrint';
 
@@ -162,6 +163,8 @@ function App() {
         <Route element={<SiswaLayout />}>
           <Route path="/dashboard-siswa" element={<DashboardSiswa />} />
           <Route path="/profil-siswa" element={<ProfilSiswa />} />
+          <Route path="/cbt/jadwal-siswa" element={<CbtJadwalSiswa />} />
+          <Route path="/cbt-jadwal-siswa" element={<CbtJadwalSiswa />} />
           <Route path="/jadwal-pelajaran-siswa" element={<JadwalPelajaranSiswa />} />
           <Route path="/presensi-saya" element={<PresensiSaya />} />
           <Route path="/mengaji-siswa" element={<MengajiSiswa />} />

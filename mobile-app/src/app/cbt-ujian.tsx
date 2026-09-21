@@ -16,6 +16,7 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   ChevronLeft,
@@ -72,6 +73,7 @@ export default function CbtUjian() {
   const [showViolationWarning, setShowViolationWarning] = useState<string | null>(null);
 
   const timerRef = useRef<any>(null);
+  const cameraRef = useRef<any>(null);
   const sisaDetikRef = useRef<number>(0);
   sisaDetikRef.current = sisaDetik;
   const sesiRef = useRef<any>(null);
@@ -159,6 +161,70 @@ export default function CbtUjian() {
     }
   }, [permission]);
 
+  // Broadcast Snapshot Kamera Mobile ke Ruang Pengawas secara Realtime
+  // PENTING: Tunggu status SUBSCRIBED sebelum mulai capture agar frame tidak hilang
+  useEffect(() => {
+    if (currentStep !== 'soal' || isBlocked || !jadwalId || !siswa?.id || !permission?.granted) return;
+
+    const channelName = `cbt_exam_${jadwalId}`;
+    const channel = supabase.channel(channelName);
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let isCapturing = false;
+
+    channel.subscribe(async (status: string) => {
+      if (status !== 'SUBSCRIBED') return;
+
+      const captureAndSend = async () => {
+        if (isCapturing || !cameraRef.current) return;
+        try {
+          isCapturing = true;
+          const photo = await cameraRef.current.takePictureAsync({
+            quality: 0.2,
+            base64: false, // Don't ask for base64 here since we'll manipulate it anyway
+            skipProcessing: true,
+          });
+
+          if (photo?.uri) {
+            // Downscale aggressively to match web app (160x120) so it doesn't drop from Supabase WebSocket limits
+            const manipResult = await ImageManipulator.manipulateAsync(
+              photo.uri,
+              [{ resize: { width: 160 } }],
+              { compress: 0.35, format: ImageManipulator.SaveFormat.JPEG, base64: true }
+            );
+
+            if (manipResult.base64) {
+              channel.send({
+                type: 'broadcast',
+                event: 'student_video_feed',
+                payload: {
+                  siswaId: siswa.id,
+                  sesiId: sesi?.id,
+                  image: `data:image/jpeg;base64,${manipResult.base64}`,
+                  faceStatus: 'normal',
+                  timestamp: Date.now(),
+                },
+              });
+            }
+          }
+        } catch (_err) {
+          // Safe ignore — kamera belum siap atau izin dicabut
+        } finally {
+          isCapturing = false;
+        }
+      };
+
+      // Kirim frame pertama setelah 1.5s (beri waktu kamera warm-up), lalu setiap 3.5s
+      setTimeout(captureAndSend, 1500);
+      intervalId = setInterval(captureAndSend, 3500);
+    });
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      supabase.removeChannel(channel);
+    };
+  }, [currentStep, isBlocked, jadwalId, siswa?.id, sesi?.id, permission?.granted]);
+
   const initExamSession = async () => {
     try {
       setLoading(true);
@@ -172,30 +238,94 @@ export default function CbtUjian() {
       const parsedSiswa = JSON.parse(userStr);
       setSiswa(parsedSiswa);
 
-      // 1. Ambil Jadwal
+      // 0. Ambil data siswa segar dari Supabase & tentukan tingkat kelas
+      const { data: dbSiswa } = await supabase
+        .from('data_siswa')
+        .select('id, nama, kelas, nisn, nipd, status_keaktifan')
+        .eq('id', parsedSiswa.id)
+        .maybeSingle();
+
+      // Validasi status keaktifan siswa (Hanya siswa Aktif yang boleh mengakses ujian CBT)
+      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+        Alert.alert(
+          'Akses Ujian Ditolak',
+          `Akun siswa Anda berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang dapat mengikuti ujian CBT.`,
+          [{ text: 'Kembali', onPress: () => router.back() }]
+        );
+        return;
+      }
+
+      const kelasSiswa = dbSiswa?.kelas || parsedSiswa.kelas || '';
+      let tingkatSiswa: string | null = null;
+
+      if (kelasSiswa) {
+        const { data: kData } = await supabase
+          .from('data_kelas')
+          .select('tingkat')
+          .ilike('nama_kelas', kelasSiswa.trim())
+          .maybeSingle();
+        if (kData?.tingkat) {
+          tingkatSiswa = String(kData.tingkat);
+        }
+      }
+
+      if (!tingkatSiswa && kelasSiswa) {
+        const upper = kelasSiswa.toUpperCase().trim();
+        if (upper.includes('VII') && !upper.includes('VIII')) {
+          tingkatSiswa = '7';
+        } else if (upper.includes('VIII')) {
+          tingkatSiswa = '8';
+        } else if (upper.includes('IX')) {
+          tingkatSiswa = '9';
+        } else {
+          const m = upper.match(/\b([789])\b/);
+          if (m) tingkatSiswa = m[1];
+        }
+      }
+
+      // 1. Ambil Jadwal beserta Bank Soal & Tingkat Kelasnya
       const { data: jadwalData, error: jErr } = await supabase
         .from('cbt_jadwal_ujian')
-        .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama), cbt_bank_soal(id, skema_konversi)')
+        .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama), cbt_bank_soal(id, tingkat_kelas, skema_konversi)')
         .eq('id', jadwalId)
         .single();
       if (jErr || !jadwalData) throw new Error('Jadwal ujian tidak ditemukan.');
       setJadwal(jadwalData);
 
-      // 2. Ambil Soal
-      let targetBankId = jadwalData.bank_soal_id;
-      if (!targetBankId && jadwalData.mapel_id) {
-        const { data: fallbackBank } = await supabase
+      // 2. Pencocokan Bank Soal Berdasarkan Tingkat Kelas Siswa Secara Ketat
+      let targetBank: any = null;
+
+      // Cek apakah bank soal bawaan jadwal cocok dengan tingkat kelas siswa
+      if (jadwalData.cbt_bank_soal?.id) {
+        const bankTingkat = String(jadwalData.cbt_bank_soal.tingkat_kelas || '');
+        if (!bankTingkat || bankTingkat === 'Semua' || (tingkatSiswa && bankTingkat === tingkatSiswa)) {
+          targetBank = jadwalData.cbt_bank_soal;
+        }
+      }
+
+      // Jika bank soal bawaan belum ada atau tidak sesuai tingkat kelas siswa, cari bank soal mapel ini yang sesuai kelas siswa
+      if (!targetBank && jadwalData.mapel_id && tingkatSiswa) {
+        const { data: matchedBank } = await supabase
           .from('cbt_bank_soal')
-          .select('id, skema_konversi')
+          .select('id, tingkat_kelas, skema_konversi')
           .eq('mapel_id', jadwalData.mapel_id)
+          .eq('tingkat_kelas', tingkatSiswa)
           .order('id', { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (fallbackBank?.id) {
-          targetBankId = fallbackBank.id;
-          supabase.from('cbt_jadwal_ujian').update({ bank_soal_id: fallbackBank.id }).eq('id', jadwalId).then();
+
+        if (matchedBank?.id) {
+          targetBank = matchedBank;
         }
       }
+
+      // Jika tidak ditemukan bank soal yang sesuai tingkat kelas siswa, tolak akses dan jangan tampilkan soal kelas lain
+      if (!targetBank) {
+        const kelasLabel = tingkatSiswa ? `Kelas ${tingkatSiswa}` : (kelasSiswa || 'kelas Anda');
+        throw new Error(`Bank soal untuk tingkat ${kelasLabel} belum tersedia pada ujian ini.`);
+      }
+
+      const targetBankId = targetBank.id;
 
       const { data: soalData, error: sErr } = await supabase
         .from('cbt_soal')
@@ -832,24 +962,39 @@ export default function CbtUjian() {
       {/* Floating Front Camera Proctoring View */}
       {permission?.granted && (
         <View style={[styles.cameraContainer, isCameraMinimized && styles.cameraMinimized]}>
-          {!isCameraMinimized ? (
-            <View style={styles.cameraFrame}>
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                facing="front"
-              />
-              <View style={styles.cameraBadge}>
-                <View style={styles.cameraDot} />
-                <Text style={styles.cameraBadgeText}>AI Proctor Aktif</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.camMinimizeBtn}
-                onPress={() => setIsCameraMinimized(true)}
-              >
-                <Minimize2 size={13} color="#fff" />
-              </TouchableOpacity>
+          {/* CameraView selalu di-mount agar cameraRef.current tidak null saat broadcast */}
+          {/* Saat minimized: sembunyikan via opacity+absolute agar takePictureAsync tetap bisa berjalan */}
+          <View style={[
+            styles.cameraFrame,
+            isCameraMinimized && {
+              position: 'absolute',
+              width: 80,
+              height: 60,
+              opacity: 0,
+              top: -200,
+              left: -200,
+              pointerEvents: 'none',
+            }
+          ]}>
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing="front"
+            />
+            <View style={styles.cameraBadge}>
+              <View style={styles.cameraDot} />
+              <Text style={styles.cameraBadgeText}>AI Proctor Aktif</Text>
             </View>
-          ) : (
+            <TouchableOpacity
+              style={styles.camMinimizeBtn}
+              onPress={() => setIsCameraMinimized(true)}
+            >
+              <Minimize2 size={13} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Badge minimized — tampil di atas CameraView yang sudah di-collapse */}
+          {isCameraMinimized && (
             <TouchableOpacity
               style={styles.cameraMinimizedBadge}
               onPress={() => setIsCameraMinimized(false)}

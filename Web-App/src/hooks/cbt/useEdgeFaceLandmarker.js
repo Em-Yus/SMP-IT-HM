@@ -14,8 +14,11 @@ export function useEdgeFaceLandmarker({
   const videoRef = useRef(null);
   const landmarkerRef = useRef(null);
   const timerRef = useRef(null);
+  const streamRef = useRef(null);
 
   const [isLoaded, setIsLoaded] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
   const [faceStatus, setFaceStatus] = useState('normal'); // 'normal' | 'no_face' | 'multiple_faces' | 'look_left_right' | 'tilt_up_down'
   const [violationCount, setViolationCount] = useState(0);
   const [headAngles, setHeadAngles] = useState({ yaw: 0, pitch: 0, roll: 0 });
@@ -26,7 +29,58 @@ export function useEdgeFaceLandmarker({
     startTime: 0,
   });
 
-  // 1. Inisialisasi MediaPipe FaceLandmarker
+  // 1. Inisialisasi Akses Kamera / Webcam Siswa
+  useEffect(() => {
+    if (!enabled) return;
+    let localStream = null;
+
+    const startCamera = async () => {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          console.warn('Browser tidak mendukung navigator.mediaDevices.getUserMedia');
+          setCameraError('Kamera tidak didukung browser');
+          return;
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 320 },
+            height: { ideal: 240 },
+            facingMode: 'user',
+          },
+          audio: false,
+        });
+
+        localStream = stream;
+        streamRef.current = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(e => console.warn('Video play catch:', e));
+            setCameraActive(true);
+          };
+        }
+      } catch (err) {
+        console.warn('Izin kamera ditolak atau tidak ditemukan:', err);
+        setCameraError(err.message);
+      }
+    };
+
+    startCamera();
+
+    return () => {
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+      setCameraActive(false);
+    };
+  }, [enabled]);
+
+  // 2. Inisialisasi MediaPipe FaceLandmarker
   useEffect(() => {
     if (!enabled) return;
 
@@ -190,6 +244,8 @@ export function useEdgeFaceLandmarker({
   return {
     videoRef,
     isLoaded,
+    cameraActive,
+    cameraError,
     faceStatus,
     violationCount,
     headAngles,

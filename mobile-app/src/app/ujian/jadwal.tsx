@@ -44,7 +44,12 @@ import {
   Award,
   ChevronRight,
   School,
-  Building
+  Building,
+  Users,
+  Shuffle,
+  CheckSquare,
+  Square,
+  RotateCcw
 } from 'lucide-react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
@@ -112,10 +117,23 @@ export default function UjianJadwal() {
   const [availableKelasForModal, setAvailableKelasForModal] = useState<any[]>([]);
   const [activeJadwalItem, setActiveJadwalItem] = useState<any>(null);
 
-  // Modal Popup Ruang (Untuk Tombol Awasi, Hadir Peserta, & Berita Acara)
+  // Modal Popup Ruang (Untuk Tombol Awasi, Hadir Peserta, Hadir Pengawas & Berita Acara)
   const [isRuangModalOpen, setIsRuangModalOpen] = useState(false);
-  const [targetRuangAction, setTargetRuangAction] = useState<'awasi' | 'hadir' | 'berita_acara' | null>(null);
+  const [targetRuangAction, setTargetRuangAction] = useState<'awasi' | 'hadir' | 'hadir_pengawas' | 'berita_acara' | null>(null);
   const [selectedRuangId, setSelectedRuangId] = useState<string>('');
+
+  // Modal Pengaturan Ruang Peserta
+  const [isRuangPesertaModalOpen, setIsRuangPesertaModalOpen] = useState(false);
+  const [targetJadwalForRuang, setTargetJadwalForRuang] = useState<any>(null);
+  const [modeRuang, setModeRuang] = useState<'default' | 'acak' | 'custom'>('default');
+  const [selectedActiveRuangIds, setSelectedActiveRuangIds] = useState<string[]>([]);
+  const [siswaPesertaList, setSiswaPesertaList] = useState<any[]>([]);
+  const [alokasiRuangMap, setAlokasiRuangMap] = useState<Record<string, string>>({});
+  const [customTargetRuangId, setCustomTargetRuangId] = useState<string>('');
+  const [loadingRuangPeserta, setLoadingRuangPeserta] = useState(false);
+  const [savingRuangPeserta, setSavingRuangPeserta] = useState(false);
+  const [searchSiswaRuang, setSearchSiswaRuang] = useState('');
+  const [filterKelasRuang, setFilterKelasRuang] = useState('Semua');
 
   // Modal Pengaturan Ujian CBT
   const [isPengaturanModalOpen, setIsPengaturanModalOpen] = useState(false);
@@ -231,7 +249,7 @@ export default function UjianJadwal() {
   const fetchMetadata = async () => {
     try {
       const [kRes, mRes, rRes, bRes, sRes, pRes] = await Promise.all([
-        supabase.from('data_kelas').select('id, nama_kelas').order('nama_kelas'),
+        supabase.from('data_kelas').select('id, nama_kelas, ruang_id').order('nama_kelas'),
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
         supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
         supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id').order('judul'),
@@ -610,8 +628,8 @@ export default function UjianJadwal() {
     }
   };
 
-  // Popup Handler: Tombol Awasi, Hadir, Berita Acara -> Modal Pilih Ruangan
-  const handleOpenRuangModal = (jadwal: any, action: 'awasi' | 'hadir' | 'berita_acara') => {
+  // Popup Handler: Tombol Awasi, Hadir, Hadir Pengawas, Berita Acara -> Modal Pilih Ruangan
+  const handleOpenRuangModal = (jadwal: any, action: 'awasi' | 'hadir' | 'hadir_pengawas' | 'berita_acara') => {
     setActiveJadwalItem(jadwal);
     setTargetRuangAction(action);
     if (ruangList.length > 0 && !selectedRuangId) {
@@ -640,6 +658,8 @@ export default function UjianJadwal() {
       });
     } else if (action === 'hadir') {
       handlePrintHadir(item, ruangId);
+    } else if (action === 'hadir_pengawas') {
+      handlePrintHadirPengawas(item, ruangId);
     } else if (action === 'berita_acara') {
       handlePrintBeritaAcara(item, ruangId);
     }
@@ -775,8 +795,8 @@ export default function UjianJadwal() {
         </html>
       `;
 
-      const { uri } = await Print.printToFileAsync({ html: htmlContent });
-      await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      // Langsung kirim ke printer via print dialog (bukan simpan/share PDF)
+      await Print.printAsync({ html: htmlContent });
     } catch (e: any) {
       console.error('Error print rekap:', e);
       Alert.alert('Gagal Mencetak', e.message || 'Terjadi kesalahan saat mencetak jadwal.');
@@ -931,8 +951,8 @@ export default function UjianJadwal() {
         </html>
       `;
 
-      const { uri } = await Print.printToFileAsync({ html: htmlContent });
-      await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      // Langsung kirim ke printer
+      await Print.printAsync({ html: htmlContent });
     } catch (e: any) {
       console.error('Error print daftar hadir:', e);
       Alert.alert('Gagal Mencetak', e.message || 'Terjadi kesalahan cetak.');
@@ -1062,13 +1082,351 @@ export default function UjianJadwal() {
         </html>
       `;
 
-      const { uri } = await Print.printToFileAsync({ html: htmlContent });
-      await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+      // Langsung kirim ke printer
+      await Print.printAsync({ html: htmlContent });
     } catch (e: any) {
       console.error('Error print berita acara:', e);
       Alert.alert('Gagal Mencetak', e.message || 'Terjadi kesalahan cetak.');
     } finally {
       setPrintingId(null);
+    }
+  };
+
+  // Print PDF/Cetak Langsung Hadir Pengawas (Menyesuaikan Ruangan Terpilih)
+  const handlePrintHadirPengawas = async (jadwal: any, ruangId: string) => {
+    try {
+      setPrintingId(jadwal.id);
+      const selectedRuang = ruangList.find((r) => String(r.id) === String(ruangId)) || jadwal.data_ruang;
+
+      const [lembagaRes, panitiaRes, sopRes, guruRes, allJadwalRes] = await Promise.all([
+        supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
+        supabase.from('cbt_struktur_panitia').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.from('data_guru').select('id, nama, nip'),
+        supabase.from('cbt_jadwal_ujian').select(`
+          *,
+          data_mapel(nama_mapel),
+          data_ruang(nama_ruang),
+          pengawas:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(id, nama, nip)
+        `).order('tanggal_ujian', { ascending: true }).order('jam_mulai', { ascending: true })
+      ]);
+
+      const lembaga = lembagaRes.data || {};
+      const sop = sopRes.data || activeSop || {};
+      const panitia = panitiaRes.data || {};
+      const allGuru = guruRes.data || [];
+      const allJadwals = allJadwalRes.data || [];
+
+      let ketuaNama = 'Ketua Panitia';
+      let ketuaNip = '-';
+      if (panitia.ketua_panitia_guru_id) {
+        const found = allGuru.find((g: any) => Number(g.id) === Number(panitia.ketua_panitia_guru_id));
+        if (found) {
+          ketuaNama = found.nama;
+          ketuaNip = found.nip || '-';
+        }
+      }
+
+      let kepsekNama = lembaga.kepala_sekolah || 'Kepala Sekolah';
+      let kepsekNip = lembaga.nip_kepala_sekolah || '-';
+
+      let ttdKetuaHtml = '';
+      if (sop?.tanda_tangan_ketua) {
+        if (sop.tanda_tangan_ketua.startsWith('<svg')) {
+          ttdKetuaHtml = `<div style="height:65px; display:flex; align-items:center; justify-content:center;">${sop.tanda_tangan_ketua}</div>`;
+        } else {
+          ttdKetuaHtml = `<img src="${sop.tanda_tangan_ketua}" style="max-height:65px; max-width:160px; object-fit:contain;" />`;
+        }
+      } else {
+        ttdKetuaHtml = '<div style="height:65px;"></div>';
+      }
+
+      const targetList = allJadwals.filter(j => String(j.id) === String(jadwal.id) || (j.tanggal_ujian === jadwal.tanggal_ujian));
+      const listToRender = targetList.length > 0 ? targetList : [jadwal];
+
+      const rowsHtml = listToRender.map((item: any, idx: number) => `
+        <tr style="height:38px;">
+          <td style="border:1px solid #000; text-align:center; font-weight:bold;">${idx + 1}</td>
+          <td style="border:1px solid #000; padding:0 8px; font-weight:600;">${item.hari || calculateHari(item.tanggal_ujian)}, ${formatDateIndo(item.tanggal_ujian)}</td>
+          <td style="border:1px solid #000; padding:0 8px; font-weight:bold;">${item.pengawas?.nama || 'Guru Pengawas'}</td>
+          <td style="border:1px solid #000; text-align:center;">${selectedRuang?.nama_ruang || item.data_ruang?.nama_ruang || 'Lab CBT'}</td>
+          <td style="border:1px solid #000; padding:0 8px;">${item.data_mapel?.nama_mapel || item.nama_ujian}</td>
+          <td style="border:1px solid #000; padding:0 8px; font-size:10pt; color:#64748b;">${idx + 1}. ....................</td>
+        </tr>
+      `).join('');
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Daftar Hadir Pengawas - ${lembaga.nama_lembaga || 'SMP IT HM'}</title>
+          <style>
+            @page { size: A4 portrait; margin: 15mm; }
+            body { font-family: 'Times New Roman', Times, serif; font-size: 11pt; color: #000; line-height: 1.3; }
+            .header-table { width: 100%; border-collapse: collapse; border-bottom: 3px double #000; padding-bottom: 8px; margin-bottom: 12px; }
+            .kop-title { font-size: 15pt; font-weight: bold; text-transform: uppercase; margin: 0; }
+            .kop-sub { font-size: 9pt; margin: 2px 0; }
+            .doc-title { text-align: center; font-weight: bold; text-decoration: underline; font-size: 13pt; text-transform: uppercase; margin: 12px 0 2px 0; }
+            .content-table { width: 100%; border-collapse: collapse; border: 1px solid #000; font-size: 10pt; font-family: Arial, sans-serif; margin-top: 14px; }
+            .content-table th { border: 1px solid #000; background-color: #f1f5f9; padding: 7px 4px; font-weight: bold; text-align: center; }
+            .ttd-container { margin-top: 35px; display: flex; justify-content: space-between; page-break-inside: avoid; }
+            .ttd-box { width: 45%; text-align: center; font-size: 10.5pt; }
+          </style>
+        </head>
+        <body>
+          <table class="header-table">
+            <tr>
+              <td style="width: 75px; text-align: center; vertical-align: middle;">
+                ${lembaga.logo_url ? `<img src="${lembaga.logo_url}" style="width: 65px; height: 65px; object-fit: contain;" />` : ''}
+              </td>
+              <td style="text-align: center; vertical-align: middle;">
+                <div style="font-size: 11pt; font-weight: bold; text-transform: uppercase;">${lembaga.nama_yayasan || 'YAYASAN HIDAYATUL MUBTADI-IEN'}</div>
+                <div class="kop-title">${lembaga.nama_lembaga || 'SMP IT HIDAYATUL MUBTADI-IEN'}</div>
+                <div class="kop-sub">NPSN: ${lembaga.npsn || '70004822'} | ${lembaga.alamat || 'Subang, Jawa Barat'}</div>
+                <div class="kop-sub" style="font-size: 8pt; color: #444;">Telp: ${lembaga.telepon || '-'} | Email: ${lembaga.email || '-'}</div>
+              </td>
+            </tr>
+          </table>
+
+          <div class="doc-title">DAFTAR HADIR PENGAWAS UJIAN ${jadwal.jenis_ujian || 'CBT'}</div>
+          <div style="text-align: center; font-size: 10pt; font-weight: bold; margin-bottom: 12px;">TAHUN AJARAN ${sop.tahun_ajaran || '2025/2026'}</div>
+
+          <table class="content-table">
+            <thead>
+              <tr>
+                <th style="width: 32px;">No</th>
+                <th style="width: 130px; text-align: left; padding-left: 8px;">Hari / Tanggal</th>
+                <th style="text-align: left; padding-left: 8px;">Nama Pengawas</th>
+                <th style="width: 90px;">Ruang</th>
+                <th style="width: 140px; text-align: left; padding-left: 8px;">Mata Pelajaran</th>
+                <th style="width: 110px;">Tanda Tangan</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div class="ttd-container">
+            <div class="ttd-box">
+              <p style="margin: 0; font-weight: bold;">Ketua Panitia CBT,</p>
+              ${ttdKetuaHtml}
+              <p style="margin: 0; font-weight: bold; text-decoration: underline;">${ketuaNama}</p>
+              <p style="margin: 2px 0 0 0; font-size: 9pt; color: #444;">NIP. ${ketuaNip}</p>
+            </div>
+            <div class="ttd-box">
+              <p style="margin: 0;">${sop.titimangsa_tempat || 'Compreng'}, ${formatDateIndo(sop.titimangsa_tanggal || jadwal.tanggal_ujian)}</p>
+              <p style="margin: 2px 0 0 0; font-weight: bold;">Kepala Sekolah,</p>
+              <div style="height: 65px;"></div>
+              <p style="margin: 0; font-weight: bold; text-decoration: underline;">${kepsekNama}</p>
+              <p style="margin: 2px 0 0 0; font-size: 9pt; color: #444;">NIP. ${kepsekNip}</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      await Print.printAsync({ html: htmlContent });
+    } catch (e: any) {
+      console.error('Error print daftar hadir pengawas:', e);
+      Alert.alert('Gagal Mencetak', e.message || 'Terjadi kesalahan cetak daftar hadir pengawas.');
+    } finally {
+      setPrintingId(null);
+    }
+  };
+
+  // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Bukan Kantor)
+  const getRuangDefaultForSiswa = (siswa: any, kList: any[], rList: any[]) => {
+    const sKelas = (siswa?.kelas || '').trim().toLowerCase();
+
+    // 1. Cek dari data_kelas yang memiliki ruang_id bukan kantor/teras
+    const matchedK = (kList || []).find((k: any) => (k.nama_kelas || '').trim().toLowerCase() === sKelas);
+    if (matchedK && matchedK.ruang_id) {
+      const foundR = (rList || []).find((r: any) => Number(r.id) === Number(matchedK.ruang_id));
+      if (
+        foundR &&
+        !foundR.nama_ruang.toLowerCase().includes('kantor') &&
+        !foundR.nama_ruang.toLowerCase().includes('teras')
+      ) {
+        return String(foundR.id);
+      }
+    }
+
+    const nonKantor = (rList || []).filter((r: any) => {
+      const nr = (r.nama_ruang || '').toLowerCase();
+      return !nr.includes('kantor') && !nr.includes('teras');
+    });
+
+    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang
+    if (sKelas.includes('vii') || sKelas.startsWith('7')) {
+      const r7 = nonKantor.find(
+        (r: any) => r.nama_ruang.toLowerCase().includes('7') || r.nama_ruang.toLowerCase().includes('vii')
+      );
+      if (r7) return String(r7.id);
+    }
+    if (sKelas.includes('viii') || sKelas.startsWith('8')) {
+      const r8 = nonKantor.find(
+        (r: any) => r.nama_ruang.toLowerCase().includes('8') || r.nama_ruang.toLowerCase().includes('viii')
+      );
+      if (r8) return String(r8.id);
+    }
+    if (sKelas.includes('ix-a') || sKelas.includes('9-a') || sKelas.includes('9a')) {
+      const r9a = nonKantor.find((r: any) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9a') || nr.includes('ixa');
+      });
+      if (r9a) return String(r9a.id);
+    }
+    if (sKelas.includes('ix-b') || sKelas.includes('9-b') || sKelas.includes('9b')) {
+      const r9b = nonKantor.find((r: any) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9b') || nr.includes('ixb');
+      });
+      if (r9b) return String(r9b.id);
+    }
+    if (sKelas.includes('ix') || sKelas.startsWith('9')) {
+      const r9 = nonKantor.find(
+        (r: any) => r.nama_ruang.toLowerCase().includes('9') || r.nama_ruang.toLowerCase().includes('ix')
+      );
+      if (r9) return String(r9.id);
+    }
+
+    if (matchedK && matchedK.ruang_id) return String(matchedK.ruang_id);
+    if (nonKantor.length > 0) return String(nonKantor[0].id);
+    return rList?.[0] ? String(rList[0].id) : '1';
+  };
+
+  // Pengaturan Ruang Peserta Handlers
+  const handleOpenPengaturanRuang = async (jadwal?: any) => {
+    const target = jadwal || activeJadwalItem || (filteredJadwal.length > 0 ? filteredJadwal[0] : jadwalList[0]);
+    if (!target) {
+      Alert.alert('Peringatan', 'Tidak ada jadwal ujian yang dipilih.');
+      return;
+    }
+    setTargetJadwalForRuang(target);
+    setActiveJadwalItem(target);
+    setIsRuangPesertaModalOpen(true);
+    setLoadingRuangPeserta(true);
+
+    try {
+      const { data: sData } = await supabase
+        .from('data_siswa')
+        .select('id, nama, nipd, nisn, kelas, status_keaktifan')
+        .eq('status_keaktifan', 'Aktif')
+        .neq('kelas', 'Calon Siswa')
+        .order('kelas', { ascending: true })
+        .order('nama', { ascending: true });
+
+      const allSiswa = sData || [];
+      setSiswaPesertaList(allSiswa);
+
+      const { data: existingAlloc } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('siswa_id, ruang_id')
+        .eq('jadwal_id', target.id);
+
+      const currentMode = (target.mode_ruang as 'default' | 'acak' | 'custom') || 'default';
+      setModeRuang(currentMode);
+
+      const allRIds = (ruangList || []).map((r: any) => String(r.id));
+      setSelectedActiveRuangIds(allRIds);
+
+      const newMap: Record<string, string> = {};
+      if (existingAlloc && existingAlloc.length > 0) {
+        existingAlloc.forEach((a: any) => {
+          newMap[String(a.siswa_id)] = String(a.ruang_id);
+        });
+      } else {
+        allSiswa.forEach((s: any) => {
+          const targetRId = getRuangDefaultForSiswa(s, kelasList, ruangList);
+          newMap[String(s.id)] = String(targetRId);
+        });
+      }
+      setAlokasiRuangMap(newMap);
+
+      // Inisialisasi ruangan target untuk mode custom (prioritas ruang kelas non kantor)
+      const firstClassroom = (ruangList || []).find((r: any) => !r.nama_ruang.toLowerCase().includes('kantor')) || ruangList?.[0];
+      if (firstClassroom) {
+        setCustomTargetRuangId(String(firstClassroom.id));
+      }
+    } catch (err: any) {
+      console.error('Error open pengaturan ruang peserta:', err);
+      Alert.alert('Gagal Memuat', err.message || 'Terjadi kesalahan sistem.');
+    } finally {
+      setLoadingRuangPeserta(false);
+    }
+  };
+
+  const handleAcakRuangan = () => {
+    if (selectedActiveRuangIds.length === 0) {
+      Alert.alert('Peringatan', 'Silakan centang minimal 1 ruangan untuk pengacakan.');
+      return;
+    }
+    const shuffled = [...siswaPesertaList];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+
+    const newMap: Record<string, string> = {};
+    shuffled.forEach((s, idx) => {
+      const rId = selectedActiveRuangIds[idx % selectedActiveRuangIds.length];
+      newMap[String(s.id)] = String(rId);
+    });
+    setAlokasiRuangMap(newMap);
+    Alert.alert('Berhasil Diacak', `${shuffled.length} peserta telah diacak merata ke ${selectedActiveRuangIds.length} ruangan terpilih.`);
+  };
+
+  const handleResetToDefault = () => {
+    const defMap: Record<string, string> = {};
+    siswaPesertaList.forEach((s: any) => {
+      const targetRId = getRuangDefaultForSiswa(s, kelasList, ruangList);
+      defMap[String(s.id)] = String(targetRId);
+    });
+    setAlokasiRuangMap(defMap);
+  };
+
+  const handleSavePengaturanRuang = async () => {
+    if (!targetJadwalForRuang?.id) return;
+    try {
+      setSavingRuangPeserta(true);
+
+      await supabase
+        .from('cbt_jadwal_ujian')
+        .update({ mode_ruang: modeRuang })
+        .eq('id', targetJadwalForRuang.id);
+
+      // Hapus alokasi lama untuk jadwal ini agar alokasi baru tersimpan bersih
+      await supabase
+        .from('cbt_peserta_ruang')
+        .delete()
+        .eq('jadwal_id', targetJadwalForRuang.id);
+
+      const payload = Object.entries(alokasiRuangMap)
+        .filter(([_, rId]) => Boolean(rId))
+        .map(([sId, rId], idx) => ({
+          jadwal_id: targetJadwalForRuang.id,
+          siswa_id: Number(sId),
+          ruang_id: Number(rId),
+          nomor_meja: idx + 1,
+        }));
+
+      if (payload.length > 0) {
+        const { error } = await supabase
+          .from('cbt_peserta_ruang')
+          .insert(payload);
+        if (error) throw error;
+      }
+
+      Alert.alert('Sukses', `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}!`);
+      setIsRuangPesertaModalOpen(false);
+      fetchJadwal();
+    } catch (err: any) {
+      console.error('Error save ruang peserta:', err);
+      Alert.alert('Gagal Menyimpan', err.message || 'Terjadi kesalahan saat menyimpan pengaturan ruang.');
+    } finally {
+      setSavingRuangPeserta(false);
     }
   };
 
@@ -1125,7 +1483,7 @@ export default function UjianJadwal() {
           </View>
         </View>
 
-        {/* Baris Bawah Header: Tombol-tombol Aksi Manajemen Ujian (Khusus Operator, Panitia, & Waka Kurikulum) */}
+        {/* Baris Bawah Header: Tombol-tombol Aksi Manajemen Ujian (Icon Only) */}
         {showHeaderActions && (
           <View style={styles.headerActionsRow}>
             {canManageJadwal && (
@@ -1135,9 +1493,9 @@ export default function UjianJadwal() {
                   setFormData(initialForm);
                   setIsModalOpen(true);
                 }}
+                accessibilityLabel="Tambah Jadwal Ujian"
               >
-                <Plus size={15} color="#2a2c87" />
-                <Text style={styles.headerActionBtnPrimaryText}>+ Jadwal</Text>
+                <Plus size={20} color="#2a2c87" />
               </TouchableOpacity>
             )}
 
@@ -1145,9 +1503,19 @@ export default function UjianJadwal() {
               <TouchableOpacity
                 style={styles.headerActionBtnSecondary}
                 onPress={() => setIsPengaturanModalOpen(true)}
+                accessibilityLabel="Pengaturan Ujian CBT"
               >
-                <Settings size={15} color="#fff" />
-                <Text style={styles.headerActionBtnSecondaryText}>Pengaturan Ujian</Text>
+                <Settings size={19} color="#fff" />
+              </TouchableOpacity>
+            )}
+
+            {canManagePengaturan && (
+              <TouchableOpacity
+                style={styles.headerActionBtnRoom}
+                onPress={() => handleOpenPengaturanRuang(null)}
+                accessibilityLabel="Pengaturan Ruang Peserta"
+              >
+                <Building size={19} color="#fff" />
               </TouchableOpacity>
             )}
 
@@ -1156,13 +1524,13 @@ export default function UjianJadwal() {
                 style={styles.headerActionBtnPrint}
                 onPress={handlePrintRekap}
                 disabled={printingRekap}
+                accessibilityLabel="Cetak Jadwal Ujian"
               >
                 {printingRekap ? (
                   <ActivityIndicator size="small" color="#1e293b" />
                 ) : (
-                  <Printer size={15} color="#1e293b" />
+                  <Printer size={19} color="#1e293b" />
                 )}
-                <Text style={styles.headerActionBtnPrintText}>Cetak Jadwal</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1258,10 +1626,13 @@ export default function UjianJadwal() {
               const isTaughtByMe = taughtMapelIds.includes(String(jadwal.mapel_id)) || Number(jadwal.guru_id) === Number(currentUser?.id);
               const isSupervisedByMe = Number(jadwal.pengawas_guru_id) === Number(currentUser?.id);
 
+              const isAssignedProctor = Number(currentUser?.id) === Number(jadwal.pengawas_guru_id);
+              const canProctorThis = isOperatorOrPanitiaCore || isWakaKurikulum || isAssignedProctor;
               const showSoalBtn = isOperatorOrPanitiaCore || (!isWakaKurikulum && isTaughtByMe);
-              const showAwasiBtn = isOperatorOrPanitiaCore || isWakaKurikulum || isSupervisedByMe;
-              const showNilaiBtn = isOperatorOrPanitiaCore || isWakaKurikulum || isTaughtByMe || isSupervisedByMe;
-              const showDocBtns = isOperatorOrPanitiaCore || isSupervisedByMe;
+              const showAwasiBtn = canProctorThis;
+              const showNilaiBtn = isOperatorOrPanitiaCore || isWakaKurikulum || isTaughtByMe || isAssignedProctor;
+              const showHadirPengawasBtn = canProctorThis;
+              const showDocBtns = isOperatorOrPanitiaCore || isAssignedProctor || isWakaKurikulum;
               const showCrudBtns = isOperatorOrPanitiaCore;
 
               return (
@@ -1271,28 +1642,30 @@ export default function UjianJadwal() {
                     <View style={styles.badgeJenis}>
                       <Text style={styles.badgeJenisText}>{jadwal.jenis_ujian || 'CBT'}</Text>
                     </View>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        isBerlangsung
-                          ? { backgroundColor: '#dcfce7' }
-                          : isSelesai
-                            ? { backgroundColor: '#f1f5f9' }
-                            : { backgroundColor: '#eff6ff' },
-                      ]}
-                    >
-                      <Text
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <View
                         style={[
-                          styles.statusBadgeText,
+                          styles.statusBadge,
                           isBerlangsung
-                            ? { color: '#16a34a' }
+                            ? { backgroundColor: '#dcfce7' }
                             : isSelesai
-                              ? { color: '#64748b' }
-                              : { color: '#2563eb' },
+                              ? { backgroundColor: '#f1f5f9' }
+                              : { backgroundColor: '#eff6ff' },
                         ]}
                       >
-                        ● {jadwal.status ? jadwal.status.toUpperCase() : 'TERJADWAL'}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.statusBadgeText,
+                            isBerlangsung
+                              ? { color: '#16a34a' }
+                              : isSelesai
+                                ? { color: '#64748b' }
+                                : { color: '#2563eb' },
+                          ]}
+                        >
+                          ● {jadwal.status ? jadwal.status.toUpperCase() : 'TERJADWAL'}
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
@@ -1349,34 +1722,53 @@ export default function UjianJadwal() {
                     </View>
                   )}
 
-                  {/* Baris Tombol Dokumen: Hadir Peserta & Berita Acara */}
-                  {showDocBtns && (
+                  {/* Baris Tombol Dokumen: Hadir Peserta, Hadir Pengawas & Berita Acara */}
+                  {(showDocBtns || showHadirPengawasBtn) && (
                     <View style={[styles.actionRow, { marginTop: 6 }]}>
-                      <TouchableOpacity
-                        style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
-                        disabled={isPrinting}
-                        onPress={() => handleOpenRuangModal(jadwal, 'hadir')}
-                      >
-                        {isPrinting ? (
-                          <ActivityIndicator size="small" color="#475569" />
-                        ) : (
-                          <Printer size={13} color="#475569" />
-                        )}
-                        <Text style={styles.docBtnText}>Hadir Peserta</Text>
-                      </TouchableOpacity>
+                      {showDocBtns && (
+                        <TouchableOpacity
+                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
+                          disabled={isPrinting}
+                          onPress={() => handleOpenRuangModal(jadwal, 'hadir')}
+                        >
+                          {isPrinting ? (
+                            <ActivityIndicator size="small" color="#475569" />
+                          ) : (
+                            <Printer size={13} color="#475569" />
+                          )}
+                          <Text style={styles.docBtnText}>Hadir Peserta</Text>
+                        </TouchableOpacity>
+                      )}
 
-                      <TouchableOpacity
-                        style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
-                        disabled={isPrinting}
-                        onPress={() => handleOpenRuangModal(jadwal, 'berita_acara')}
-                      >
-                        {isPrinting ? (
-                          <ActivityIndicator size="small" color="#475569" />
-                        ) : (
-                          <FileText size={13} color="#475569" />
-                        )}
-                        <Text style={styles.docBtnText}>Berita Acara</Text>
-                      </TouchableOpacity>
+                      {showHadirPengawasBtn && (
+                        <TouchableOpacity
+                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
+                          disabled={isPrinting}
+                          onPress={() => handleOpenRuangModal(jadwal, 'hadir_pengawas')}
+                        >
+                          {isPrinting ? (
+                            <ActivityIndicator size="small" color="#475569" />
+                          ) : (
+                            <Printer size={13} color="#475569" />
+                          )}
+                          <Text style={styles.docBtnText}>Hadir Pengawas</Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {showDocBtns && (
+                        <TouchableOpacity
+                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
+                          disabled={isPrinting}
+                          onPress={() => handleOpenRuangModal(jadwal, 'berita_acara')}
+                        >
+                          {isPrinting ? (
+                            <ActivityIndicator size="small" color="#475569" />
+                          ) : (
+                            <FileText size={13} color="#475569" />
+                          )}
+                          <Text style={styles.docBtnText}>Berita Acara</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
 
@@ -1437,7 +1829,7 @@ export default function UjianJadwal() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.popupTitle}>
-                  {targetKelasAction === 'soal' ? 'Pilih Kelas - Bank Soal' : 'Pilih Kelas - Daftar Nilai'}
+                  {targetKelasAction === 'soal' ? 'Pilih Kelas - Paket Soal' : 'Pilih Kelas - Daftar Nilai'}
                 </Text>
                 <Text style={styles.popupSubtitle}>
                   {activeJadwalItem?.data_mapel?.nama_mapel || activeJadwalItem?.nama_ujian}
@@ -1511,8 +1903,10 @@ export default function UjianJadwal() {
                   {targetRuangAction === 'awasi'
                     ? 'Pilih Ruangan Pengawasan'
                     : targetRuangAction === 'hadir'
-                      ? 'Pilih Ruang - Daftar Hadir'
-                      : 'Pilih Ruang - Berita Acara'}
+                      ? 'Pilih Ruang - Hadir Peserta'
+                      : targetRuangAction === 'hadir_pengawas'
+                        ? 'Pilih Ruang - Hadir Pengawas'
+                        : 'Pilih Ruang - Berita Acara'}
                 </Text>
                 <Text style={styles.popupSubtitle}>
                   {activeJadwalItem?.data_mapel?.nama_mapel || activeJadwalItem?.nama_ujian}
@@ -1744,6 +2138,417 @@ export default function UjianJadwal() {
       </Modal>
 
       {/* ========================================================
+          MODAL PENGATURAN RUANG PESERTA (Default, Acak, Custom)
+      ======================================================== */}
+      <Modal visible={isRuangPesertaModalOpen} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { maxHeight: '92%' }]}>
+            {/* Header Modal */}
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <View style={{ width: 34, height: 34, borderRadius: 10, backgroundColor: '#e0f2fe', alignItems: 'center', justifyContent: 'center' }}>
+                  <Building size={18} color="#0284c7" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.modalTitle}>Pengaturan Ruang Peserta</Text>
+                  <Text style={{ fontSize: 11.5, color: '#64748b', marginTop: 1 }} numberOfLines={1}>
+                    {targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT'}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={() => setIsRuangPesertaModalOpen(false)} style={styles.modalCloseBtn}>
+                <X size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {loadingRuangPeserta ? (
+              <View style={{ padding: 40, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator size="large" color="#2a2c87" />
+                <Text style={{ marginTop: 12, fontSize: 13, color: '#64748b' }}>Memuat data peserta & ruangan...</Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                {/* Mode Selector Tabs */}
+                <View style={styles.modeTabsRow}>
+                  <TouchableOpacity
+                    style={[styles.modeTabBtn, modeRuang === 'default' && styles.modeTabBtnActive]}
+                    onPress={() => {
+                      setModeRuang('default');
+                      handleResetToDefault();
+                    }}
+                  >
+                    <School size={14} color={modeRuang === 'default' ? '#fff' : '#475569'} />
+                    <Text style={[styles.modeTabBtnText, modeRuang === 'default' && styles.modeTabBtnTextActive]}>
+                      Default (Kelas)
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.modeTabBtn, modeRuang === 'acak' && styles.modeTabBtnActive]}
+                    onPress={() => setModeRuang('acak')}
+                  >
+                    <Shuffle size={14} color={modeRuang === 'acak' ? '#fff' : '#475569'} />
+                    <Text style={[styles.modeTabBtnText, modeRuang === 'acak' && styles.modeTabBtnTextActive]}>
+                      Acak Ruangan
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.modeTabBtn, modeRuang === 'custom' && styles.modeTabBtnActive]}
+                    onPress={() => setModeRuang('custom')}
+                  >
+                    <Users size={14} color={modeRuang === 'custom' ? '#fff' : '#475569'} />
+                    <Text style={[styles.modeTabBtnText, modeRuang === 'custom' && styles.modeTabBtnTextActive]}>
+                      Custom
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* 1. Mode Default: Info Card & Breakdown */}
+                {modeRuang === 'default' && (
+                  <View style={{ marginTop: 14 }}>
+                    <View style={styles.infoBoxBlue}>
+                      <Text style={styles.infoBoxBlueTitle}>Mode Default (Sesuai Kelas Siswa)</Text>
+                      <Text style={styles.infoBoxBlueDesc}>
+                        Siswa secara otomatis ditempatkan di ruang ujian yang sesuai dengan kelas aslinya (bukan ruang kantor).
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, marginBottom: 8 }}>
+                      <Text style={[styles.inputLabel, { marginBottom: 0 }]}>Ringkasan Pembagian Ruang Kelas :</Text>
+                      <TouchableOpacity
+                        style={styles.btnResetDefault}
+                        onPress={() => {
+                          handleResetToDefault();
+                          Alert.alert('Berhasil', 'Alokasi ruang seluruh siswa telah dikembalikan ke ruang kelas masing-masing.');
+                        }}
+                      >
+                        <RotateCcw size={12} color="#2a2c87" />
+                        <Text style={styles.btnResetDefaultText}>Terapkan Ulang</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {kelasList.map(k => {
+                      const count = siswaPesertaList.filter(s => (s.kelas || '').toLowerCase() === (k.nama_kelas || '').toLowerCase()).length;
+                      const dummySiswa = { kelas: k.nama_kelas };
+                      const defaultRuangId = getRuangDefaultForSiswa(dummySiswa, kelasList, ruangList);
+                      const r = ruangList.find(ru => String(ru.id) === String(defaultRuangId));
+                      return (
+                        <View key={k.id} style={styles.roomSummaryRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>Kelas {k.nama_kelas}</Text>
+                            <Text style={{ fontSize: 11, color: '#64748b' }}>{count} Siswa Terdaftar</Text>
+                          </View>
+                          <View style={{ backgroundColor: '#eff6ff', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: '#bfdbfe' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: '#2a2c87' }}>{r?.nama_ruang || 'Lab CBT'}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* 2. Mode Acak: Checkboxes Ruangan & Tombol Acak */}
+                {modeRuang === 'acak' && (
+                  <View style={{ marginTop: 14 }}>
+                    <View style={styles.infoBoxBlue}>
+                      <Text style={styles.infoBoxBlueTitle}>Mode Acak Ruangan (Distribusi Merata)</Text>
+                      <Text style={styles.infoBoxBlueDesc}>
+                        Pilih ruangan yang digunakan ujian, lalu klik tombol "Acak Ruangan Sekarang" untuk mendistribusikan seluruh siswa secara acak.
+                      </Text>
+                    </View>
+
+                    <Text style={[styles.inputLabel, { marginTop: 14 }]}>Pilih Ruangan yang Aktif / Digunakan :</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                      {ruangList.map(r => {
+                        const isChecked = selectedActiveRuangIds.includes(String(r.id));
+                        return (
+                          <TouchableOpacity
+                            key={r.id}
+                            style={[styles.ruangCheckChip, isChecked && styles.ruangCheckChipActive]}
+                            onPress={() => {
+                              if (isChecked) {
+                                setSelectedActiveRuangIds(prev => prev.filter(id => id !== String(r.id)));
+                              } else {
+                                setSelectedActiveRuangIds(prev => [...prev, String(r.id)]);
+                              }
+                            }}
+                          >
+                            {isChecked ? <CheckSquare size={14} color="#fff" /> : <Square size={14} color="#64748b" />}
+                            <Text style={[styles.ruangCheckChipText, isChecked && styles.ruangCheckChipTextActive]}>
+                              {r.nama_ruang}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.acakActionBtn}
+                      onPress={handleAcakRuangan}
+                    >
+                      <Shuffle size={16} color="#fff" />
+                      <Text style={styles.acakActionBtnText}>Acak Ruangan Sekarang</Text>
+                    </TouchableOpacity>
+
+                    {/* Ringkasan Hasil Acak */}
+                    <Text style={[styles.inputLabel, { marginTop: 16 }]}>Hasil Alokasi per Ruangan :</Text>
+                    {ruangList.filter(r => selectedActiveRuangIds.includes(String(r.id))).map(r => {
+                      const count = Object.values(alokasiRuangMap).filter(rId => String(rId) === String(r.id)).length;
+                      return (
+                        <View key={r.id} style={styles.roomSummaryRow}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>{r.nama_ruang}</Text>
+                            <Text style={{ fontSize: 11, color: '#64748b' }}>Ruang Ujian</Text>
+                          </View>
+                          <View style={{ backgroundColor: '#ecfdf5', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: '#a7f3d0' }}>
+                            <Text style={{ fontSize: 12, fontWeight: '800', color: '#047857' }}>{count} Siswa</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* 3. Mode Custom: Konsep Ceklis Ruang Ngaji */}
+                {modeRuang === 'custom' && (() => {
+                  const filteredSiswa = siswaPesertaList.filter(s => {
+                    const matchKls = filterKelasRuang === 'Semua' || (s.kelas || '').toLowerCase() === filterKelasRuang.toLowerCase();
+                    const matchQuery = !searchSiswaRuang || (s.nama || '').toLowerCase().includes(searchSiswaRuang.toLowerCase()) || (s.nisn || '').includes(searchSiswaRuang);
+                    return matchKls && matchQuery;
+                  });
+
+                  const activeRoom = ruangList.find(r => String(r.id) === String(customTargetRuangId));
+                  const activeRoomCount = Object.values(alokasiRuangMap).filter(rId => String(rId) === String(customTargetRuangId)).length;
+                  const allFilteredChecked = filteredSiswa.length > 0 && filteredSiswa.every(s => alokasiRuangMap[String(s.id)] === customTargetRuangId);
+
+                  const toggleCheckAll = () => {
+                    if (!customTargetRuangId) {
+                      Alert.alert('Peringatan', 'Silakan pilih Ruangan Target terlebih dahulu di bagian atas.');
+                      return;
+                    }
+                    setAlokasiRuangMap(prev => {
+                      const next = { ...prev };
+                      if (allFilteredChecked) {
+                        filteredSiswa.forEach(s => {
+                          if (next[String(s.id)] === customTargetRuangId) {
+                            delete next[String(s.id)];
+                          }
+                        });
+                      } else {
+                        filteredSiswa.forEach(s => {
+                          next[String(s.id)] = customTargetRuangId;
+                        });
+                      }
+                      return next;
+                    });
+                  };
+
+                  return (
+                    <View style={{ marginTop: 14 }}>
+                      <View style={styles.infoBoxBlue}>
+                        <Text style={styles.infoBoxBlueTitle}>Mode Custom (Ceklis Peserta per Ruangan)</Text>
+                        <Text style={styles.infoBoxBlueDesc}>
+                          Pilih Ruangan Target di bawah, lalu centang siswa untuk menempatkannya ke ruangan tersebut secara instan.
+                        </Text>
+                      </View>
+
+                      {/* 1. Pilih Ruangan Target (Horizontal Scroll Chips) */}
+                      <Text style={[styles.inputLabel, { marginTop: 14 }]}>Pilih Ruangan Target :</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          {ruangList.map(r => {
+                            const isSelected = String(r.id) === String(customTargetRuangId);
+                            const count = Object.values(alokasiRuangMap).filter(rId => String(rId) === String(r.id)).length;
+                            return (
+                              <TouchableOpacity
+                                key={r.id}
+                                style={[styles.customTargetChip, isSelected && styles.customTargetChipActive]}
+                                onPress={() => setCustomTargetRuangId(String(r.id))}
+                              >
+                                <School size={13} color={isSelected ? '#fff' : '#2a2c87'} />
+                                <Text style={[styles.customTargetChipText, isSelected && styles.customTargetChipTextActive]}>
+                                  {r.nama_ruang}
+                                </Text>
+                                <View style={[styles.customTargetCounter, isSelected && styles.customTargetCounterActive]}>
+                                  <Text style={[styles.customTargetCounterText, isSelected && styles.customTargetCounterTextActive]}>
+                                    {count}
+                                  </Text>
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </ScrollView>
+
+                      {/* 2. Banner Ruangan Terpilih */}
+                      {activeRoom && (
+                        <View style={styles.activeRoomBanner}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.activeRoomBannerLabel}>Ruangan Target Aktif :</Text>
+                            <Text style={styles.activeRoomBannerName}>{activeRoom.nama_ruang}</Text>
+                          </View>
+                          <View style={styles.activeRoomBadge}>
+                            <Users size={12} color="#047857" />
+                            <Text style={styles.activeRoomBadgeText}>{activeRoomCount} Peserta Terpilih</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* 3. Search & Filter Bar */}
+                      <View style={{ marginTop: 10, marginBottom: 8 }}>
+                        <TextInput
+                          style={[styles.searchInput, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#cbd5e1', borderRadius: 10, paddingHorizontal: 12 }]}
+                          placeholder="Cari nama siswa atau NISN..."
+                          placeholderTextColor="#9ca3af"
+                          value={searchSiswaRuang}
+                          onChangeText={setSearchSiswaRuang}
+                        />
+                      </View>
+
+                      {/* Filter Tab Kelas */}
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                        <View style={{ flexDirection: 'row', gap: 6 }}>
+                          {['Semua', ...kelasList.map(k => k.nama_kelas)].map(kls => {
+                            const isActive = filterKelasRuang === kls;
+                            return (
+                              <TouchableOpacity
+                                key={kls}
+                                style={[styles.filterChipSm, isActive && styles.filterChipSmActive]}
+                                onPress={() => setFilterKelasRuang(kls)}
+                              >
+                                <Text style={[styles.filterChipSmText, isActive && styles.filterChipSmTextActive]}>
+                                  {kls === 'Semua' ? 'Semua Kelas' : `Kelas ${kls}`}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </ScrollView>
+
+                      {/* Tombol Centang Semua Filtered */}
+                      <View style={styles.actionCheckAllRow}>
+                        <TouchableOpacity
+                          style={[styles.btnCheckAll, allFilteredChecked && styles.btnCheckAllActive]}
+                          onPress={toggleCheckAll}
+                        >
+                          {allFilteredChecked ? (
+                            <CheckSquare size={16} color="#2a2c87" />
+                          ) : (
+                            <Square size={16} color="#64748b" />
+                          )}
+                          <Text style={[styles.btnCheckAllText, allFilteredChecked && styles.btnCheckAllTextActive]}>
+                            {allFilteredChecked ? 'Batal Semua (Filtered)' : `Centang Semua (${filteredSiswa.length})`}
+                          </Text>
+                        </TouchableOpacity>
+                        <Text style={{ fontSize: 11, color: '#64748b' }}>
+                          {filteredSiswa.filter(s => alokasiRuangMap[String(s.id)] === customTargetRuangId).length} dari {filteredSiswa.length} dicentang
+                        </Text>
+                      </View>
+
+                      {/* 4. Daftar Siswa Menggunakan Ceklis */}
+                      <View style={{ gap: 8, marginBottom: 16 }}>
+                        {filteredSiswa.length === 0 ? (
+                          <View style={{ padding: 20, alignItems: 'center' }}>
+                            <Text style={{ fontSize: 12, color: '#9ca3af' }}>Tidak ada siswa ditemukan.</Text>
+                          </View>
+                        ) : (
+                          filteredSiswa.map(s => {
+                            const isChecked = alokasiRuangMap[String(s.id)] === customTargetRuangId;
+                            const curRuangId = alokasiRuangMap[String(s.id)];
+                            const curRuang = ruangList.find(r => String(r.id) === String(curRuangId));
+
+                            return (
+                              <TouchableOpacity
+                                key={s.id}
+                                style={[styles.customCheckItem, isChecked && styles.customCheckItemActive]}
+                                onPress={() => {
+                                  if (!customTargetRuangId) {
+                                    Alert.alert('Peringatan', 'Silakan pilih Ruangan Target terlebih dahulu di bagian atas.');
+                                    return;
+                                  }
+                                  setAlokasiRuangMap(prev => {
+                                    const next = { ...prev };
+                                    if (next[String(s.id)] === customTargetRuangId) {
+                                      delete next[String(s.id)];
+                                    } else {
+                                      next[String(s.id)] = customTargetRuangId;
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <View style={{ marginRight: 10 }}>
+                                  {isChecked ? (
+                                    <CheckSquare size={20} color="#10b981" />
+                                  ) : (
+                                    <Square size={20} color="#94a3b8" />
+                                  )}
+                                </View>
+                                <View style={{ flex: 1, marginRight: 8 }}>
+                                  <Text style={[styles.customCheckItemName, isChecked && { color: '#065f46' }]}>
+                                    {s.nama}
+                                  </Text>
+                                  <Text style={styles.customCheckItemSub}>
+                                    Kelas {s.kelas || '-'} • NISN: {s.nisn || '-'}
+                                  </Text>
+                                </View>
+                                <View>
+                                  {isChecked ? (
+                                    <View style={styles.badgeRuangIni}>
+                                      <Text style={styles.badgeRuangIniText}>✓ Ruang Ini</Text>
+                                    </View>
+                                  ) : curRuang ? (
+                                    <View style={styles.badgeRuangLain}>
+                                      <Text style={styles.badgeRuangLainText}>{curRuang.nama_ruang}</Text>
+                                    </View>
+                                  ) : (
+                                    <View style={styles.badgeRuangNone}>
+                                      <Text style={styles.badgeRuangNoneText}>Belum Diatur</Text>
+                                    </View>
+                                  )}
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })
+                        )}
+                      </View>
+                    </View>
+                  );
+                })()}
+              </ScrollView>
+            )}
+
+            {/* Modal Footer */}
+            <View style={[
+              styles.modalFooter,
+              { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 36 : 24) + 12 }
+            ]}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setIsRuangPesertaModalOpen(false)}
+                disabled={savingRuangPeserta}
+              >
+                <Text style={styles.modalCancelBtnText}>Batal</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, savingRuangPeserta && { opacity: 0.6 }]}
+                onPress={handleSavePengaturanRuang}
+                disabled={savingRuangPeserta}
+              >
+                {savingRuangPeserta ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Check size={16} color="#fff" />
+                )}
+                <Text style={styles.modalSubmitBtnText}>Simpan Ruang</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ========================================================
           MODAL TAMBAH / EDIT JADWAL CBT (Disimplifikasi)
       ======================================================== */}
       <Modal visible={isModalOpen} animationType="slide" transparent>
@@ -1966,49 +2771,362 @@ const styles = StyleSheet.create({
     borderTopColor: 'rgba(255, 255, 255, 0.15)',
   },
   headerActionBtnPrimary: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
     backgroundColor: '#fff',
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 20,
+    borderRadius: 12,
     elevation: 2,
-  },
-  headerActionBtnPrimaryText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#2a2c87',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
   },
   headerActionBtnSecondary: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
     backgroundColor: 'rgba(255, 255, 255, 0.18)',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.25)',
   },
-  headerActionBtnSecondaryText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#fff',
+  headerActionBtnRoom: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    backgroundColor: '#0284c7',
+    borderRadius: 12,
+    elevation: 2,
+    shadowColor: '#0284c7',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
   headerActionBtnPrint: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    backgroundColor: '#85c226',
+    borderRadius: 12,
+    elevation: 2,
+  },
+  roomBadgeBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    backgroundColor: '#85c226',
-    paddingVertical: 7,
-    paddingHorizontal: 13,
-    borderRadius: 20,
+    gap: 3,
+    backgroundColor: '#e0f2fe',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
   },
-  headerActionBtnPrintText: {
+  roomBadgeBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#0369a1',
+  },
+  // Ruang Peserta Modal Styles
+  modeTabsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    padding: 4,
+    borderRadius: 12,
+    gap: 4,
+  },
+  modeTabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  modeTabBtnActive: {
+    backgroundColor: '#2a2c87',
+  },
+  modeTabBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modeTabBtnTextActive: {
+    color: '#fff',
+  },
+  infoBoxBlue: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  infoBoxBlueTitle: {
     fontSize: 12,
+    fontWeight: '700',
+    color: '#1e40af',
+    marginBottom: 2,
+  },
+  infoBoxBlueDesc: {
+    fontSize: 11,
+    color: '#3b82f6',
+    lineHeight: 16,
+  },
+  roomSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 6,
+  },
+  ruangCheckChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f8fafc',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  ruangCheckChipActive: {
+    backgroundColor: '#2a2c87',
+    borderColor: '#2a2c87',
+  },
+  ruangCheckChipText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  ruangCheckChipTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  acakActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#0284c7',
+    paddingVertical: 10,
+    borderRadius: 12,
+    elevation: 2,
+  },
+  acakActionBtnText: {
+    color: '#fff',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  filterChipSm: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  filterChipSmActive: {
+    backgroundColor: '#2a2c87',
+    borderColor: '#2a2c87',
+  },
+  filterChipSmText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  filterChipSmTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  btnResetDefault: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  btnResetDefaultText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2a2c87',
+  },
+  customTargetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  customTargetChipActive: {
+    backgroundColor: '#2a2c87',
+    borderColor: '#2a2c87',
+  },
+  customTargetChipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  customTargetChipTextActive: {
+    color: '#fff',
+  },
+  customTargetCounter: {
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  customTargetCounterActive: {
+    backgroundColor: '#3b82f6',
+  },
+  customTargetCounterText: {
+    fontSize: 10.5,
     fontWeight: '800',
+    color: '#475569',
+  },
+  customTargetCounterTextActive: {
+    color: '#fff',
+  },
+  activeRoomBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#ecfdf5',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+    marginBottom: 4,
+  },
+  activeRoomBannerLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#047857',
+    textTransform: 'uppercase',
+  },
+  activeRoomBannerName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#065f46',
+    marginTop: 2,
+  },
+  activeRoomBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#a7f3d0',
+  },
+  activeRoomBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#047857',
+  },
+  actionCheckAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+  btnCheckAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  btnCheckAllActive: {},
+  btnCheckAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  btnCheckAllTextActive: {
+    color: '#2a2c87',
+  },
+  customCheckItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  customCheckItemActive: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#86efac',
+  },
+  customCheckItemName: {
+    fontSize: 13,
+    fontWeight: '700',
     color: '#1e293b',
+  },
+  customCheckItemSub: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  badgeRuangIni: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#86efac',
+  },
+  badgeRuangIniText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#15803d',
+  },
+  badgeRuangLain: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+  },
+  badgeRuangLainText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#475569',
+  },
+  badgeRuangNone: {
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+  },
+  badgeRuangNoneText: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#b91c1c',
   },
   filterSection: {
     backgroundColor: '#fff',
@@ -2540,6 +3658,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: 16,
     paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 32,
     gap: 10,
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
@@ -2558,6 +3677,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748b',
   },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
   modalSubmitBtn: {
     flex: 2,
     flexDirection: 'row',
@@ -2572,5 +3696,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#fff',
+  },
+  modalSubmitBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 6,
   },
 });

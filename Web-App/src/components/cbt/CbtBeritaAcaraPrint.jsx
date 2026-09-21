@@ -78,13 +78,22 @@ export default function CbtBeritaAcaraPrint() {
         .maybeSingle();
       setSopData(sop);
 
-      // Hitung kehadiran dari data siswa di kelas
+      // Hitung kehadiran dari cbt_peserta_ruang atau data_siswa
       let totalSiswaKelas = 0;
-      if (jRes.data?.kelas_id) {
+      const { count: pesertaRuangCount } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('id', { count: 'exact', head: true })
+        .eq('jadwal_id', jadwalId);
+
+      if (pesertaRuangCount && pesertaRuangCount > 0) {
+        totalSiswaKelas = pesertaRuangCount;
+      } else if (jRes.data?.data_kelas?.nama_kelas) {
         const { count } = await supabase
           .from('data_siswa')
           .select('id', { count: 'exact', head: true })
-          .eq('kelas_id', jRes.data.kelas_id);
+          .eq('status_keaktifan', 'Aktif')
+          .neq('kelas', 'Calon Siswa')
+          .eq('kelas', jRes.data.data_kelas.nama_kelas);
         totalSiswaKelas = count || 0;
       }
 

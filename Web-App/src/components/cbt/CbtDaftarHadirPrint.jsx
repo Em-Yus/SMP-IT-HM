@@ -88,15 +88,48 @@ export default function CbtDaftarHadirPrint({ type = 'peserta' }) {
         setKepsekData(kepsekJabatan.guru);
       }
 
-      // Ambil Siswa di Kelas Jadwal
-      if (jRes.data?.kelas_id) {
-        const { data: sData } = await supabase
-          .from('data_siswa')
-          .select('id, nama_lengkap, nisn, nipd')
-          .eq('kelas_id', jRes.data.kelas_id)
-          .order('nama_lengkap');
+      // Ambil Siswa Peserta Ujian: Prioritas dari cbt_peserta_ruang, fallback ke data_siswa
+      const { data: pRuangData } = await supabase
+        .from('cbt_peserta_ruang')
+        .select(`
+          id,
+          siswa_id,
+          ruang_id,
+          nomor_meja,
+          data_ruang(id, nama_ruang),
+          data_siswa:siswa_id(id, nama, nisn, nipd, kelas, status_keaktifan)
+        `)
+        .eq('jadwal_id', jadwalId)
+        .order('nomor_meja', { ascending: true, nullsFirst: false });
 
-        setSiswaList(sData || []);
+      if (pRuangData && pRuangData.length > 0) {
+        const mapped = pRuangData
+          .filter((p) => p.data_siswa && (!p.data_siswa.status_keaktifan || p.data_siswa.status_keaktifan === 'Aktif'))
+          .map((p) => ({
+            ...p.data_siswa,
+            ruang_nama: p.data_ruang?.nama_ruang || jRes.data?.data_ruang?.nama_ruang || 'Lab CBT',
+            nomor_meja: p.nomor_meja,
+          }));
+        setSiswaList(mapped);
+      } else {
+        // Fallback berdasarkan kelas jadwal
+        let query = supabase
+          .from('data_siswa')
+          .select('id, nama, nisn, nipd, kelas, status_keaktifan')
+          .eq('status_keaktifan', 'Aktif')
+          .neq('kelas', 'Calon Siswa')
+          .order('nama');
+        if (jRes.data?.data_kelas?.nama_kelas) {
+          query = query.eq('kelas', jRes.data.data_kelas.nama_kelas);
+        }
+        const { data: sData } = await query;
+        setSiswaList(
+          (sData || []).map((s) => ({
+            ...s,
+            ruang_nama: jRes.data?.data_ruang?.nama_ruang || 'Lab CBT',
+            nomor_meja: null,
+          }))
+        );
       }
     } catch (err) {
       console.error('Error fetching print data:', err);
@@ -217,8 +250,8 @@ export default function CbtDaftarHadirPrint({ type = 'peserta' }) {
                     <td className="border border-black text-center font-bold">{idx + 1}</td>
                     <td className="border border-black text-center font-mono">{siswa.nipd || '-'}</td>
                     <td className="border border-black text-center font-mono">{siswa.nisn || '-'}</td>
-                    <td className="border border-black px-3 font-semibold">{siswa.nama_lengkap}</td>
-                    <td className="border border-black text-center">{jadwal?.data_ruang?.nama_ruang || 'Lab CBT'}</td>
+                    <td className="border border-black px-3 font-semibold">{siswa.nama || siswa.nama_lengkap}</td>
+                    <td className="border border-black text-center">{siswa.ruang_nama || jadwal?.data_ruang?.nama_ruang || 'Lab CBT'}</td>
                     <td className="border border-black px-2 w-20 text-left align-top text-[10px] text-gray-500">
                       {idx % 2 === 0 ? `${idx + 1}. .........` : ''}
                     </td>

@@ -355,6 +355,27 @@ export default function CbtBankSoal() {
     }
   };
 
+  // Hitung ulang bobot nilai secara otomatis berdasarkan jumlah butir soal (100 / Total Soal)
+  const recalculateAutoBobot = async (bankId) => {
+    try {
+      const { data: allSoal, error } = await supabase
+        .from('cbt_soal')
+        .select('id')
+        .eq('bank_soal_id', bankId);
+      if (error || !allSoal || allSoal.length === 0) return;
+
+      const total = allSoal.length;
+      const autoBobot = parseFloat((100 / total).toFixed(2));
+
+      await supabase
+        .from('cbt_soal')
+        .update({ bobot_nilai: autoBobot })
+        .eq('bank_soal_id', bankId);
+    } catch (err) {
+      console.error('Error recalculateAutoBobot:', err);
+    }
+  };
+
   // Simpan Butir Soal (Tambah / Edit)
   const handleSaveSoal = async (e) => {
     e.preventDefault();
@@ -411,6 +432,9 @@ export default function CbtBankSoal() {
         .from('cbt_bank_soal')
         .update({ total_soal: count || 0, updated_at: new Date().toISOString() })
         .eq('id', selectedBank.id);
+
+      // Hitung ulang bobot otomatis agar total seimbang 100
+      await recalculateAutoBobot(selectedBank.id);
 
       setIsModalSoalOpen(false);
       selectBank(selectedBank);
@@ -474,6 +498,8 @@ export default function CbtBankSoal() {
           .from('cbt_bank_soal')
           .update({ total_soal: count || 0, updated_at: new Date().toISOString() })
           .eq('id', selectedBank.id);
+
+        await recalculateAutoBobot(selectedBank.id);
 
         Swal.fire('Terhapus', 'Butir soal berhasil dihapus.', 'success');
         selectBank(selectedBank);
@@ -591,6 +617,8 @@ export default function CbtBankSoal() {
           .from('cbt_bank_soal')
           .update({ total_soal: count || 0, updated_at: new Date().toISOString() })
           .eq('id', selectedBank.id);
+
+        await recalculateAutoBobot(selectedBank.id);
 
         Swal.fire('Sukses', `Berhasil mengimpor ${formattedSoal.length} butir soal!`, 'success');
         selectBank(selectedBank);

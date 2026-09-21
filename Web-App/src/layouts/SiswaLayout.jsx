@@ -33,10 +33,50 @@ export default function SiswaLayout() {
         const sessionStr = localStorage.getItem('user_siswa');
         if (sessionStr) {
           const userObj = JSON.parse(sessionStr);
+
+          // Validasi keaktifan siswa: Siswa nonaktif tidak berhak mengakses ujian aktif
+          const { data: dbCheckSiswa } = await supabase
+            .from('data_siswa')
+            .select('status_keaktifan')
+            .eq('id', userObj.id)
+            .maybeSingle();
+
+          if (dbCheckSiswa?.status_keaktifan && dbCheckSiswa.status_keaktifan.toLowerCase() !== 'aktif') {
+            setActiveExam(null);
+            return;
+          }
+
           let kelasId = userObj.kelas_id;
-          if (!kelasId && userObj.kelas) {
-            const { data: kData } = await supabase.from('data_kelas').select('id').ilike('nama_kelas', userObj.kelas).maybeSingle();
-            if (kData) kelasId = kData.id;
+          let tingkatSiswa = null;
+          if (userObj.kelas) {
+            const { data: kData } = await supabase.from('data_kelas').select('id, tingkat').ilike('nama_kelas', userObj.kelas).maybeSingle();
+            if (kData) {
+              kelasId = kData.id;
+              if (kData.tingkat) tingkatSiswa = String(kData.tingkat);
+            }
+          }
+
+          if (!tingkatSiswa && userObj.kelas) {
+            const upper = userObj.kelas.toUpperCase().trim();
+            if (upper.includes('VII') && !upper.includes('VIII')) tingkatSiswa = '7';
+            else if (upper.includes('VIII')) tingkatSiswa = '8';
+            else if (upper.includes('IX')) tingkatSiswa = '9';
+            else {
+              const m = upper.match(/\b([789])\b/);
+              if (m) tingkatSiswa = m[1];
+            }
+          }
+
+          // Cek alokasi ruangan siswa di cbt_peserta_ruang
+          let allocatedJadwalIds = [];
+          if (userObj.id) {
+            const { data: pRuangData } = await supabase
+              .from('cbt_peserta_ruang')
+              .select('jadwal_id')
+              .eq('siswa_id', userObj.id);
+            if (pRuangData && pRuangData.length > 0) {
+              allocatedJadwalIds = pRuangData.map(p => Number(p.jadwal_id)).filter(Boolean);
+            }
           }
 
           const now = new Date();
@@ -48,22 +88,38 @@ export default function SiswaLayout() {
 
           let cbtQuery = supabase
             .from('cbt_jadwal_ujian')
-            .select('id, nama_ujian, tanggal_ujian, jam_mulai, jam_selesai, status')
-            .eq('tanggal_ujian', todayStr);
+            .select('id, nama_ujian, mapel_id, bank_soal_id, tanggal_ujian, jam_mulai, jam_selesai, status, cbt_bank_soal(id, tingkat_kelas)');
 
-          if (kelasId) {
-            cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+          if (allocatedJadwalIds.length > 0) {
+            cbtQuery = cbtQuery.or(`id.in.(${allocatedJadwalIds.join(',')}),tanggal_ujian.eq.${todayStr}`);
           } else {
-            cbtQuery = cbtQuery.is('kelas_id', null);
+            cbtQuery = cbtQuery.eq('tanggal_ujian', todayStr);
+            if (kelasId) {
+              cbtQuery = cbtQuery.or(`kelas_id.eq.${kelasId},kelas_id.is.null`);
+            } else {
+              cbtQuery = cbtQuery.is('kelas_id', null);
+            }
           }
 
           const { data: jadwals } = await cbtQuery;
 
           if (jadwals && jadwals.length > 0) {
             const active = jadwals.find(j => {
+              const isAllocated = allocatedJadwalIds.includes(Number(j.id));
+              const isToday = j.tanggal_ujian === todayStr;
               const mulai = j.jam_mulai?.slice(0, 5) || '00:00';
               const selesai = j.jam_selesai?.slice(0, 5) || '23:59';
-              return currentTime >= mulai && currentTime <= selesai;
+              const inTime = isToday && (currentTime >= mulai && currentTime <= selesai);
+              const isStatusActive = j.status === 'aktif' || j.status === 'berlangsung';
+
+              if (!inTime && !isStatusActive) return false;
+
+              if (isAllocated) return true;
+
+              const bTingkat = j.cbt_bank_soal?.tingkat_kelas;
+              if (!bTingkat || bTingkat === 'Semua' || bTingkat === tingkatSiswa) return true;
+
+              return false;
             });
             setActiveExam(active || null);
           } else {
@@ -135,11 +191,12 @@ export default function SiswaLayout() {
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition font-bold text-sm bg-red-600 text-white shadow-md hover:bg-red-700 animate-pulse my-1"
             >
               <Radio size={18} />
-              <span>Ujian CBT Aktif</span>
+              <span>Ujian CBT Aktif (Masuk)</span>
             </Link>
           )}
           
           <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-6 px-3">Akademik & Kelas</div>
+          <NavItem to="/cbt/jadwal-siswa" icon={Laptop}>Ujian CBT</NavItem>
           <NavItem to="/jadwal-pelajaran-siswa" icon={CalendarDays}>Jadwal Pelajaran</NavItem>
           <NavItem to="/presensi-saya" icon={CheckSquare}>Presensi Saya</NavItem>
           <NavItem to="/mengaji-siswa" icon={Book}>Kelas Mengaji</NavItem>
