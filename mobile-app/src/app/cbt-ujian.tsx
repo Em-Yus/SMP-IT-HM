@@ -19,6 +19,7 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera as VisionCamera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -165,7 +166,8 @@ export default function CbtUjian() {
   const { jadwalId } = useLocalSearchParams<{ jadwalId: string }>();
 
   // Permissions & Cam
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission] = useCameraPermissions();         // expo-camera: AI Proctor (takePictureAsync)
+  const { hasPermission: hasScanPermission, requestPermission: requestScanPermission } = useCameraPermission(); // vision-camera: QR Scan
   const [isCameraMinimized, setIsCameraMinimized] = useState(false);
   const [proctorCameraReady, setProctorCameraReady] = useState(false);
   const [isCameraNativeReady, setIsCameraNativeReady] = useState(false);
@@ -183,6 +185,20 @@ export default function CbtUjian() {
   // States
   const [currentStep, setCurrentStep] = useState<'scan' | 'beranda' | 'soal'>('scan');
   const [scanFacing, setScanFacing] = useState<'back' | 'front'>('back');
+  const scanDevice = useCameraDevice(scanFacing); // vision-camera device untuk QR scan kartu
+  const isVerifyingCardRef = useRef(false);
+  const handleBarcodeScannedRef = useRef<(data: string) => void>(() => {});
+  const cardObjectOutput = useObjectOutput({
+    types: ['qr', 'code-128', 'ean-13', 'ean-8', 'code-39'],
+    onObjectsScanned: (objects) => {
+      for (const obj of objects) {
+        if (isScannedCode(obj) && obj.value) {
+          handleBarcodeScannedRef.current(obj.value);
+          break;
+        }
+      }
+    }
+  });
   const [isVerifyingCard, setIsVerifyingCard] = useState(false);
   const [isCardVerified, setIsCardVerified] = useState(false);
   const isResumingRef = useRef(false);
@@ -508,12 +524,15 @@ export default function CbtUjian() {
     };
   }, [jadwalId]);
 
-  // Request camera permission
+  // Request camera permission (vision-camera untuk scan QR + expo-camera untuk proktor)
   useEffect(() => {
+    if (!hasScanPermission) {
+      requestScanPermission();
+    }
     if (!permission?.granted) {
       requestPermission();
     }
-  }, [permission]);
+  }, [permission, hasScanPermission]);
 
   // Jeda warm-up mount kamera depan AI proctor saat masuk ke 'soal'
   useEffect(() => {
@@ -1048,8 +1067,9 @@ export default function CbtUjian() {
   }, [sesi?.id, jadwalId, siswa?.id]);
 
   // Handler Pemindaian & Verifikasi Kartu Siswa
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
-    if (isVerifyingCard || isCardVerified) return;
+  const handleBarcodeScanned = (data: string) => {
+    if (isVerifyingCardRef.current || isCardVerified) return;
+    isVerifyingCardRef.current = true;
     setIsVerifyingCard(true);
 
     try {
@@ -1098,6 +1118,7 @@ export default function CbtUjian() {
             {
               text: 'Lanjutkan',
               onPress: () => {
+                isVerifyingCardRef.current = false;
                 setIsVerifyingCard(false);
                 if (isResumingRef.current) {
                   setCurrentStep('soal');
@@ -1118,17 +1139,27 @@ export default function CbtUjian() {
           [
             {
               text: 'Pindai Ulang',
-              onPress: () => setIsVerifyingCard(false)
+              onPress: () => {
+                isVerifyingCardRef.current = false;
+                setIsVerifyingCard(false);
+              }
             }
           ]
         );
       }
     } catch (err: any) {
       Alert.alert('Gagal Memindai', 'Format kartu tidak valid atau tidak terbaca.', [
-        { text: 'Coba Lagi', onPress: () => setIsVerifyingCard(false) }
+        {
+          text: 'Coba Lagi',
+          onPress: () => {
+            isVerifyingCardRef.current = false;
+            setIsVerifyingCard(false);
+          }
+        }
       ]);
     }
   };
+  handleBarcodeScannedRef.current = handleBarcodeScanned;
 
   const startTimer = (sesiId: string) => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -1536,14 +1567,12 @@ export default function CbtUjian() {
 
         {/* Scan Frame Area */}
         <View style={styles.scanBox}>
-          {permission?.granted ? (
-            <CameraView
+        {hasScanPermission && scanDevice ? (
+            <VisionCamera
               style={StyleSheet.absoluteFill}
-              facing={scanFacing}
-              barcodeScannerSettings={{
-                barcodeTypes: ['qr', 'code128', 'ean13', 'ean8', 'code39'],
-              }}
-              onBarcodeScanned={isVerifyingCard || isCardVerified ? undefined : handleBarcodeScanned}
+              device={scanDevice}
+              isActive={currentStep === 'scan' && !isVerifyingCard && !isCardVerified}
+              outputs={[cardObjectOutput]}
             />
           ) : (
             <View style={styles.scanFallback}>
@@ -1573,14 +1602,20 @@ export default function CbtUjian() {
           </Text>
         </View>
 
-        {/* Indikator Wajib Kamera Belakang */}
+        {/* Switch Kamera Depan / Belakang */}
         <View style={styles.scanControlsRow}>
-          <View style={[styles.flipCamBtn, { backgroundColor: 'rgba(133, 194, 38, 0.15)', borderWidth: 1, borderColor: '#85c226' }]}>
-            <Camera size={16} color="#85c226" />
-            <Text style={[styles.flipCamBtnText, { color: '#daffcc', fontWeight: 'bold' }]}>
-              Kamera Belakang Aktif (Scan Kartu)
+          <TouchableOpacity
+            style={styles.flipCamBtn}
+            onPress={() => setScanFacing((prev) => (prev === 'back' ? 'front' : 'back'))}
+            activeOpacity={0.8}
+          >
+            <RefreshCw size={15} color="#38bdf8" />
+            <Text style={styles.flipCamBtnText}>
+              {scanFacing === 'back'
+                ? 'Kamera Belakang (Ketuk ganti Kamera Depan)'
+                : 'Kamera Depan (Ketuk ganti Kamera Belakang)'}
             </Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Modal Petunjuk Posisi Kamera */}

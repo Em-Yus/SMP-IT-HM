@@ -55,7 +55,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Aplikasi SMP IT HM membutuhkan akses kamera untuk memindai QR Code Kartu Pelajar."
+          "cameraPermission": "Aplikasi SMP IT HM membutuhkan akses kamera untuk pengawasan ujian CBT."
         }
       ],
       "expo-sharing"

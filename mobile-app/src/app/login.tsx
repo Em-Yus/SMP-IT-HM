@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabaseClient';
 import { router } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import CryptoJS from 'crypto-js';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -22,7 +22,9 @@ export default function LoginScreen() {
   // Camera & Scanner State
   const [isScanning, setIsScanning] = useState(false);
   const [facing, setFacing] = useState<'back' | 'front'>('back');
-  const [permission, requestPermission] = useCameraPermissions();
+  const [scanned, setScanned] = useState(false);
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const device = useCameraDevice(facing);
 
   const SECRET_KEY = process.env.EXPO_PUBLIC_KARTU_SISWA_SECRET || "KARTU_SISWA_SECRET";
 
@@ -96,7 +98,9 @@ export default function LoginScreen() {
     router.replace('/(guru-tabs)/dashboard');
   };
 
-  const handleBarcodeScanned = async ({ type, data }: { type: string; data: string }) => {
+  const handleBarcodeScanned = async (data: string) => {
+    if (scanned) return;
+    setScanned(true);
     setIsScanning(false);
     setLoading(true);
     
@@ -123,17 +127,31 @@ export default function LoginScreen() {
       Alert.alert('Scan Gagal', 'QR Code tidak valid. Pastikan ini adalah QR Code Kartu Pelajar yang sah.');
     } finally {
       setLoading(false);
+      setTimeout(() => setScanned(false), 2000);
     }
   };
 
+  const objectOutput = useObjectOutput({
+    types: ['qr'],
+    onObjectsScanned: (objects) => {
+      for (const obj of objects) {
+        if (isScannedCode(obj) && obj.value) {
+          handleBarcodeScanned(obj.value);
+          break;
+        }
+      }
+    }
+  });
+
   const toggleScanner = async () => {
-    if (!permission?.granted) {
-      const { granted } = await requestPermission();
+    if (!hasPermission) {
+      const granted = await requestPermission();
       if (!granted) {
         Alert.alert('Izin Ditolak', 'Aplikasi membutuhkan akses kamera untuk memindai QR Code.');
         return;
       }
     }
+    setScanned(false);
     setIsScanning(true);
   };
 
@@ -212,14 +230,14 @@ export default function LoginScreen() {
   if (isScanning) {
     return (
       <View style={styles.scannerContainer}>
-        <CameraView 
-          style={StyleSheet.absoluteFill}
-          facing={facing}
-          barcodeScannerSettings={{
-            barcodeTypes: ['qr'],
-          }}
-          onBarcodeScanned={handleBarcodeScanned}
-        />
+        {device ? (
+          <Camera
+            style={StyleSheet.absoluteFill}
+            device={device}
+            isActive={isScanning}
+            outputs={[objectOutput]}
+          />
+        ) : null}
         
         {/* Fullscreen Dark Mask Overlay with Viewfinder Hole */}
         <View style={styles.scannerOverlay}>

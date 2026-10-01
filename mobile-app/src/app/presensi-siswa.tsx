@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Platform, DeviceEventEmitter, ToastAndroid, Modal } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import CryptoJS from 'crypto-js';
 import * as Animatable from 'react-native-animatable';
 import { Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, FileText, ChevronLeft, ChevronRight, UserCheck, XCircle, PieChart, Filter, Settings, AlertTriangle, Send, Printer, CalendarDays, Eye, X, ShieldAlert, Award, SwitchCamera } from 'lucide-react-native';
@@ -17,10 +17,11 @@ export default function PresensiSiswa() {
   const [tanggal, setTanggal] = useState(getLocalDate());
   
   // Camera & Scan
-  const [permission, requestPermission] = useCameraPermissions();
+  const { hasPermission, requestPermission } = useCameraPermission();
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [facing, setFacing] = useState<'back' | 'front'>('back');
+  const device = useCameraDevice(facing);
   const [scanResult, setScanResult] = useState<{
     id?: number;
     type: 'success' | 'warning' | 'info' | 'error';
@@ -339,7 +340,7 @@ export default function PresensiSiswa() {
   // SCAN LOGIC
   // ===============================
 
-  const handleBarcodeScanned = async ({ type, data }: { type: string, data: string }) => {
+  const handleBarcodeScanned = async (data: string) => {
     if (scanned || isProcessing) return;
     setScanned(true);
     setIsProcessing(true);
@@ -543,6 +544,18 @@ export default function PresensiSiswa() {
       }, 2000);
     }
   };
+
+  const objectOutput = useObjectOutput({
+    types: ['qr'],
+    onObjectsScanned: (objects) => {
+      for (const obj of objects) {
+        if (isScannedCode(obj) && obj.value) {
+          handleBarcodeScanned(obj.value);
+          break;
+        }
+      }
+    }
+  });
 
   // ===============================
   // MANUAL LOGIC
@@ -1201,9 +1214,7 @@ export default function PresensiSiswa() {
             </TouchableOpacity>
           </View>
 
-          {!permission ? (
-            <ActivityIndicator size="large" color="#1E257F" style={{ marginVertical: 40 }} />
-          ) : !permission.granted ? (
+          {!hasPermission ? (
             <View style={styles.permissionBox}>
               <Text style={{ textAlign: 'center', marginBottom: 16 }}>Aplikasi membutuhkan akses kamera untuk memindai kartu absen.</Text>
               <TouchableOpacity style={styles.btnPrimary} onPress={requestPermission}>
@@ -1212,11 +1223,11 @@ export default function PresensiSiswa() {
             </View>
           ) : (
             <View style={styles.cameraWrapper}>
-              <CameraView 
+              <Camera 
                 style={styles.camera} 
-                facing={facing}
-                onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
-                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                device={device!}
+                isActive={currentTab === 'scan'}
+                outputs={[objectOutput]}
               />
               <View style={styles.overlayContainer}>
                 {/* Floating camera switch button on camera */}

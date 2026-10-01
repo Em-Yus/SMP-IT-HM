@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { supabase } from '../../../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CheckCircle, Clock, LogOut, FileText, UserCheck, ChevronLeft, ChevronRight, Edit, X, AlertCircle, Calendar, QrCode, BookOpen, DollarSign, Camera as CameraIcon, Award, ShieldCheck, Sparkles } from 'lucide-react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
@@ -23,7 +23,8 @@ export default function PresensiGuruScreen() {
   });
 
   // CAMERA SCANNER STATE
-  const [permission, requestPermission] = useCameraPermissions();
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const device = useCameraDevice('back');
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -192,9 +193,9 @@ export default function PresensiGuruScreen() {
   // UNIVERSAL SCANNER HANDLER
   // ===============================
   const handleOpenScanner = async () => {
-    if (!permission?.granted) {
-      const res = await requestPermission();
-      if (!res.granted) {
+    if (!hasPermission) {
+      const granted = await requestPermission();
+      if (!granted) {
         Alert.alert('Izin Ditolak', 'Aplikasi memerlukan izin kamera untuk memindai QR Code Presensi.');
         return;
       }
@@ -204,7 +205,7 @@ export default function PresensiGuruScreen() {
     setScannerVisible(true);
   };
 
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+  const handleBarcodeScanned = async (data: string) => {
     if (scanned || isProcessing) return;
     setScanned(true);
     setIsProcessing(true);
@@ -607,6 +608,18 @@ export default function PresensiGuruScreen() {
     }
   };
 
+  const objectOutput = useObjectOutput({
+    types: ['qr'],
+    onObjectsScanned: (objects) => {
+      for (const obj of objects) {
+        if (isScannedCode(obj) && obj.value) {
+          handleBarcodeScanned(obj.value);
+          break;
+        }
+      }
+    }
+  });
+
   // ===============================
   // REKAP OPERATOR
   // ===============================
@@ -935,12 +948,14 @@ export default function PresensiGuruScreen() {
         onRequestClose={() => setScannerVisible(false)}
       >
         <View style={styles.cameraContainer}>
-          <CameraView
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
-            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-          />
+          {device && (
+            <Camera
+              style={StyleSheet.absoluteFill}
+              device={device}
+              isActive={scannerVisible}
+              outputs={[objectOutput]}
+            />
+          )}
 
           {/* Scanner Overlay UI */}
           <View style={styles.cameraHeader}>

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, KeyboardAvoidingView, Platform, Modal, Animated } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Camera as VisionCamera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import CryptoJS from 'crypto-js';
-import { Wallet, ChevronLeft, QrCode, Search, User, X, CheckCircle, Plus, Trash2, Camera, Calendar } from 'lucide-react-native';
+import { Wallet, ChevronLeft, QrCode, Search, User, X, CheckCircle, Plus, Trash2, Camera as CameraIcon, Calendar } from 'lucide-react-native';
 import { router } from 'expo-router';
 import CustomDatePicker from '../components/CustomDatePicker';
 
@@ -18,7 +18,9 @@ export default function TagihanSiswa() {
 
   // Camera State
   const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [scanned, setScanned] = useState(false);
+  const { hasPermission, requestPermission } = useCameraPermission();
+  const device = useCameraDevice('back');
   const scannerAnim = useRef(new Animated.Value(0)).current;
 
   // Search State
@@ -91,7 +93,9 @@ export default function TagihanSiswa() {
 
 
 
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+  const handleBarcodeScanned = async (data: string) => {
+    if (scanned) return;
+    setScanned(true);
     setIsCameraOpen(false);
     setIsLoading(true);
     const nipdToSearch = decryptNIPD(data);
@@ -111,6 +115,18 @@ export default function TagihanSiswa() {
       setIsLoading(false);
     }
   };
+
+  const objectOutput = useObjectOutput({
+    types: ['qr'],
+    onObjectsScanned: (objects) => {
+      for (const obj of objects) {
+        if (isScannedCode(obj) && obj.value) {
+          handleBarcodeScanned(obj.value);
+          break;
+        }
+      }
+    }
+  });
 
   const processSelectSiswa = async (siswa: any) => {
     if (siswa.status_siswa?.toLowerCase() === 'cabang') {
@@ -283,9 +299,9 @@ export default function TagihanSiswa() {
   };
 
   const openCamera = async () => {
-    if (!cameraPermission?.granted) {
-      const { status } = await requestCameraPermission();
-      if (status !== 'granted') return Alert.alert('Izin Ditolak', 'Dibutuhkan izin kamera untuk memindai kartu.');
+    if (!hasPermission) {
+      const granted = await requestPermission();
+      if (!granted) return Alert.alert('Izin Ditolak', 'Dibutuhkan izin kamera untuk memindai kartu.');
     }
     setIsCameraOpen(true);
   };
@@ -509,12 +525,15 @@ export default function TagihanSiswa() {
             <Text style={styles.cameraTitle}>Scan Kartu Pelajar</Text>
             <TouchableOpacity onPress={() => setIsCameraOpen(false)} style={styles.closeBtn}><X color="#fff" size={24} /></TouchableOpacity>
           </View>
-          <CameraView
-            style={styles.cameraView}
-            facing="back"
-            onBarcodeScanned={handleBarcodeScanned}
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-          >
+          <View style={styles.cameraView}>
+            {device && (
+              <VisionCamera
+                style={StyleSheet.absoluteFill}
+                device={device}
+                isActive={isCameraOpen}
+                outputs={[objectOutput]}
+              />
+            )}
             <View style={styles.scanMask}>
               <View style={styles.scanFrame}>
                 <View style={[styles.corner, styles.cornerTL]} />
@@ -528,7 +547,7 @@ export default function TagihanSiswa() {
                 }]} />
               </View>
             </View>
-          </CameraView>
+          </View>
         </View>
       </Modal>
 
