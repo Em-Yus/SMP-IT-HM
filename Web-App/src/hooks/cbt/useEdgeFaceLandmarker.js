@@ -3,7 +3,12 @@ import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 
 /**
  * Custom Hook untuk Pengawasan Hybrid Edge AI menggunakan MediaPipe Face Landmarker
- * Berjalan di sisi klien (Wasm/WebGL) dengan interval 300ms - 500ms dan debounce 2.5s.
+ * Berjalan di sisi klien (Wasm/WebGL) dengan interval 300ms - 500ms.
+ *
+ * Sistem Deteksi: AKUMULATIF (Ketat)
+ * - Setiap interval (400ms) siswa dalam kondisi anomali → ditambahkan ke akumulator (ms)
+ * - Ketika akumulator mencapai kelipatan debounceThresholdMs → 1 pelanggaran dicatat
+ * - Siswa kembali menghadap kamera TIDAK mereset akumulator — hitungan terus berjalan
  */
 export function useEdgeFaceLandmarker({
   onViolation = null,
@@ -23,11 +28,37 @@ export function useEdgeFaceLandmarker({
   const [violationCount, setViolationCount] = useState(0);
   const [headAngles, setHeadAngles] = useState({ yaw: 0, pitch: 0, roll: 0 });
 
-  // Debounce tracking
-  const anomalousStateRef = useRef({
-    type: null,
-    startTime: 0,
-  });
+  // Akumulator total waktu anomali (dalam ms) — tidak direset saat siswa kembali normal
+  const accumulatedMsRef = useRef(0);
+  // Batas akumulator untuk pelanggaran berikutnya (kelipatan debounceThresholdMs)
+  const nextViolationThresholdRef = useRef(debounceThresholdMs);
+  // Referensi violationCount agar bisa diakses dalam callback tanpa stale closure
+  const violationCountRef = useRef(0);
+
+  // Simpan onViolation & parameter ke ref agar tidak memicu re-running interval
+  const onViolationRef = useRef(onViolation);
+  useEffect(() => {
+    onViolationRef.current = onViolation;
+  }, [onViolation]);
+
+  const sampleIntervalMsRef = useRef(sampleIntervalMs);
+  const debounceThresholdMsRef = useRef(debounceThresholdMs);
+  useEffect(() => {
+    sampleIntervalMsRef.current = sampleIntervalMs;
+    debounceThresholdMsRef.current = debounceThresholdMs;
+  }, [sampleIntervalMs, debounceThresholdMs]);
+
+  // Hanya reset akumulator ketika 'enabled' pertama kali aktif (masuk ke pengerjaan soal)
+  const prevEnabledRef = useRef(false);
+  useEffect(() => {
+    if (!prevEnabledRef.current && enabled) {
+      accumulatedMsRef.current = 0;
+      nextViolationThresholdRef.current = debounceThresholdMsRef.current;
+      violationCountRef.current = 0;
+      setViolationCount(0);
+    }
+    prevEnabledRef.current = enabled;
+  }, [enabled]);
 
   // 1. Inisialisasi Akses Kamera / Webcam Siswa
   useEffect(() => {
@@ -129,7 +160,7 @@ export function useEdgeFaceLandmarker({
     };
   }, [enabled]);
 
-  // 2. Hitung Sudut Kepala (Euler Angles) dari Matrix Transformasi
+  // 3. Hitung Sudut Kepala (Euler Angles) dari Matrix Transformasi
   const computeEulerAngles = (matrix) => {
     if (!matrix || matrix.length < 16) return { yaw: 0, pitch: 0, roll: 0 };
     // Matriks 4x4 berbentuk kolom mayor dari MediaPipe
@@ -150,15 +181,14 @@ export function useEdgeFaceLandmarker({
     };
   };
 
-  // 3. Loop Deteksi Berkala (Sampling 400ms)
-  const runDetection = useCallback(() => {
+  // 4. Loop Deteksi Berkala — Sistem Akumulasi Ketat & Akurat
+  const runDetection = () => {
     const video = videoRef.current;
     if (!video || video.readyState < 2) return;
 
     let currentAnomaly = null;
     let yaw = 0;
     let pitch = 0;
-    let roll = 0;
 
     if (landmarkerRef.current) {
       try {
@@ -169,17 +199,16 @@ export function useEdgeFaceLandmarker({
         } else if (results.faceLandmarks.length > 1) {
           currentAnomaly = 'multiple_faces';
         } else {
-          // 1 Wajah Terdeteksi -> Cek Sudut Rotasi Kepala
+          // 1 Wajah Terdeteksi → Cek Sudut Rotasi Kepala
           if (results.facialTransformationMatrixes && results.facialTransformationMatrixes[0]) {
             const angles = computeEulerAngles(results.facialTransformationMatrixes[0].data);
             yaw = angles.yaw;
             pitch = angles.pitch;
-            roll = angles.roll;
             setHeadAngles(angles);
 
             // Ambang Batas Toleransi:
-            // Yaw (Tengok Kiri / Kanan): > ±25° s.d. 30°
-            // Pitch (Angguk / Menunduk): > +20° atau < -25°
+            // Yaw (Tengok Kiri / Kanan): > ±28°
+            // Pitch (Angguk / Menunduk): > +22° atau < -25°
             if (Math.abs(yaw) > 28) {
               currentAnomaly = 'look_left_right';
             } else if (pitch < -25 || pitch > 22) {
@@ -192,54 +221,80 @@ export function useEdgeFaceLandmarker({
       }
     }
 
-    // 4. Logika Debounce Buffer (Harus bertahan kontinu 2.5 detik)
-    const now = Date.now();
+    // === SISTEM AKUMULATIF (KETAT) ===
+    // Setiap interval (400ms) siswa dalam kondisi anomali → +400ms ke akumulator
+    // Saat akumulator >= threshold berikutnya → picu 1 pelanggaran, naikkan threshold
+    // Siswa kembali normal TIDAK mereset akumulator — hitungan terus berjalan
     if (currentAnomaly) {
-      if (anomalousStateRef.current.type === currentAnomaly) {
-        // Anomali sedang berlangsung
-        const elapsed = now - anomalousStateRef.current.startTime;
-        if (elapsed >= debounceThresholdMs) {
-          // Picu Pelanggaran Tercatat
-          setFaceStatus(currentAnomaly);
-          setViolationCount((prev) => {
-            const nextCount = prev + 1;
-            if (onViolation) {
-              onViolation({
-                type: currentAnomaly,
-                count: nextCount,
-                yaw,
-                pitch,
-                timestamp: new Date().toISOString(),
-              });
-            }
-            return nextCount;
-          });
-          // Reset timer agar tidak spam setiap frame
-          anomalousStateRef.current.startTime = now;
+      setFaceStatus(prev => (prev !== currentAnomaly ? currentAnomaly : prev));
+      accumulatedMsRef.current += sampleIntervalMsRef.current;
+
+      console.log(
+        `[FaceLandmarker] Anomaly: ${currentAnomaly} | Acc: ${accumulatedMsRef.current}ms / Next: ${nextViolationThresholdRef.current}ms`
+      );
+
+      if (accumulatedMsRef.current >= nextViolationThresholdRef.current) {
+        const step = debounceThresholdMsRef.current;
+        const newViolations = Math.max(
+          1,
+          Math.floor(
+            (accumulatedMsRef.current - (nextViolationThresholdRef.current - step)) / step
+          )
+        );
+
+        nextViolationThresholdRef.current += newViolations * step;
+        violationCountRef.current += newViolations;
+        const totalCount = violationCountRef.current;
+        setViolationCount(totalCount);
+
+        console.warn(
+          `[FaceLandmarker] PELANGGARAN TERAKUMULASI! Total: ${totalCount} (+${newViolations})`
+        );
+
+        if (onViolationRef.current) {
+          for (let i = 0; i < newViolations; i++) {
+            onViolationRef.current({
+              type: currentAnomaly,
+              count: totalCount - newViolations + i + 1,
+              yaw,
+              pitch,
+              timestamp: new Date().toISOString(),
+            });
+          }
         }
-      } else {
-        // Mulai anomali baru
-        anomalousStateRef.current = {
-          type: currentAnomaly,
-          startTime: now,
-        };
-        setFaceStatus(currentAnomaly);
       }
     } else {
-      // Normal state
-      anomalousStateRef.current = { type: null, startTime: 0 };
-      setFaceStatus('normal');
+      // Normal: akumulator TIDAK direset — hanya hentikan penambahan sementara
+      setFaceStatus(prev => (prev !== 'normal' ? 'normal' : prev));
     }
-  }, [debounceThresholdMs, onViolation]);
+  };
+
+  // Simpan fungsi runDetection di ref agar setInterval stabil tidak pernah ter-reset
+  const runDetectionRef = useRef(runDetection);
+  runDetectionRef.current = runDetection;
 
   useEffect(() => {
-    if (!enabled || !isLoaded) return;
+    if (!enabled || !isLoaded) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      return;
+    }
 
-    timerRef.current = setInterval(runDetection, sampleIntervalMs);
+    console.log('[FaceLandmarker] Memulai loop deteksi interval. Akumulasi saat ini:', accumulatedMsRef.current);
+
+    timerRef.current = setInterval(() => {
+      runDetectionRef.current?.();
+    }, sampleIntervalMs);
+
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
-  }, [enabled, isLoaded, runDetection, sampleIntervalMs]);
+  }, [enabled, isLoaded, sampleIntervalMs]);
 
   return {
     videoRef,
@@ -249,5 +304,6 @@ export function useEdgeFaceLandmarker({
     faceStatus,
     violationCount,
     headAngles,
+    accumulatedMs: accumulatedMsRef.current,
   };
 }

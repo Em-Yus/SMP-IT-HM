@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -43,24 +43,31 @@ import {
   Square,
   Radio,
   FileText,
+  RefreshCw,
 } from 'lucide-react-native';
 import { supabase } from '../../../services/supabaseClient';
 
 export default function UjianSoal() {
-  const { bankSoalId, mapelId, kelasId } = useLocalSearchParams<{
+  const { bankSoalId, mapelId, kelasId, tingkat, jenisUjian, jadwalId } = useLocalSearchParams<{
     bankSoalId?: string;
     mapelId?: string;
     kelasId?: string;
+    tingkat?: string;
+    jenisUjian?: string;
+    jadwalId?: string;
   }>();
 
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [taughtMapelIds, setTaughtMapelIds] = useState<string[]>([]);
+  const [teachingScheduleMap, setTeachingScheduleMap] = useState<Record<string, { id: number; nama_mapel: string }[]>>({});
+  const [taughtTingkatList, setTaughtTingkatList] = useState<string[]>([]);
   const [isOperatorOrPanitia, setIsOperatorOrPanitia] = useState(false);
 
   const [bankList, setBankList] = useState<any[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>(bankSoalId || '');
   const [soalList, setSoalList] = useState<any[]>([]);
   const [mapelList, setMapelList] = useState<any[]>([]);
+  const [guruList, setGuruList] = useState<any[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [loadingSoal, setLoadingSoal] = useState(false);
@@ -96,7 +103,9 @@ export default function UjianSoal() {
     kode_bank: '',
     judul: '',
     mapel_id: mapelId || '',
-    tingkat_kelas: '7',
+    tingkat_kelas: tingkat || '7',
+    jenis_ujian: jenisUjian || 'PSTS',
+    pengawas_guru_id: '',
     deskripsi: '',
   });
 
@@ -160,8 +169,15 @@ export default function UjianSoal() {
             .order('id', { ascending: false })
             .limit(1)
             .maybeSingle(),
-          supabase.from('pembelajaran').select('mapel_id').eq('guru_id', u.id),
-          supabase.from('jadwal_pelajaran').select('mapel_id').eq('guru_id', u.id),
+          supabase
+            .from('pembelajaran')
+            .select('kelas_id, mapel_id, data_kelas(id, nama_kelas, tingkat), data_mapel(id, nama_mapel)')
+            .eq('guru_id', u.id),
+          supabase
+            .from('jadwal_pelajaran')
+            .select('kelas_id, mapel_id, data_kelas(id, nama_kelas, tingkat), data_mapel(id, nama_mapel)')
+            .eq('guru_id', u.id)
+            .eq('is_istirahat', false),
         ]);
 
         const roles: string[] = [];
@@ -191,11 +207,40 @@ export default function UjianSoal() {
 
         setIsOperatorOrPanitia(isOp || isKurikulum || isKetua || isSekretaris);
 
-        // Mapel yang diampu guru dari pembelajaran & jadwal_pelajaran
+        // Mapel & Tingkat Kelas yang diampu guru dari pembelajaran & jadwal_pelajaran
         const mapelSet = new Set<string>();
-        (pemRes.data || []).forEach((p: any) => { if (p.mapel_id) mapelSet.add(String(p.mapel_id)); });
-        (jadRes.data || []).forEach((j: any) => { if (j.mapel_id) mapelSet.add(String(j.mapel_id)); });
+        const scheduleMap: Record<string, { id: number; nama_mapel: string }[]> = {};
+        const tempMap: Record<string, Map<number, string>> = {};
+        const allRecords = [...(jadRes.data || []), ...(pemRes.data || [])];
+
+        allRecords.forEach((rec: any) => {
+          if (rec.mapel_id) mapelSet.add(String(rec.mapel_id));
+          let tk = rec.data_kelas?.tingkat ? String(rec.data_kelas.tingkat) : null;
+          if (!tk && rec.data_kelas?.nama_kelas) {
+            const upper = rec.data_kelas.nama_kelas.toUpperCase();
+            if (upper.includes('VII') && !upper.includes('VIII')) tk = '7';
+            else if (upper.includes('VIII')) tk = '8';
+            else if (upper.includes('IX')) tk = '9';
+            else {
+              const m = upper.match(/\b([789])\b/);
+              if (m) tk = m[1];
+            }
+          }
+
+          if (tk && rec.mapel_id && rec.data_mapel) {
+            if (!tempMap[tk]) tempMap[tk] = new Map();
+            tempMap[tk].set(Number(rec.mapel_id), rec.data_mapel.nama_mapel);
+          }
+        });
+
         setTaughtMapelIds(Array.from(mapelSet));
+
+        Object.keys(tempMap).forEach(tk => {
+          scheduleMap[tk] = Array.from(tempMap[tk].entries()).map(([id, nama_mapel]) => ({ id, nama_mapel }))
+            .sort((a, b) => a.nama_mapel.localeCompare(b.nama_mapel));
+        });
+        setTeachingScheduleMap(scheduleMap);
+        setTaughtTingkatList(Object.keys(scheduleMap).sort());
       }
     } catch (e) {
       console.error('Error fetchUserInfo in soal:', e);
@@ -204,8 +249,12 @@ export default function UjianSoal() {
 
   const fetchMetadata = async () => {
     try {
-      const { data } = await supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel');
-      if (data) setMapelList(data);
+      const [mapelRes, guruRes] = await Promise.all([
+        supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
+        supabase.from('data_guru').select('id, nama').order('nama'),
+      ]);
+      if (mapelRes.data) setMapelList(mapelRes.data);
+      if (guruRes.data) setGuruList(guruRes.data);
     } catch (e) {
       console.error('Error fetchMetadata in soal:', e);
     }
@@ -215,7 +264,7 @@ export default function UjianSoal() {
     try {
       const { data, error } = await supabase
         .from('cbt_bank_soal')
-        .select('*, data_mapel(nama_mapel)')
+        .select('*, data_mapel(nama_mapel), pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -223,14 +272,27 @@ export default function UjianSoal() {
       setBankList(list);
 
       // Tentukan bank yang dipilih saat pertama kali dibuka
-      if (bankSoalId) {
-        setSelectedBankId(bankSoalId);
-      } else if (mapelId) {
-        const found = list.find(b => Number(b.mapel_id) === Number(mapelId));
+      if (typeof bankSoalId === 'string' && bankSoalId !== '') {
+        const found = list.find(b => String(b.id) === String(bankSoalId));
+        setSelectedBankId(found ? String(found.id) : '');
+      } else if (typeof bankSoalId === 'string' && bankSoalId === '') {
+        // Explicitly instructed that no bank exists yet
+        setSelectedBankId('');
+      } else if (mapelId || jadwalId || tingkat) {
+        // Cari bank soal yang benar-benar cocok dengan mapel, tingkat kelas, dan jenis ujian yang relevan
+        const found = list.find(b => {
+          const matchMapel = mapelId ? Number(b.mapel_id) === Number(mapelId) : true;
+          const matchTingkat = tingkat ? (String(b.tingkat_kelas) === String(tingkat) || String(b.tingkat_kelas) === 'Semua') : true;
+          const matchJenis = jenisUjian ? (String(b.jenis_ujian || 'PSTS').toUpperCase() === String(jenisUjian).toUpperCase()) : true;
+          return matchMapel && matchTingkat && matchJenis;
+        });
+
         if (found) {
           setSelectedBankId(String(found.id));
-        } else if (list.length > 0) {
-          setSelectedBankId(String(list[0].id));
+        } else {
+          // JANGAN GUNAKAN SOAL LAIN yang tidak sesuai dengan jadwal!
+          // Dikosongkan agar guru melihat status kosong dan membuat paket bank soal baru yang sesuai
+          setSelectedBankId('');
         }
       } else if (list.length > 0) {
         setSelectedBankId(String(list[0].id));
@@ -267,6 +329,10 @@ export default function UjianSoal() {
   );
 
   const canCrud = isOperatorOrPanitia || Boolean(isPengampu);
+
+  const pgCount = (soalList || []).filter(s => s.jenis_soal === 'pg').length;
+  const isianCount = (soalList || []).filter(s => s.jenis_soal === 'isian').length;
+  const esaiCount = (soalList || []).filter(s => s.jenis_soal === 'esai').length;
 
   // Upload Gambar ke Supabase Bucket cbt_assets
   const pickAndUploadImage = async (field: 'gambar_url' | 'opsi_a_gambar' | 'opsi_b_gambar' | 'opsi_c_gambar' | 'opsi_d_gambar') => {
@@ -399,25 +465,75 @@ export default function UjianSoal() {
     setIsModalSoalOpen(true);
   };
 
-  // Hitung ulang bobot nilai secara otomatis berdasarkan jumlah butir soal (100 / Total Soal)
+  // Hitung ulang bobot nilai secara otomatis berdasarkan jumlah butir soal per jenis soal
+  // Aturan Penilaian Baru: Setiap jenis soal (PG, Isian Singkat, Esai) memiliki total skala 100 poin mandiri.
+  // Bobot per butir = 100 / jumlah butir soal pada jenis tersebut.
   const recalculateAutoBobot = async (bankId: number | string) => {
     try {
       const { data: allSoal, error } = await supabase
         .from('cbt_soal')
-        .select('id')
+        .select('id, jenis_soal')
         .eq('bank_soal_id', bankId);
       if (error || !allSoal || allSoal.length === 0) return;
 
-      const total = allSoal.length;
-      const autoBobot = parseFloat((100 / total).toFixed(2));
+      const pgList = allSoal.filter(s => s.jenis_soal === 'pg');
+      const isianList = allSoal.filter(s => s.jenis_soal === 'isian');
+      const esaiList = allSoal.filter(s => s.jenis_soal === 'esai');
 
-      await supabase
-        .from('cbt_soal')
-        .update({ bobot_nilai: autoBobot })
-        .eq('bank_soal_id', bankId);
+      // 1. Bobot Pilihan Ganda (Total 100 Poin)
+      if (pgList.length > 0) {
+        const bobotPg = parseFloat((100 / pgList.length).toFixed(2));
+        const pgIds = pgList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotPg }).in('id', pgIds);
+      }
+
+      // 2. Bobot Isian Singkat (Total 100 Poin)
+      if (isianList.length > 0) {
+        const bobotIsian = parseFloat((100 / isianList.length).toFixed(2));
+        const isianIds = isianList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotIsian }).in('id', isianIds);
+      }
+
+      // 3. Bobot Esai (Total 100 Poin)
+      if (esaiList.length > 0) {
+        const bobotEsai = parseFloat((100 / esaiList.length).toFixed(2));
+        const esaiIds = esaiList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotEsai }).in('id', esaiIds);
+      }
     } catch (err) {
       console.error('Error recalculateAutoBobot:', err);
     }
+  };
+
+  const handleManualSyncBobot = () => {
+    if (!activeBank) return;
+    const curPg = (soalList || []).filter(s => s.jenis_soal === 'pg').length;
+    const curIsian = (soalList || []).filter(s => s.jenis_soal === 'isian').length;
+    const curEsai = (soalList || []).filter(s => s.jenis_soal === 'esai').length;
+
+    Alert.alert(
+      'Sinkronkan Bobot Penilaian?',
+      `Sistem akan menyeimbangkan bobot penilaian secara otomatis dengan aturan:\n\n` +
+      `• Pilihan Ganda: Total 100 poin (${curPg > 0 ? (100 / curPg).toFixed(2) : 0} poin/butir)\n` +
+      `• Isian Singkat: Total 100 poin (${curIsian > 0 ? (100 / curIsian).toFixed(2) : 0} poin/butir)\n` +
+      `• Esai: Total 100 poin (${curEsai > 0 ? (100 / curEsai).toFixed(2) : 0} poin/butir)\n\n` +
+      `Nilai akhir siswa akan dirata-ratakan dari seluruh jenis soal yang ada pada paket ini.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Ya, Sinkronkan Sekarang',
+          onPress: async () => {
+            try {
+              await recalculateAutoBobot(activeBank.id);
+              await fetchSoal(String(activeBank.id));
+              Alert.alert('Berhasil', 'Bobot butir soal berhasil disinkronkan ke skala 100 poin per jenis soal.');
+            } catch (err: any) {
+              Alert.alert('Gagal', err.message || 'Gagal menyeimbangkan bobot.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   // Simpan Soal (Insert / Update)
@@ -565,6 +681,56 @@ export default function UjianSoal() {
     }
   }, [activeBank?.id, activeBank?.updated_at]);
 
+  // Pilihan Tingkat Kelas yang diampu guru login
+  const availableTingkatOptions = useMemo(() => {
+    if (taughtTingkatList.length > 0) return taughtTingkatList;
+    return ['7', '8', '9'];
+  }, [taughtTingkatList]);
+
+  // Pilihan Mata Pelajaran berdasarkan Tingkat Kelas yang dipilih
+  const availableMapelOptions = useMemo(() => {
+    if (isOperatorOrPanitia) return mapelList;
+    const selTingkat = String(bankForm.tingkat_kelas || '');
+    if (teachingScheduleMap[selTingkat] && teachingScheduleMap[selTingkat].length > 0) {
+      const list = [...teachingScheduleMap[selTingkat]];
+      if (bankForm.mapel_id && !list.some(m => String(m.id) === String(bankForm.mapel_id))) {
+        const found = mapelList.find(m => String(m.id) === String(bankForm.mapel_id));
+        if (found) list.push(found);
+      }
+      return list;
+    }
+    return mapelList;
+  }, [isOperatorOrPanitia, bankForm.tingkat_kelas, bankForm.mapel_id, teachingScheduleMap, mapelList]);
+
+  // Filter daftar chips bank soal jika mapelId diberikan via parameter
+  const displayedBankList = useMemo(() => {
+    if (mapelId) {
+      return bankList.filter(b => {
+        const matchMapel = Number(b.mapel_id) === Number(mapelId);
+        const matchTingkat = tingkat ? (String(b.tingkat_kelas) === String(tingkat) || String(b.tingkat_kelas) === 'Semua') : true;
+        const matchJenis = jenisUjian ? (String(b.jenis_ujian || 'PSTS').toUpperCase() === String(jenisUjian).toUpperCase()) : true;
+        return matchMapel && matchTingkat && matchJenis;
+      });
+    }
+    return bankList;
+  }, [bankList, mapelId, tingkat, jenisUjian]);
+
+  const handleTingkatKelasChange = (newTingkat: string) => {
+    const mapelsForNewTingkat = (teachingScheduleMap[newTingkat] && teachingScheduleMap[newTingkat].length > 0)
+      ? teachingScheduleMap[newTingkat]
+      : mapelList;
+    let nextMapelId = bankForm.mapel_id;
+    const exists = mapelsForNewTingkat.some(m => String(m.id) === String(bankForm.mapel_id));
+    if (!exists) {
+      nextMapelId = mapelsForNewTingkat.length > 0 ? String(mapelsForNewTingkat[0].id) : '';
+    }
+    setBankForm(prev => ({
+      ...prev,
+      tingkat_kelas: newTingkat,
+      mapel_id: nextMapelId,
+    }));
+  };
+
   // Buka Modal Edit Bank Soal
   const handleOpenEditBank = () => {
     if (!activeBank) return;
@@ -574,7 +740,33 @@ export default function UjianSoal() {
       judul: activeBank.judul || '',
       mapel_id: String(activeBank.mapel_id || ''),
       tingkat_kelas: String(activeBank.tingkat_kelas || '7'),
+      jenis_ujian: activeBank.jenis_ujian || 'PSTS',
+      pengawas_guru_id: activeBank.pengawas_guru_id ? String(activeBank.pengawas_guru_id) : '',
       deskripsi: activeBank.deskripsi || '',
+    });
+    setIsModalBankOpen(true);
+  };
+
+  // Helper Buka Modal Tambah Bank Soal Baru dengan data pre-filled
+  const handleOpenTambahBankPrefilled = () => {
+    const initialTingkat = tingkat || (taughtTingkatList.length > 0 ? taughtTingkatList[0] : '7');
+    const initialMapels = (teachingScheduleMap[initialTingkat] && teachingScheduleMap[initialTingkat].length > 0)
+      ? teachingScheduleMap[initialTingkat]
+      : mapelList;
+    const defMapel = mapelId || (initialMapels[0]?.id ? String(initialMapels[0].id) : '');
+    const mObj = initialMapels.find(m => String(m.id) === String(defMapel)) || mapelList.find(m => String(m.id) === String(defMapel));
+    const targetJenis = (jenisUjian || 'PSTS').toUpperCase();
+    const prefix = mObj?.nama_mapel ? mObj.nama_mapel.substring(0, 3).toUpperCase() : 'SOAL';
+
+    setBankForm({
+      id: null,
+      kode_bank: `${targetJenis}-${prefix}-${initialTingkat}-${new Date().getFullYear()}`,
+      judul: mObj?.nama_mapel ? `${targetJenis} ${mObj.nama_mapel} Kelas ${initialTingkat}` : `${targetJenis} Kelas ${initialTingkat}`,
+      mapel_id: String(defMapel),
+      tingkat_kelas: initialTingkat,
+      jenis_ujian: targetJenis,
+      pengawas_guru_id: '',
+      deskripsi: '',
     });
     setIsModalBankOpen(true);
   };
@@ -596,15 +788,21 @@ export default function UjianSoal() {
 
     setSavingBank(true);
     try {
+      const payload = {
+        kode_bank: bankForm.kode_bank.trim().toUpperCase(),
+        judul: bankForm.judul.trim(),
+        mapel_id: parseInt(String(bankForm.mapel_id), 10),
+        tingkat_kelas: bankForm.tingkat_kelas,
+        jenis_ujian: bankForm.jenis_ujian || 'PSTS',
+        pengawas_guru_id: bankForm.pengawas_guru_id ? parseInt(String(bankForm.pengawas_guru_id), 10) : null,
+        deskripsi: bankForm.deskripsi.trim(),
+      };
+
       if (bankForm.id) {
         const { error } = await supabase
           .from('cbt_bank_soal')
           .update({
-            kode_bank: bankForm.kode_bank.trim().toUpperCase(),
-            judul: bankForm.judul.trim(),
-            mapel_id: parseInt(String(bankForm.mapel_id), 10),
-            tingkat_kelas: bankForm.tingkat_kelas,
-            deskripsi: bankForm.deskripsi.trim(),
+            ...payload,
             updated_at: new Date().toISOString(),
           })
           .eq('id', bankForm.id);
@@ -612,17 +810,11 @@ export default function UjianSoal() {
         if (error) throw error;
         Alert.alert('Sukses', 'Paket bank soal berhasil diperbarui.');
       } else {
-        const payload = {
-          kode_bank: bankForm.kode_bank.trim().toUpperCase(),
-          judul: bankForm.judul.trim(),
-          mapel_id: parseInt(String(bankForm.mapel_id), 10),
-          tingkat_kelas: bankForm.tingkat_kelas,
+        const { data, error } = await supabase.from('cbt_bank_soal').insert([{
+          ...payload,
           guru_id: currentUser?.id || null,
-          deskripsi: bankForm.deskripsi.trim(),
           total_soal: 0,
-        };
-
-        const { data, error } = await supabase.from('cbt_bank_soal').insert([payload]).select().single();
+        }]).select().single();
         if (error) throw error;
 
         Alert.alert('Sukses', 'Paket bank soal berhasil dibuat.');
@@ -912,20 +1104,7 @@ export default function UjianSoal() {
           <View style={styles.headerBottomRow}>
             <TouchableOpacity
               style={styles.headerAddBankBtn}
-              onPress={() => {
-                const defMapel = mapelId || (taughtMapelIds.length > 0 ? taughtMapelIds[0] : (mapelList[0]?.id || ''));
-                const mObj = mapelList.find(m => String(m.id) === String(defMapel));
-                const prefix = mObj?.nama_mapel ? mObj.nama_mapel.substring(0, 3).toUpperCase() : 'SOAL';
-                setBankForm({
-                  id: null,
-                  kode_bank: `${prefix}-${new Date().getFullYear()}`,
-                  judul: mObj?.nama_mapel ? `Paket Soal ${mObj.nama_mapel}` : 'Paket Soal Ujian',
-                  mapel_id: String(defMapel),
-                  tingkat_kelas: '7',
-                  deskripsi: '',
-                });
-                setIsModalBankOpen(true);
-              }}
+              onPress={handleOpenTambahBankPrefilled}
             >
               <Plus size={15} color="#fff" />
               <Text style={styles.headerAddBankBtnText}>Tambah Paket Soal</Text>
@@ -937,7 +1116,7 @@ export default function UjianSoal() {
       {/* Selector Paket Soal (Chips) */}
       <View style={styles.bankChipsContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.bankChipsScroll}>
-          {bankList.map((b) => {
+          {displayedBankList.map((b) => {
             const isSelected = String(b.id) === String(selectedBankId);
             return (
               <TouchableOpacity
@@ -951,8 +1130,10 @@ export default function UjianSoal() {
               </TouchableOpacity>
             );
           })}
-          {bankList.length === 0 && (
-            <Text style={styles.emptyBankText}>Belum ada paket soal.</Text>
+          {displayedBankList.length === 0 && (
+            <Text style={styles.emptyBankText}>
+              {mapelId ? 'Belum ada paket bank soal untuk mata pelajaran ini.' : 'Belum ada paket soal.'}
+            </Text>
           )}
         </ScrollView>
       </View>
@@ -975,6 +1156,9 @@ export default function UjianSoal() {
         <View style={styles.bankCardContainer}>
           {/* Baris 1: Badges Meta Info */}
           <View style={styles.bankBadgesRow}>
+            <View style={[styles.badgeKode, { backgroundColor: '#7c3aed' }]}>
+              <Text style={styles.badgeKodeText}>{activeBank.jenis_ujian || 'PSTS'}</Text>
+            </View>
             <View style={styles.badgeKode}>
               <Text style={styles.badgeKodeText}>{activeBank.kode_bank}</Text>
             </View>
@@ -984,6 +1168,13 @@ export default function UjianSoal() {
             <View style={styles.badgeMapel}>
               <Text style={styles.badgeMapelText}>{activeBank.data_mapel?.nama_mapel || 'Mata Pelajaran'}</Text>
             </View>
+            {activeBank.pengawas?.nama ? (
+              <View style={[styles.badgeMapel, { backgroundColor: '#fef3c7', borderColor: '#fde68a' }]}>
+                <Text style={[styles.badgeMapelText, { color: '#92400e' }]}>
+                  Pengawas: {activeBank.pengawas.nama}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.badgeSoalCount}>
               <Text style={styles.badgeSoalCountText}>{soalList.length} Butir Soal Terisi</Text>
             </View>
@@ -1081,13 +1272,7 @@ export default function UjianSoal() {
             </View>
           </View>
         </View>
-      ) : (
-        <View style={styles.emptyBankBanner}>
-          <Text style={styles.emptyBankBannerText}>
-            Pilih atau buat bank soal untuk melihat butir pertanyaan.
-          </Text>
-        </View>
-      )}
+      ) : null}
 
       {/* ========================================================
           FILTER TABS JENIS SOAL (SEMUA, PG, ISIAN, ESAI)
@@ -1162,6 +1347,71 @@ export default function UjianSoal() {
         </View>
       ) : (
         <ScrollView style={styles.content} contentContainerStyle={styles.scrollContent}>
+          {!activeBank ? (
+            <View style={styles.emptyCard}>
+              <FileQuestion size={56} color="#6366f1" />
+              <Text style={[styles.emptyTitle, { fontSize: 18, textAlign: 'center' }]}>
+                Paket Bank Soal Belum Tersedia
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {mapelId
+                  ? `Belum ada paket bank soal untuk mata pelajaran ini pada ujian ${jenisUjian || 'PSTS'} (Kelas ${tingkat || '7'}).\nSilakan buat paket bank soal baru yang sesuai terlebih dahulu.`
+                  : 'Pilih salah satu paket soal dari daftar di atas, atau buat paket baru.'}
+              </Text>
+              {canCrud && (
+                <TouchableOpacity
+                  style={[styles.emptyAddBtn, { backgroundColor: '#4338ca', paddingVertical: 12, paddingHorizontal: 20 }]}
+                  onPress={handleOpenTambahBankPrefilled}
+                >
+                  <Plus size={18} color="#fff" />
+                  <Text style={[styles.emptyAddBtnText, { fontSize: 14 }]}>
+                    Buat Paket Bank Soal Baru ({jenisUjian || 'PSTS'})
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <>
+              {/* Ringkasan Skema Bobot per Jenis Soal & Tombol Seimbangkan Bobot (Ikut Scroll, Tidak Fixed) */}
+              {soalList.length > 0 && (
+                <View style={styles.bobotSummaryCard}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <Text style={styles.bobotSummaryTitle}>Skema Bobot Mandiri (100 Poin/Jenis):</Text>
+                    {canCrud && (
+                      <TouchableOpacity
+                        style={styles.syncBobotBtn}
+                        onPress={handleManualSyncBobot}
+                      >
+                        <RefreshCw size={12} color="#2a2c87" />
+                        <Text style={styles.syncBobotBtnText}>Seimbangkan Bobot</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.bobotBadgesRow}>
+                    {pgCount > 0 && (
+                      <View style={[styles.bobotPill, { backgroundColor: '#eff6ff', borderColor: '#bfdbfe' }]}>
+                        <Text style={[styles.bobotPillText, { color: '#1d4ed8' }]}>
+                          PG: {pgCount} Soal ({(100 / pgCount).toFixed(1)} Poin/butir = 100 Poin)
+                        </Text>
+                      </View>
+                    )}
+                    {isianCount > 0 && (
+                      <View style={[styles.bobotPill, { backgroundColor: '#fffbeb', borderColor: '#fde68a' }]}>
+                        <Text style={[styles.bobotPillText, { color: '#b45309' }]}>
+                          Isian: {isianCount} Soal ({(100 / isianCount).toFixed(1)} Poin/butir = 100 Poin)
+                        </Text>
+                      </View>
+                    )}
+                    {esaiCount > 0 && (
+                      <View style={[styles.bobotPill, { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' }]}>
+                        <Text style={[styles.bobotPillText, { color: '#7e22ce' }]}>
+                          Esai: {esaiCount} Soal ({(100 / esaiCount).toFixed(1)} Poin/butir = 100 Poin)
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
           {(() => {
             const filteredSoalList = soalList.filter((s) => {
               if (activeTabFilter === 'all') return true;
@@ -1310,6 +1560,8 @@ export default function UjianSoal() {
               );
             });
           })()}
+            </>
+          )}
         </ScrollView>
       )}
 
@@ -1564,46 +1816,106 @@ export default function UjianSoal() {
             </View>
 
             <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              <Text style={styles.inputLabel}>Mata Pelajaran:</Text>
-              <View style={styles.mapelSelectChips}>
-                {mapelList
-                  .filter(m => isOperatorOrPanitia || taughtMapelIds.includes(String(m.id)))
-                  .map(m => {
-                    const isSel = String(bankForm.mapel_id) === String(m.id);
-                    return (
-                      <TouchableOpacity
-                        key={m.id}
-                        style={[styles.mapelChip, isSel && styles.mapelChipActive]}
-                        onPress={() => {
-                          const prefix = m.nama_mapel ? m.nama_mapel.substring(0, 3).toUpperCase() : 'SOAL';
-                          setBankForm(prev => ({
-                            ...prev,
-                            mapel_id: String(m.id),
-                            kode_bank: prev.kode_bank || `${prefix}-${prev.tingkat_kelas}-${new Date().getFullYear()}`,
-                            judul: prev.judul || `Paket Soal ${m.nama_mapel} Kelas ${prev.tingkat_kelas}`,
-                          }));
-                        }}
-                      >
-                        <Text style={[styles.mapelChipText, isSel && styles.mapelChipTextActive]}>
-                          {m.nama_mapel}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+              {/* 0. Jenis Ujian */}
+              <Text style={styles.inputLabel}>Jenis Ujian:</Text>
+              <View style={styles.typeSelectorRow}>
+                {['PSTS', 'PSAS', 'PSAJ', 'PAT', 'Formatif'].map((ju) => {
+                  const isSel = (bankForm.jenis_ujian || 'PSTS').toUpperCase() === ju;
+                  return (
+                    <TouchableOpacity
+                      key={ju}
+                      style={[styles.typeSelectBtn, isSel && styles.typeSelectBtnActive]}
+                      onPress={() => {
+                        const mObj = mapelList.find(m => String(m.id) === String(bankForm.mapel_id));
+                        const prefix = mObj?.nama_mapel ? mObj.nama_mapel.substring(0, 3).toUpperCase() : 'SOAL';
+                        setBankForm(prev => ({
+                          ...prev,
+                          jenis_ujian: ju,
+                          kode_bank: `${ju}-${prefix}-${prev.tingkat_kelas}-${new Date().getFullYear()}`,
+                          judul: mObj?.nama_mapel ? `${ju} ${mObj.nama_mapel} Kelas ${prev.tingkat_kelas}` : `${ju} Kelas ${prev.tingkat_kelas}`,
+                        }));
+                      }}
+                    >
+                      <Text style={[styles.typeSelectBtnText, isSel && styles.typeSelectBtnTextActive]}>
+                        {ju}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
 
+              {/* 1. Tingkat Kelas */}
               <Text style={styles.inputLabel}>Tingkat Kelas:</Text>
               <View style={styles.typeSelectorRow}>
-                {['7', '8', '9', 'Semua'].map((tk) => {
+                {availableTingkatOptions.map((tk) => {
                   const isSel = bankForm.tingkat_kelas === tk;
                   return (
                     <TouchableOpacity
                       key={tk}
                       style={[styles.typeSelectBtn, isSel && styles.typeSelectBtnActive]}
-                      onPress={() => setBankForm(prev => ({ ...prev, tingkat_kelas: tk }))}
+                      onPress={() => handleTingkatKelasChange(tk)}
                     >
                       <Text style={[styles.typeSelectBtnText, isSel && styles.typeSelectBtnTextActive]}>
                         Kelas {tk}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* 2. Mata Pelajaran (Sesuai Kelas Terpilih & Jadwal Mengajar Guru) */}
+              <Text style={styles.inputLabel}>Mata Pelajaran:</Text>
+              <View style={styles.mapelSelectChips}>
+                {availableMapelOptions.map(m => {
+                  const isSel = String(bankForm.mapel_id) === String(m.id);
+                  return (
+                    <TouchableOpacity
+                      key={m.id}
+                      style={[styles.mapelChip, isSel && styles.mapelChipActive]}
+                      onPress={() => {
+                        const prefix = m.nama_mapel ? m.nama_mapel.substring(0, 3).toUpperCase() : 'SOAL';
+                        setBankForm(prev => ({
+                          ...prev,
+                          mapel_id: String(m.id),
+                          kode_bank: prev.kode_bank || `${prefix}-${prev.tingkat_kelas}-${new Date().getFullYear()}`,
+                          judul: prev.judul || `Paket Soal ${m.nama_mapel} Kelas ${prev.tingkat_kelas}`,
+                        }));
+                      }}
+                    >
+                      <Text style={[styles.mapelChipText, isSel && styles.mapelChipTextActive]}>
+                        {m.nama_mapel}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {availableMapelOptions.length === 0 && (
+                  <Text style={{ fontSize: 11, color: '#94a3b8', fontStyle: 'italic', paddingVertical: 4 }}>
+                    Tidak ada mata pelajaran yang diampu untuk kelas ini.
+                  </Text>
+                )}
+              </View>
+
+              {/* 3. Nama Pengawas Ujian (Semua Guru) */}
+              <Text style={styles.inputLabel}>Nama Pengawas Ujian (Opsional):</Text>
+              <View style={styles.mapelSelectChips}>
+                <TouchableOpacity
+                  style={[styles.mapelChip, !bankForm.pengawas_guru_id && styles.mapelChipActive]}
+                  onPress={() => setBankForm(prev => ({ ...prev, pengawas_guru_id: '' }))}
+                >
+                  <Text style={[styles.mapelChipText, !bankForm.pengawas_guru_id && styles.mapelChipTextActive]}>
+                    -- Belum Ditentukan --
+                  </Text>
+                </TouchableOpacity>
+                {guruList.map(g => {
+                  const isSel = String(bankForm.pengawas_guru_id) === String(g.id);
+                  return (
+                    <TouchableOpacity
+                      key={g.id}
+                      style={[styles.mapelChip, isSel && styles.mapelChipActive]}
+                      onPress={() => setBankForm(prev => ({ ...prev, pengawas_guru_id: String(g.id) }))}
+                    >
+                      <Text style={[styles.mapelChipText, isSel && styles.mapelChipTextActive]}>
+                        {g.nama}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -2761,5 +3073,52 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: '#2a2c87',
+  },
+  bobotSummaryCard: {
+    backgroundColor: '#ffffff',
+    marginHorizontal: 0,
+    marginTop: 0,
+    marginBottom: 2,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  bobotSummaryTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  syncBobotBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  syncBobotBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#2a2c87',
+  },
+  bobotBadgesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
+  bobotPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  bobotPillText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
 });

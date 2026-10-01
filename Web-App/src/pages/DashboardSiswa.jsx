@@ -60,15 +60,26 @@ export default function DashboardSiswa() {
   const fetchDashboardData = async (user) => {
     try {
       // 1. Fetch Presensi
-      const { data: presensi } = await supabase
-        .from('presensi_siswa')
-        .select('status')
-        .eq('nipd', user.nipd);
-      
+      const targetNipd = user.nipd || user.nisn || user.nis;
       let kehadiranRate = 0;
-      if (presensi && presensi.length > 0) {
-        const hadir = presensi.filter(p => p.status === 'H').length;
-        kehadiranRate = Math.round((hadir / presensi.length) * 100);
+
+      if (targetNipd) {
+        let presensiQuery = supabase.from('presensi_siswa').select('status');
+        if (user.nipd && user.nisn && user.nipd !== user.nisn) {
+          presensiQuery = presensiQuery.or(`nipd.eq.${user.nipd},nipd.eq.${user.nisn}`);
+        } else {
+          presensiQuery = presensiQuery.eq('nipd', targetNipd);
+        }
+
+        const { data: presensi } = await presensiQuery;
+        
+        if (presensi && presensi.length > 0) {
+          const hadir = presensi.filter(p => {
+            const s = (p.status || '').toLowerCase();
+            return s.includes('hadir') || s.includes('terlambat') || s.includes('dispensasi') || s === 'h' || s === 't';
+          }).length;
+          kehadiranRate = Math.round((hadir / presensi.length) * 100);
+        }
       }
       
       // 3. Fetch Jadwal Hari Ini & Info Kelas (pergantian hari pukul 18.00 WIB)
@@ -364,29 +375,29 @@ export default function DashboardSiswa() {
     <div>
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Halo, {userData?.nama || 'Siswa'}! 👋</h2>
-          <p className="text-gray-500 mt-1">Selamat datang di Portal Siswa SIAKAD.</p>
+          <h2 className="text-2xl font-bold text-[#1A1818]">Halo, {userData?.nama || 'Siswa'}! 👋</h2>
+          <p className="text-[#6C757D] text-sm mt-1">Selamat datang di Portal Siswa SIAKAD.</p>
         </div>
       </div>
 
       {/* Banner Notifikasi Ujian Aktif: HANYA MUNCUL pada hari dan jam jadwal ujian aktif */}
       {activeExam && (
-        <div className="mb-8 p-5 bg-gradient-to-r from-red-600 via-rose-600 to-primary text-white rounded-3xl shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in zoom-in-95">
+        <div className="mb-8 p-5 bg-gradient-to-r from-[#E63946] via-[#B91C1C] to-[#1E257F] text-white rounded-3xl shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in zoom-in-95">
           <div className="flex items-center gap-4">
             <div className="p-3.5 bg-white/20 rounded-2xl backdrop-blur-md animate-pulse shrink-0">
               <BookOpen size={28} className="text-white" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 bg-white text-red-600 text-[10px] font-black uppercase rounded-full tracking-wider">
+                <span className="px-2.5 py-0.5 bg-white text-[#E63946] text-[10px] font-black uppercase rounded-full tracking-wider">
                   UJIAN CBT AKTIF HARI INI
                 </span>
-                <span className="text-xs text-red-100 font-mono">
+                <span className="text-xs text-white/90 font-mono">
                   {activeExam.jam_mulai?.slice(0, 5)} - {activeExam.jam_selesai?.slice(0, 5)} WIB
                 </span>
               </div>
               <h3 className="text-lg font-black mt-1 leading-tight">{activeExam.nama_ujian}</h3>
-              <p className="text-xs text-red-100 mt-0.5">
+              <p className="text-xs text-white/80 mt-0.5">
                 Mapel: {activeExam.data_mapel?.nama_mapel} • Ruang: {activeExam.data_ruang?.nama_ruang || 'Lab CBT'}
               </p>
             </div>
@@ -394,7 +405,7 @@ export default function DashboardSiswa() {
 
           <Link
             to={`/cbt/ujian/${activeExam.id}`}
-            className="px-6 py-3 bg-white text-red-600 hover:bg-red-50 font-black text-xs rounded-2xl shadow-lg transition transform hover:-translate-y-0.5 shrink-0 flex items-center gap-2"
+            className="px-6 py-3 bg-white text-[#E63946] hover:bg-[#F8F9FA] font-black text-xs rounded-2xl shadow-lg transition transform hover:-translate-y-0.5 shrink-0 flex items-center gap-2"
           >
             <span>Masuk Ruang Ujian (Scan Kartu)</span>
             <ChevronRight size={16} />
@@ -403,79 +414,94 @@ export default function DashboardSiswa() {
       )}
 
       {/* Quick Access Jadwal & Ujian CBT (Selalu Muncul) */}
-      <div className="mb-6 p-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div className="mb-6 p-4 bg-white rounded-2xl border border-[#E2E8F0] shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-primary flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-[#ECEEFF] text-[#1E257F] flex items-center justify-center shrink-0">
             <Laptop size={22} />
           </div>
           <div>
-            <h4 className="text-sm font-bold text-gray-800">Ujian Berbasis Komputer (CBT)</h4>
-            <p className="text-xs text-gray-500">Lihat jadwal ujian, alokasi ruang ujian, dan nomor meja Anda.</p>
+            <h4 className="text-sm font-bold text-[#1A1818]">Ujian Berbasis Komputer (CBT)</h4>
+            <p className="text-xs text-[#6C757D]">Lihat jadwal ujian, alokasi ruang ujian, dan nomor meja Anda.</p>
           </div>
         </div>
         <Link
           to="/cbt/jadwal-siswa"
-          className="px-4 py-2 bg-primary hover:bg-primary/90 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm shrink-0 self-end sm:self-auto"
+          className="px-4 py-2 bg-[#1E257F] hover:bg-[#1E257F]/90 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm shrink-0 self-end sm:self-auto"
         >
           <span>Buka Jadwal CBT</span>
           <ChevronRight size={14} />
         </Link>
       </div>
 
+      {/* 3 Kartu Metrik Utama Sesuai warna.json */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <div className="bg-gradient-to-br from-orange-500 to-accent rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
-          <CalendarDays className="absolute right-[-10px] bottom-[-10px] opacity-20" size={100} />
+        {/* Card 1: Kehadiran (Brand Primary #1E257F) */}
+        <div className="bg-gradient-to-br from-[#3740A1] to-[#1E257F] rounded-2xl p-6 text-white shadow-md relative overflow-hidden">
+          <CalendarDays className="absolute right-[-10px] bottom-[-10px] text-white/15" size={100} />
           <div className="relative z-10">
-            <h3 className="text-orange-100 font-medium text-sm">Kehadiran Anda</h3>
+            <h3 className="text-white/90 font-medium text-sm">Kehadiran Anda</h3>
             <div className="text-3xl font-bold mt-1">{metrics.kehadiran}%</div>
-            <p className="text-xs text-orange-100 mt-2">Sepanjang masa akademik</p>
+            <p className="text-xs text-white/75 mt-2">Sepanjang masa akademik</p>
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
-          <Wallet className="absolute right-[-10px] bottom-[-10px] opacity-20" size={100} />
+        {/* Card 2: Tagihan Aktif (Brand Indigo / Primary Container Tone) */}
+        <div className="bg-gradient-to-br from-[#7679FF] to-[#6266F8] rounded-2xl p-6 text-white shadow-md relative overflow-hidden">
+          <Wallet className="absolute right-[-10px] bottom-[-10px] text-white/15" size={100} />
           <div className="relative z-10">
-            <h3 className="text-blue-100 font-medium text-sm">Tagihan Aktif</h3>
+            <h3 className="text-white/90 font-medium text-sm">Tagihan Aktif</h3>
             <div className="text-3xl font-bold mt-1 truncate max-w-[200px]">{formatRupiah(metrics.tagihan)}</div>
-            <p className="text-xs text-blue-100 mt-2">Segera lakukan pembayaran</p>
+            <p className="text-xs text-white/75 mt-2">Segera lakukan pembayaran</p>
           </div>
         </div>
 
-        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg relative overflow-hidden">
-          <Award className="absolute right-[-10px] bottom-[-10px] opacity-20" size={100} />
+        {/* Card 3: Rata-rata Nilai (Brand Secondary #84D43F) */}
+        <div className="bg-gradient-to-br from-[#84D43F] to-[#6EB32B] rounded-2xl p-6 text-white shadow-md relative overflow-hidden">
+          <Award className="absolute right-[-10px] bottom-[-10px] text-white/15" size={100} />
           <div className="relative z-10">
-            <h3 className="text-green-100 font-medium text-sm">Rata-rata Nilai</h3>
+            <h3 className="text-white/90 font-medium text-sm">Rata-rata Nilai</h3>
             <div className="text-3xl font-bold mt-1">{metrics.rataRata}</div>
-            <p className="text-xs text-green-100 mt-2">Dari semua mata pelajaran</p>
+            <p className="text-xs text-white/75 mt-2">Dari semua mata pelajaran</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b pb-2 gap-2 sm:gap-0">
-            <h3 className="font-bold text-gray-800 flex items-center gap-2">
-              <Clock size={18} className="text-blue-500 shrink-0" /> Jadwal Kelas Hari Ini
+        {/* Jadwal Kelas Hari Ini */}
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-6 flex flex-col h-full">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 border-b border-[#E2E8F0] pb-3 gap-2 sm:gap-0">
+            <h3 className="font-bold text-[#1A1818] flex items-center gap-2">
+              <Clock size={18} className="text-[#1E257F] shrink-0" /> Jadwal Kelas Hari Ini
             </h3>
-            <Link to="/jadwal-pelajaran-siswa" className="text-sm font-semibold text-primary hover:text-blue-800 flex items-center gap-1 transition self-start sm:self-auto">
+            <Link to="/jadwal-pelajaran-siswa" className="text-xs font-bold text-[#1E257F] hover:text-[#1E257F]/80 flex items-center gap-1 transition self-start sm:self-auto">
               Lihat Semua <ChevronRight size={14} />
             </Link>
           </div>
-          <div className="space-y-4 flex-1">
+          <div className="space-y-3 flex-1">
             {metrics.jadwal.length === 0 ? (
-              <div className="text-center text-gray-400 py-6 text-sm bg-gray-50 rounded-lg h-full flex items-center justify-center">Tidak ada jadwal pelajaran hari ini. Selamat beristirahat!</div>
+              <div className="text-center text-[#ADB5BD] py-8 text-xs bg-[#F8F9FA] rounded-xl h-full flex items-center justify-center">
+                Tidak ada jadwal pelajaran hari ini. Selamat beristirahat!
+              </div>
             ) : (
-              <ul className="space-y-4">
+              <ul className="space-y-3">
                 {metrics.jadwal.map((j, idx) => (
-                  <li key={idx} className={`flex items-center gap-4 p-2 rounded-lg border ${j.is_istirahat ? 'bg-orange-50 border-orange-100' : 'bg-transparent border-transparent'}`}>
-                    <div className={`p-2 rounded-lg text-sm font-bold text-center w-28 shrink-0 ${j.is_istirahat ? 'bg-orange-100 text-orange-600' : 'bg-blue-50 text-blue-600'}`}>
+                  <li key={idx} className={`flex items-center gap-3 p-2.5 rounded-xl border transition ${
+                    j.is_istirahat ? 'bg-[#FFF9EB] border-[#FFE8A3]' : 'bg-[#F8F9FA] border-[#E2E8F0]'
+                  }`}>
+                    <div className={`py-1.5 px-2 rounded-lg text-xs font-bold text-center w-28 shrink-0 ${
+                      j.is_istirahat ? 'bg-[#FFE8A3] text-[#B45309]' : 'bg-[#ECEEFF] text-[#1E257F]'
+                    }`}>
                       {j.waktu}
                     </div>
-                    <div className="flex-1">
-                      <h4 className={`font-bold ${j.is_istirahat ? 'text-orange-600' : 'text-gray-800'}`}>{j.mapel}</h4>
-                      <p className="text-sm text-gray-500">{j.guru}</p>
+                    <div className="flex-1 min-w-0">
+                      <h4 className={`text-xs font-bold truncate ${j.is_istirahat ? 'text-[#B45309]' : 'text-[#1A1818]'}`}>{j.mapel}</h4>
+                      <p className="text-[11px] text-[#6C757D] truncate">{j.guru}</p>
                     </div>
-                    <div className="text-xs font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">Ke-{j.jam_ke}</div>
+                    <div className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                      j.is_istirahat ? 'bg-[#FFE8A3] text-[#B45309]' : 'bg-[#F1F3F5] text-[#6C757D]'
+                    }`}>
+                      Ke-{j.jam_ke}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -483,25 +509,26 @@ export default function DashboardSiswa() {
           </div>
         </div>
         
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h3 className="font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
-            <Megaphone size={18} className="text-accent" /> Pengumuman Sekolah
+        {/* Pengumuman Sekolah */}
+        <div className="bg-white rounded-2xl shadow-sm border border-[#E2E8F0] p-6">
+          <h3 className="font-bold text-[#1A1818] mb-4 border-b border-[#E2E8F0] pb-3 flex items-center gap-2">
+            <Megaphone size={18} className="text-[#1E257F]" /> Pengumuman Sekolah
           </h3>
-          <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
             {isLoadingPengumuman ? (
-              <div className="text-center text-gray-400 py-4 text-sm">Memuat pengumuman...</div>
+              <div className="text-center text-[#ADB5BD] py-8 text-xs bg-[#F8F9FA] rounded-xl">Memuat pengumuman...</div>
             ) : pengumuman.length === 0 ? (
-              <div className="text-center text-gray-400 py-6 text-sm bg-gray-50 rounded-lg">Belum ada pengumuman untuk Anda.</div>
+              <div className="text-center text-[#ADB5BD] py-8 text-xs bg-[#F8F9FA] rounded-xl">Belum ada pengumuman untuk Anda.</div>
             ) : (
               pengumuman.map((item) => (
-                <div key={item.id} className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 hover:shadow-md transition">
+                <div key={item.id} className="bg-[#F8F9FA] p-4 rounded-xl border border-[#E2E8F0] hover:border-[#CBD5E1] transition">
                   <div className="flex justify-between items-start mb-1 gap-2">
-                     <h4 className="font-bold text-[#2a2c87] text-sm leading-tight">{item.judul}</h4>
-                     <span className="text-[10px] font-bold text-white bg-accent px-2 py-0.5 rounded-full whitespace-nowrap">
+                     <h4 className="font-bold text-[#1E257F] text-xs leading-tight">{item.judul}</h4>
+                     <span className="text-[9px] font-bold text-white bg-[#84D43F] px-2 py-0.5 rounded-full whitespace-nowrap">
                         {formatDate(item.created_at)}
                      </span>
                   </div>
-                  <p className="text-sm text-gray-600 mt-2 whitespace-pre-line leading-relaxed">{item.isi}</p>
+                  <p className="text-xs text-[#6C757D] mt-2 whitespace-pre-line leading-relaxed">{item.isi}</p>
                 </div>
               ))
             )}

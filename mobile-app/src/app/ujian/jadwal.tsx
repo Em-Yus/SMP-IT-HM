@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -49,7 +49,10 @@ import {
   Shuffle,
   CheckSquare,
   Square,
-  RotateCcw
+  RotateCcw,
+  FileCheck,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
@@ -252,7 +255,7 @@ export default function UjianJadwal() {
         supabase.from('data_kelas').select('id, nama_kelas, ruang_id').order('nama_kelas'),
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
         supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
-        supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id').order('judul'),
+        supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id, jenis_ujian, pengawas_guru_id, pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)').order('judul'),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('pembelajaran').select('id, guru_id, kelas_id, mapel_id'),
       ]);
@@ -473,13 +476,6 @@ export default function UjianJadwal() {
       const detectedGuruId = pembData && pembData.length > 0 ? pembData[0].guru_id : null;
       const detectedKelasId = pembData && pembData.length === 1 ? pembData[0].kelas_id : null;
 
-      // 2. Deteksi bank soal yang cocok untuk mapel ini jika ada
-      let detectedBankId = null;
-      const matchingBank = bankSoalList.find(b => Number(b.mapel_id) === Number(formData.mapel_id));
-      if (matchingBank) {
-        detectedBankId = matchingBank.id;
-      }
-
       const payload: any = {
         nama_ujian: formData.nama_ujian.trim(),
         jenis_ujian: formData.jenis_ujian,
@@ -489,11 +485,11 @@ export default function UjianJadwal() {
         jam_selesai: formData.jam_selesai,
         durasi_menit: Number(formData.durasi_menit) || 90,
         mapel_id: formData.mapel_id || null,
-        guru_id: detectedGuruId,
-        kelas_id: detectedKelasId,
+        guru_id: null,
+        kelas_id: null,
         ruang_id: null,
         pengawas_guru_id: null,
-        bank_soal_id: detectedBankId,
+        bank_soal_id: null,
         status: formData.status || 'terjadwal',
         acak_soal: formData.acak_soal ?? true,
         acak_opsi: formData.acak_opsi ?? true,
@@ -605,14 +601,29 @@ export default function UjianJadwal() {
     setIsKelasModalOpen(false);
 
     if (targetKelasAction === 'soal') {
-      const matchingBank = bankSoalList.find(b => Number(b.mapel_id) === Number(activeJadwalItem?.mapel_id));
-      const bankIdToUse = activeJadwalItem?.bank_soal_id || matchingBank?.id || '';
+      const kObj = kelasList.find((k: any) => String(k.id) === String(selectedKelasId));
+      let tingkat = kObj?.tingkat ? String(kObj.tingkat) : '';
+      if (!tingkat && kObj?.nama_kelas) {
+        const u = kObj.nama_kelas.toUpperCase();
+        if (u.includes('VII') && !u.includes('VIII')) tingkat = '7';
+        else if (u.includes('VIII')) tingkat = '8';
+        else if (u.includes('IX')) tingkat = '9';
+      }
+      const jenisUjian = activeJadwalItem?.jenis_ujian || 'PSTS';
+      const matchingBank = bankSoalList.find((b: any) =>
+        Number(b.mapel_id) === Number(activeJadwalItem?.mapel_id) &&
+        (String(b.tingkat_kelas) === tingkat || String(b.tingkat_kelas) === 'Semua') &&
+        (!b.jenis_ujian || String(b.jenis_ujian).toUpperCase() === String(jenisUjian).toUpperCase())
+      );
+      const bankIdToUse = matchingBank?.id || '';
 
       router.push({
         pathname: '/ujian/soal' as any,
         params: {
           bankSoalId: bankIdToUse,
           kelasId: selectedKelasId,
+          tingkat: tingkat,
+          jenisUjian: jenisUjian,
           mapelId: activeJadwalItem?.mapel_id || '',
           jadwalId: activeJadwalItem?.id || '',
         },
@@ -628,8 +639,8 @@ export default function UjianJadwal() {
     }
   };
 
-  // Popup Handler: Tombol Awasi, Hadir, Hadir Pengawas, Berita Acara -> Modal Pilih Ruangan
-  const handleOpenRuangModal = (jadwal: any, action: 'awasi' | 'hadir' | 'hadir_pengawas' | 'berita_acara') => {
+  // Popup Handler: Tombol Hadir, Hadir Pengawas, Berita Acara -> Modal Pilih Ruangan
+  const handleOpenRuangModal = (jadwal: any, action: 'hadir' | 'hadir_pengawas' | 'berita_acara') => {
     setActiveJadwalItem(jadwal);
     setTargetRuangAction(action);
     if (ruangList.length > 0 && !selectedRuangId) {
@@ -648,15 +659,7 @@ export default function UjianJadwal() {
     const action = targetRuangAction;
     setIsRuangModalOpen(false);
 
-    if (action === 'awasi') {
-      router.push({
-        pathname: '/ujian/awasi' as any,
-        params: {
-          jadwalId: item.id,
-          ruangId: ruangId,
-        },
-      });
-    } else if (action === 'hadir') {
+    if (action === 'hadir') {
       handlePrintHadir(item, ruangId);
     } else if (action === 'hadir_pengawas') {
       handlePrintHadirPengawas(item, ruangId);
@@ -1237,63 +1240,68 @@ export default function UjianJadwal() {
   };
 
   // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Bukan Kantor)
+  // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Prioritas data_kelas)
   const getRuangDefaultForSiswa = (siswa: any, kList: any[], rList: any[]) => {
     const sKelas = (siswa?.kelas || '').trim().toLowerCase();
 
-    // 1. Cek dari data_kelas yang memiliki ruang_id bukan kantor/teras
+    // 1. Cek dari data_kelas: jika kelas siswa memiliki ruang_id di data_kelas, gunakan langsung!
     const matchedK = (kList || []).find((k: any) => (k.nama_kelas || '').trim().toLowerCase() === sKelas);
     if (matchedK && matchedK.ruang_id) {
       const foundR = (rList || []).find((r: any) => Number(r.id) === Number(matchedK.ruang_id));
-      if (
-        foundR &&
-        !foundR.nama_ruang.toLowerCase().includes('kantor') &&
-        !foundR.nama_ruang.toLowerCase().includes('teras')
-      ) {
+      if (foundR) {
         return String(foundR.id);
       }
     }
 
-    const nonKantor = (rList || []).filter((r: any) => {
-      const nr = (r.nama_ruang || '').toLowerCase();
-      return !nr.includes('kantor') && !nr.includes('teras');
+    // Ruangan non-kantor umum (hanya mengecualikan ruang yang bernama persis kantor/teras kantor)
+    const validRuang = (rList || []).filter((r: any) => {
+      const nr = (r.nama_ruang || '').trim().toLowerCase();
+      return nr !== 'kantor' && nr !== 'teras' && nr !== 'teras kantor';
     });
 
-    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang
+    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang (jika di data_kelas belum diatur)
     if (sKelas.includes('vii') || sKelas.startsWith('7')) {
-      const r7 = nonKantor.find(
+      const r7 = validRuang.find(
         (r: any) => r.nama_ruang.toLowerCase().includes('7') || r.nama_ruang.toLowerCase().includes('vii')
       );
       if (r7) return String(r7.id);
     }
     if (sKelas.includes('viii') || sKelas.startsWith('8')) {
-      const r8 = nonKantor.find(
+      const r8 = validRuang.find(
         (r: any) => r.nama_ruang.toLowerCase().includes('8') || r.nama_ruang.toLowerCase().includes('viii')
       );
       if (r8) return String(r8.id);
     }
     if (sKelas.includes('ix-a') || sKelas.includes('9-a') || sKelas.includes('9a')) {
-      const r9a = nonKantor.find((r: any) => {
+      const r9a = validRuang.find((r: any) => {
         const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
         return nr.includes('9a') || nr.includes('ixa');
       });
       if (r9a) return String(r9a.id);
     }
     if (sKelas.includes('ix-b') || sKelas.includes('9-b') || sKelas.includes('9b')) {
-      const r9b = nonKantor.find((r: any) => {
+      const r9b = validRuang.find((r: any) => {
         const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
         return nr.includes('9b') || nr.includes('ixb');
       });
       if (r9b) return String(r9b.id);
     }
+    if (sKelas.includes('ix-c') || sKelas.includes('9-c') || sKelas.includes('9c')) {
+      const r9c = validRuang.find((r: any) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9c') || nr.includes('ixc');
+      });
+      if (r9c) return String(r9c.id);
+    }
     if (sKelas.includes('ix') || sKelas.startsWith('9')) {
-      const r9 = nonKantor.find(
+      const r9 = validRuang.find(
         (r: any) => r.nama_ruang.toLowerCase().includes('9') || r.nama_ruang.toLowerCase().includes('ix')
       );
       if (r9) return String(r9.id);
     }
 
     if (matchedK && matchedK.ruang_id) return String(matchedK.ruang_id);
-    if (nonKantor.length > 0) return String(nonKantor[0].id);
+    if (validRuang.length > 0) return String(validRuang[0].id);
     return rList?.[0] ? String(rList[0].id) : '1';
   };
 
@@ -1467,6 +1475,71 @@ export default function UjianJadwal() {
   const canManageJadwal = isOperatorOrPanitiaCore;
   const canPrintJadwal = isOperatorOrPanitiaCore || isWakaKurikulum;
   const showHeaderActions = canManageJadwal || canManagePengaturan || canPrintJadwal;
+
+  // Komputasi Status Kelengkapan Soal Seluruh Mata Pelajaran Ujian
+  const statusKelengkapanSoalSemua = useMemo(() => {
+    if (!jadwalList || jadwalList.length === 0) return null;
+
+    const sudahAda: any[] = [];
+    const belumAda: any[] = [];
+
+    // Kumpulkan seluruh mapel unik yang dijadwalkan dalam ujian
+    const mapelInJadwal: any[] = [];
+    const seenMapel = new Set<number>();
+    jadwalList.forEach(j => {
+      if (j.mapel_id && !seenMapel.has(Number(j.mapel_id))) {
+        seenMapel.add(Number(j.mapel_id));
+        mapelInJadwal.push({
+          mapelId: Number(j.mapel_id),
+          mapelNama: j.data_mapel?.nama_mapel || j.nama_ujian,
+          jadwal: j
+        });
+      }
+    });
+
+    mapelInJadwal.sort((a, b) => a.mapelNama.localeCompare(b.mapelNama));
+
+    const tingkatList = ['7', '8', '9'];
+
+    mapelInJadwal.forEach(({ mapelId, mapelNama, jadwal }) => {
+      const jenisUjian = jadwal.jenis_ujian || 'PSTS';
+      tingkatList.forEach(tk => {
+        const matchedBanks = (bankSoalList || []).filter(b =>
+          Number(b.mapel_id) === mapelId &&
+          (String(b.tingkat_kelas) === tk || String(b.tingkat_kelas) === 'Semua') &&
+          (!b.jenis_ujian || String(b.jenis_ujian).toUpperCase() === String(jenisUjian).toUpperCase())
+        );
+
+        const totalSoal = matchedBanks.reduce((sum, b) => sum + (Number(b.total_soal) || 0), 0);
+        const bankUtama = matchedBanks[0];
+        const pengawasNama = bankUtama?.pengawas?.nama || bankUtama?.data_guru?.nama || null;
+
+        const infoItem = {
+          tingkat: tk,
+          mapelId,
+          mapelNama,
+          bankId: bankUtama?.id || null,
+          bankJudul: bankUtama?.judul || null,
+          totalSoal,
+          pengawasNama,
+          jadwalId: jadwal.id,
+          jenisUjian: jenisUjian,
+        };
+
+        if (totalSoal > 0) {
+          sudahAda.push(infoItem);
+        } else {
+          belumAda.push(infoItem);
+        }
+      });
+    });
+
+    return {
+      totalMapel: mapelInJadwal.length,
+      sudahAda,
+      belumAda
+    };
+  }, [jadwalList, bankSoalList]);
 
   return (
     <View style={styles.container}>
@@ -1703,7 +1776,13 @@ export default function UjianJadwal() {
                       {showAwasiBtn && (
                         <TouchableOpacity
                           style={[styles.actionBtn, { backgroundColor: '#dc2626' }]}
-                          onPress={() => handleOpenRuangModal(jadwal, 'awasi')}
+                          onPress={() => router.push({
+                            pathname: '/ujian/awasi' as any,
+                            params: {
+                              jadwalId: jadwal.id,
+                              ruangId: 'semua',
+                            },
+                          })}
                         >
                           <Eye size={14} color="#fff" />
                           <Text style={styles.actionBtnTextWhite}>Awasi</Text>
@@ -1814,6 +1893,101 @@ export default function UjianJadwal() {
               );
             })
           )}
+
+          {/* Widget Kelengkapan Soal Seluruh Mata Pelajaran Ujian (Diletakkan di Urutan Terakhir Halaman) */}
+          {statusKelengkapanSoalSemua && (
+            <View style={styles.statusWidgetContainer}>
+              <View style={styles.statusWidgetHeader}>
+                <View style={styles.statusWidgetIconBox}>
+                  <FileCheck size={20} color="#2a2c87" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusWidgetTitle}>Status Kelengkapan Bank Soal CBT</Text>
+                  <Text style={styles.statusWidgetSubtitle}>
+                    {statusKelengkapanSoalSemua.totalMapel} Mapel Terjadwal (Kelas 7, 8, 9)
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.statusPillsRow}>
+                <View style={[styles.statusPill, { backgroundColor: '#dcfce7' }]}>
+                  <CheckCircle2 size={12} color="#16a34a" />
+                  <Text style={[styles.statusPillText, { color: '#16a34a' }]}>
+                    {statusKelengkapanSoalSemua.sudahAda.length} Sudah Ada Soal
+                  </Text>
+                </View>
+                <View style={[styles.statusPill, { backgroundColor: '#fee2e2' }]}>
+                  <AlertCircle size={12} color="#dc2626" />
+                  <Text style={[styles.statusPillText, { color: '#dc2626' }]}>
+                    {statusKelengkapanSoalSemua.belumAda.length} Belum Ada Soal
+                  </Text>
+                </View>
+              </View>
+
+              {/* List Sudah Ada Soal */}
+              {statusKelengkapanSoalSemua.sudahAda.length > 0 && (
+                <View style={styles.statusSection}>
+                  <Text style={styles.statusSectionTitle}>🟢 Mata Pelajaran & Kelas Siap:</Text>
+                  {statusKelengkapanSoalSemua.sudahAda.map((item: any, idx: number) => (
+                    <View key={`sudah-${idx}`} style={styles.statusItemCardSuccess}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={styles.badgeGradeSuccess}>
+                            <Text style={styles.badgeGradeTextSuccess}>Kelas {item.tingkat}</Text>
+                          </View>
+                          <Text style={styles.statusItemMapel}>{item.mapelNama}</Text>
+                        </View>
+                        {item.pengawasNama && (
+                          <Text style={styles.statusItemSub}>Pengawas: {item.pengawasNama}</Text>
+                        )}
+                      </View>
+                      <View style={styles.statusItemBadgeSuccess}>
+                        <Text style={styles.statusItemBadgeTextSuccess}>{item.totalSoal} Soal</Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* List Belum Ada Soal */}
+              {statusKelengkapanSoalSemua.belumAda.length > 0 && (
+                <View style={styles.statusSection}>
+                  <Text style={[styles.statusSectionTitle, { color: '#dc2626' }]}>🔴 Belum Ada Soal:</Text>
+                  {statusKelengkapanSoalSemua.belumAda.map((item: any, idx: number) => (
+                    <View key={`belum-${idx}`} style={styles.statusItemCardWarning}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          <View style={styles.badgeGradeWarning}>
+                            <Text style={styles.badgeGradeTextWarning}>Kelas {item.tingkat}</Text>
+                          </View>
+                          <Text style={styles.statusItemMapel}>{item.mapelNama}</Text>
+                        </View>
+                        <Text style={styles.statusItemSubWarning}>
+                          {item.bankJudul ? `Paket ada (${item.totalSoal} butir)` : 'Paket bank soal belum dibuat'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.statusCreateBtn}
+                        onPress={() => router.push({
+                          pathname: '/ujian/soal' as any,
+                          params: {
+                            bankSoalId: item.bankId || '',
+                            mapelId: item.mapelId,
+                            tingkat: item.tingkat,
+                            jenisUjian: item.jenisUjian,
+                            jadwalId: item.jadwalId,
+                          }
+                        })}
+                      >
+                        <Plus size={12} color="#fff" />
+                        <Text style={styles.statusCreateBtnText}>Buat</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
         </ScrollView>
       )}
 
@@ -1900,13 +2074,11 @@ export default function UjianJadwal() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.popupTitle}>
-                  {targetRuangAction === 'awasi'
-                    ? 'Pilih Ruangan Pengawasan'
-                    : targetRuangAction === 'hadir'
-                      ? 'Pilih Ruang - Hadir Peserta'
-                      : targetRuangAction === 'hadir_pengawas'
-                        ? 'Pilih Ruang - Hadir Pengawas'
-                        : 'Pilih Ruang - Berita Acara'}
+                  {targetRuangAction === 'hadir'
+                    ? 'Pilih Ruang - Hadir Peserta'
+                    : targetRuangAction === 'hadir_pengawas'
+                      ? 'Pilih Ruang - Hadir Pengawas'
+                      : 'Pilih Ruang - Berita Acara'}
                 </Text>
                 <Text style={styles.popupSubtitle}>
                   {activeJadwalItem?.data_mapel?.nama_mapel || activeJadwalItem?.nama_ujian}
@@ -1944,9 +2116,7 @@ export default function UjianJadwal() {
                 style={[styles.popupSubmitBtn, { backgroundColor: '#dc2626' }]}
                 onPress={handleConfirmRuangModal}
               >
-                <Text style={styles.popupSubmitBtnText}>
-                  {targetRuangAction === 'awasi' ? 'Masuk Pengawasan' : 'Cetak Dokumen'}
-                </Text>
+                <Text style={styles.popupSubmitBtnText}>Cetak Dokumen</Text>
                 <ChevronRight size={16} color="#fff" />
               </TouchableOpacity>
             </View>
@@ -3586,8 +3756,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   picker: {
-    height: 50,
+    minHeight: 50,
+    height: Platform.OS === 'android' ? 56 : 50,
     color: '#1e293b',
+    ...(Platform.OS === 'android' && {
+      transform: [{ translateY: -2 }],
+    }),
   },
   datePickerBtn: {
     flexDirection: 'row',
@@ -3707,5 +3881,153 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#334155',
     marginBottom: 6,
+  },
+  statusWidgetContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  statusWidgetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  statusWidgetIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#eef2ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusWidgetTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  statusWidgetSubtitle: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 1,
+  },
+  statusPillsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statusPillText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  statusSection: {
+    marginTop: 6,
+    gap: 6,
+  },
+  statusSectionTitle: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#16a34a',
+    marginBottom: 2,
+  },
+  statusItemCardSuccess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+  },
+  badgeGradeSuccess: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeGradeTextSuccess: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#16a34a',
+  },
+  statusItemMapel: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  statusItemSub: {
+    fontSize: 10,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  statusItemBadgeSuccess: {
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  statusItemBadgeTextSuccess: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#16a34a',
+  },
+  statusItemCardWarning: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 10,
+    backgroundColor: '#fff5f5',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    gap: 8,
+  },
+  badgeGradeWarning: {
+    backgroundColor: '#fee2e2',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeGradeTextWarning: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#dc2626',
+  },
+  statusItemSubWarning: {
+    fontSize: 10,
+    color: '#e11d48',
+    marginTop: 2,
+  },
+  statusCreateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  statusCreateBtnText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#fff',
   },
 });

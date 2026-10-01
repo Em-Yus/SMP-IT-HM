@@ -489,6 +489,33 @@ export default function PresensiGuru() {
     const today = getLocalDate();
     const currentTime = getTimeString();
     const currentMin = parseTimeToMinutes(currentTime);
+
+    // 0. Validasi Wajib: Guru harus sudah scan kehadiran kantor (di luar pintu kantor) hari ini
+    const { data: checkKehadiran } = await supabase
+      .from('presensi_guru')
+      .select('id, waktu_datang, waktu_pulang, status')
+      .eq('guru_id', currentUser.id)
+      .eq('tanggal', today)
+      .maybeSingle();
+
+    if (!checkKehadiran || !checkKehadiran.waktu_datang) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Akses Ditolak',
+        text: 'Anda belum melakukan scan kehadiran di luar pintu kantor hari ini. Silakan scan presensi kehadiran kantor terlebih dahulu sebelum melakukan scan masuk ruang kelas untuk mengajar atau menggantikan pelajaran guru lain.'
+      });
+      return;
+    }
+
+    if (checkKehadiran.waktu_pulang) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Akses Ditolak',
+        text: 'Anda sudah melakukan scan absen pulang sekolah hari ini.'
+      });
+      return;
+    }
+
     const todayName = getOperationalDayName();
 
     const { data: scheduleList } = await supabase

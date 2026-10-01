@@ -5,8 +5,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import { router } from 'expo-router';
 import { supabase } from '../../../services/supabaseClient';
-import { Users, BookOpen, Clock, Activity, Calendar } from 'lucide-react-native';
+import { Users, BookOpen, Clock, Activity, Calendar, Bell } from 'lucide-react-native';
 import { getOperationalDayName } from '../../utils/dateUtils';
 import { scheduleGuruReminders } from '../../services/scheduleNotificationHelper';
 
@@ -23,6 +24,7 @@ Notifications.setNotificationHandler({
 export default function DashboardGuru() {
   const [userData, setUserData] = useState<any>(null);
   const [isNotificationDenied, setIsNotificationDenied] = useState(false);
+  const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
   
   // Widget Data States
   const [totalGuru, setTotalGuru] = useState(0);
@@ -47,15 +49,38 @@ export default function DashboardGuru() {
       }
     };
     fetchUser();
+    checkUnreadNotif();
 
     const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
       console.log('Global refresh triggered in Dashboard Guru');
       if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
       fetchUser();
+      checkUnreadNotif();
     });
 
     return () => listener.remove();
   }, []);
+
+  const checkUnreadNotif = async () => {
+    try {
+      const lastRead = await AsyncStorage.getItem('pengumuman_last_read');
+      const { data } = await supabase
+        .from('cms_pengumuman')
+        .select('created_at')
+        .eq('status', 'Aktif')
+        .in('target', ['Guru', 'Semua'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) {
+        const latestCreatedAt = data[0].created_at;
+        setHasUnreadNotif(!lastRead || latestCreatedAt > lastRead);
+      } else {
+        setHasUnreadNotif(false);
+      }
+    } catch (e) {
+      setHasUnreadNotif(false);
+    }
+  };
 
   const fetchDashboardStats = async (guruId: any) => {
     try {
@@ -196,10 +221,23 @@ export default function DashboardGuru() {
         colors={['#2a2c87', '#3b3e9e']}
         style={styles.header}
       >
-        <Text style={styles.welcomeText}>{getGreeting()},</Text>
-        <Text style={styles.nameText}>{userData?.nama || 'Guru'}</Text>
-        <View style={styles.roleBadge}>
-          <Text style={styles.roleText}>{jabatan || 'Pegawai / Guru'}</Text>
+        <View>
+          <Text style={styles.welcomeText}>{getGreeting()},</Text>
+          <Text style={styles.nameText}>{userData?.nama || 'Guru'}</Text>
+        </View>
+
+        <View style={styles.headerBottomRow}>
+          <View style={styles.roleBadge}>
+            <Text style={styles.roleText}>{jabatan || 'Pegawai / Guru'}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.bellButton}
+            onPress={() => router.push('/pengumuman' as any)}
+            activeOpacity={0.8}
+          >
+            <Bell size={20} color="#ffffff" />
+            {hasUnreadNotif && <View style={styles.bellBadgeDot} />}
+          </TouchableOpacity>
         </View>
       </LinearGradient>
 
@@ -319,6 +357,30 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 8,
   },
+  headerBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  bellButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  bellBadgeDot: {
+    position: 'absolute',
+    top: 7,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#ef4444',
+  },
   welcomeText: {
     color: '#a5b4fc',
     fontSize: 16,
@@ -336,7 +398,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     alignSelf: 'flex-start',
-    marginTop: 12,
+    marginTop: 0,
   },
   roleText: {
     color: '#daffcc',

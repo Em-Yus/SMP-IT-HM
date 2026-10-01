@@ -327,6 +327,34 @@ export default function PresensiGuruScreen() {
         const namaKelas = payload.nama_kelas || `Kelas ${kelasId}`;
 
         if (payload.action === 'MASUK') {
+          // 0. Validasi Wajib: Guru harus sudah scan kehadiran kantor (di luar pintu kantor) hari ini
+          const { data: checkKehadiran } = await supabase
+            .from('presensi_guru')
+            .select('id, waktu_datang, waktu_pulang, status')
+            .eq('guru_id', currentUser.id)
+            .eq('tanggal', today)
+            .maybeSingle();
+
+          if (!checkKehadiran || !checkKehadiran.waktu_datang) {
+            Alert.alert(
+              'Akses Ditolak',
+              'Anda belum melakukan scan kehadiran di luar pintu kantor hari ini.\n\nSilakan scan kehadiran masuk kantor terlebih dahulu sebelum melakukan scan masuk ruang kelas untuk mengajar atau menggantikan pelajaran guru lain.'
+            );
+            setIsProcessing(false);
+            setScannerVisible(false);
+            return;
+          }
+
+          if (checkKehadiran.waktu_pulang) {
+            Alert.alert(
+              'Akses Ditolak',
+              'Anda sudah melakukan scan absen pulang sekolah hari ini.'
+            );
+            setIsProcessing(false);
+            setScannerVisible(false);
+            return;
+          }
+
           const todayName = getOperationalDayName();
 
           const { data: scheduleList } = await supabase

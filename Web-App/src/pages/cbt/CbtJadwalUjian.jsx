@@ -1,16 +1,173 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabaseClient';
 import Swal from 'sweetalert2';
 import {
   Calendar, Clock, BookOpen, Users, ShieldAlert, Plus, Edit3,
-  Trash2, Video, Award, FileText, CheckCircle2, AlertTriangle,
+  Trash2, Video, Award, FileText, CheckCircle2, AlertTriangle, AlertCircle,
   FileCheck, Printer, ArrowUpDown, Filter, LayoutGrid, List,
   Settings, Eye, ShieldCheck, X, Building, Shuffle, Check,
-  Search, RotateCcw
+  Search, RotateCcw, ChevronDown
 } from 'lucide-react';
 import CbtPengaturanUjianModal from '../../components/cbt/CbtPengaturanUjianModal';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
+
+// Komponen Dropdown dengan Fitur Pencarian Real-Time (Searchable Select)
+function SearchableSelect({
+  placeholder = 'Pilih...',
+  searchPlaceholder = 'Cari...',
+  icon: Icon,
+  options = [],
+  value,
+  onChange,
+  className = '',
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const dropdownRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      setTimeout(() => inputRef.current?.focus(), 60);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isOpen]);
+
+  const selectedOption = options.find((opt) => String(opt.value) === String(value));
+
+  const filteredOptions = useMemo(() => {
+    if (!searchTerm.trim()) return options;
+    const term = searchTerm.toLowerCase();
+    return options.filter((opt) => opt.label.toLowerCase().includes(term));
+  }, [options, searchTerm]);
+
+  return (
+    <div className={`relative ${className}`} ref={dropdownRef}>
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen(!isOpen);
+          setSearchTerm('');
+        }}
+        className={`w-full flex items-center justify-between gap-2 px-3.5 py-2.5 bg-white border text-xs font-semibold rounded-xl transition shadow-2xs cursor-pointer ${
+          isOpen
+            ? 'border-indigo-600 ring-2 ring-indigo-500/20 text-gray-900'
+            : value
+            ? 'border-indigo-300 bg-indigo-50/40 text-indigo-950 font-bold'
+            : 'border-gray-200 text-gray-600 hover:border-gray-300'
+        }`}
+      >
+        <div className="flex items-center gap-2 truncate">
+          {Icon && <Icon size={14} className={value ? 'text-indigo-600' : 'text-gray-400'} />}
+          <span className="truncate">
+            {selectedOption ? selectedOption.label : placeholder}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {value && (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange('');
+                setIsOpen(false);
+              }}
+              className="p-0.5 hover:bg-gray-200 text-gray-400 hover:text-gray-700 rounded-full transition cursor-pointer"
+              title="Hapus filter"
+            >
+              <X size={12} />
+            </span>
+          )}
+          <ChevronDown
+            size={14}
+            className={`text-gray-400 transition-transform ${isOpen ? 'rotate-180 text-indigo-600' : ''}`}
+          />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-0 right-0 mt-1.5 z-50 bg-white border border-gray-100 rounded-2xl shadow-xl overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="p-2 border-b border-gray-100 bg-gray-50/70">
+            <div className="relative flex items-center">
+              <Search size={13} className="absolute left-2.5 text-gray-400 pointer-events-none" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={searchPlaceholder}
+                className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-gray-200 rounded-lg outline-none focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 text-gray-800"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 text-gray-400 hover:text-gray-600"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                onChange('');
+                setIsOpen(false);
+              }}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition cursor-pointer ${
+                !value
+                  ? 'bg-indigo-50 text-indigo-700 font-bold'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <span>{placeholder}</span>
+              {!value && <Check size={13} className="text-indigo-600" />}
+            </button>
+
+            {filteredOptions.length === 0 ? (
+              <div className="px-3 py-4 text-center text-xs text-gray-400 italic">
+                Tidak ditemukan hasil untuk "{searchTerm}"
+              </div>
+            ) : (
+              filteredOptions.map((opt) => {
+                const isSelected = String(opt.value) === String(value);
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      onChange(opt.value);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white font-bold'
+                        : 'text-gray-700 hover:bg-indigo-50/60'
+                    }`}
+                  >
+                    <span className="truncate pr-2">{opt.label}</span>
+                    {isSelected && <Check size={13} className="text-white shrink-0" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CbtJadwalUjian() {
   const navigate = useNavigate();
@@ -35,6 +192,10 @@ export default function CbtJadwalUjian() {
   const [filterHari, setFilterHari] = useState(() => getOperationalDayName());
   const [filterGuru, setFilterGuru] = useState('');
   const [sortBy, setSortBy] = useState('jam_asc');
+
+  // Filter Status Kelengkapan Soal (Guru Pengampu & Mata Pelajaran)
+  const [filterStatusGuru, setFilterStatusGuru] = useState('');
+  const [filterStatusMapel, setFilterStatusMapel] = useState('');
 
   // States Pengaturan Ruang Peserta
   const [isRuangPesertaModalOpen, setIsRuangPesertaModalOpen] = useState(false);
@@ -153,7 +314,7 @@ export default function CbtJadwalUjian() {
           supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
           supabase.from('data_guru').select('id, nama').order('nama'),
           supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
-          supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id').order('judul'),
+          supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id, jenis_ujian, pengawas_guru_id, pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)').order('judul'),
           supabase.from('pembelajaran').select('kelas_id, mapel_id, guru_id'),
         ]);
 
@@ -205,9 +366,22 @@ export default function CbtJadwalUjian() {
       return;
     }
     setIsKelasModalOpen(false);
-    const matchingBank = bankSoalList.find(b => Number(b.mapel_id) === Number(selectedJadwalForSoal?.mapel_id));
-    const bankIdToUse = selectedJadwalForSoal?.bank_soal_id || matchingBank?.id || '';
-    navigate(`/cbt/bank-soal?bankId=${bankIdToUse}&mapelId=${selectedJadwalForSoal?.mapel_id || ''}&kelasId=${selectedKelasId}&jadwalId=${selectedJadwalForSoal?.id || ''}`);
+    const kObj = kelasList.find(k => String(k.id) === String(selectedKelasId));
+    let tingkat = kObj?.tingkat ? String(kObj.tingkat) : '';
+    if (!tingkat && kObj?.nama_kelas) {
+      const u = kObj.nama_kelas.toUpperCase();
+      if (u.includes('VII') && !u.includes('VIII')) tingkat = '7';
+      else if (u.includes('VIII')) tingkat = '8';
+      else if (u.includes('IX')) tingkat = '9';
+    }
+    const jenisUjian = selectedJadwalForSoal?.jenis_ujian || 'PSTS';
+    const matchingBank = bankSoalList.find(b =>
+      Number(b.mapel_id) === Number(selectedJadwalForSoal?.mapel_id) &&
+      (String(b.tingkat_kelas) === tingkat || String(b.tingkat_kelas) === 'Semua') &&
+      (!b.jenis_ujian || String(b.jenis_ujian).toUpperCase() === String(jenisUjian).toUpperCase())
+    );
+    const bankIdToUse = matchingBank?.id || '';
+    navigate(`/cbt/bank-soal?bankId=${bankIdToUse}&mapelId=${selectedJadwalForSoal?.mapel_id || ''}&kelasId=${selectedKelasId}&tingkat=${tingkat}&jenisUjian=${encodeURIComponent(jenisUjian)}&jadwalId=${selectedJadwalForSoal?.id || ''}`);
   };
 
   // Cek Role OPS / Waka Kurikulum / Panitia CBT (Ketua & Sekretaris)
@@ -257,8 +431,170 @@ export default function CbtJadwalUjian() {
   const handleMapelChange = (e) => {
     const val = e.target.value;
     setFormData(prev => ({ ...prev, mapel_id: val }));
-    autoDetectGuruPengampu(val);
   };
+
+  // Komputasi Status Kelengkapan Soal Seluruh Mata Pelajaran Ujian
+  const statusKelengkapanSoalSemua = useMemo(() => {
+    if (!jadwalList || jadwalList.length === 0) return null;
+
+    const sudahAda = [];
+    const belumAda = [];
+
+    // Kumpulkan seluruh mapel unik yang ada dalam jadwal ujian
+    const mapelInJadwal = [];
+    const seenMapel = new Set();
+    jadwalList.forEach(j => {
+      if (j.mapel_id && !seenMapel.has(Number(j.mapel_id))) {
+        seenMapel.add(Number(j.mapel_id));
+        mapelInJadwal.push({
+          mapelId: Number(j.mapel_id),
+          mapelNama: j.data_mapel?.nama_mapel || j.nama_ujian,
+          jadwal: j
+        });
+      }
+    });
+
+    mapelInJadwal.sort((a, b) => a.mapelNama.localeCompare(b.mapelNama));
+
+    const tingkatList = ['7', '8', '9'];
+
+    mapelInJadwal.forEach(({ mapelId, mapelNama, jadwal }) => {
+      const jenisUjian = jadwal.jenis_ujian || 'PSTS';
+      tingkatList.forEach(tk => {
+        const matchedBanks = (bankSoalList || []).filter(b =>
+          Number(b.mapel_id) === mapelId &&
+          (String(b.tingkat_kelas) === tk || String(b.tingkat_kelas) === 'Semua') &&
+          (!b.jenis_ujian || String(b.jenis_ujian).toUpperCase() === String(jenisUjian).toUpperCase())
+        );
+
+        const totalSoal = matchedBanks.reduce((sum, b) => sum + (Number(b.total_soal) || 0), 0);
+        const bankUtama = matchedBanks[0];
+        const pengawasNama = bankUtama?.pengawas?.nama || bankUtama?.data_guru?.nama || null;
+
+        // Cari kelas yang sesuai dengan tingkat tk
+        const classesInTingkat = (kelasList || []).filter(k => {
+          let grade = k.tingkat ? String(k.tingkat) : '';
+          if (!grade && k.nama_kelas) {
+            const u = k.nama_kelas.toUpperCase();
+            if (u.includes('VII') && !u.includes('VIII')) grade = '7';
+            else if (u.includes('VIII')) grade = '8';
+            else if (u.includes('IX')) grade = '9';
+          }
+          return grade === tk;
+        }).map(k => Number(k.id));
+
+        // Cari pembelajaran mapel & kelas terkait
+        const matchingPemb = (pembelajaranList || []).filter(p =>
+          Number(p.mapel_id) === mapelId && classesInTingkat.includes(Number(p.kelas_id))
+        );
+
+        const guruIdsSet = new Set();
+        matchingPemb.forEach(p => {
+          if (p.guru_id) guruIdsSet.add(Number(p.guru_id));
+        });
+
+        // Fallback jika belum diatur di pembelajaran
+        if (guruIdsSet.size === 0) {
+          if (jadwal.guru_id) guruIdsSet.add(Number(jadwal.guru_id));
+          if (bankUtama?.guru_id) guruIdsSet.add(Number(bankUtama.guru_id));
+        }
+
+        const guruPengampuArr = Array.from(guruIdsSet).map(gId => {
+          const found = (guruList || []).find(g => Number(g.id) === gId);
+          return found ? { id: found.id, nama: found.nama || found.nama_guru } : null;
+        }).filter(Boolean);
+
+        const guruPengampuNama = guruPengampuArr.map(g => g.nama).join(', ') || jadwal.guru_pengampu?.nama || null;
+
+        const infoItem = {
+          tingkat: tk,
+          mapelId,
+          mapelNama,
+          bankId: bankUtama?.id || null,
+          bankJudul: bankUtama?.judul || null,
+          totalSoal,
+          pengawasNama,
+          guruPengampuArr,
+          guruPengampuNama,
+          guruIds: Array.from(guruIdsSet),
+          jadwalId: jadwal.id,
+          jenisUjian: jenisUjian,
+          jadwal: jadwal,
+        };
+
+        if (totalSoal > 0) {
+          sudahAda.push(infoItem);
+        } else {
+          belumAda.push(infoItem);
+        }
+      });
+    });
+
+    return {
+      totalMapel: mapelInJadwal.length,
+      sudahAda,
+      belumAda
+    };
+  }, [jadwalList, bankSoalList, kelasList, pembelajaranList, guruList]);
+
+  // Pilihan Dropdown Filter Mata Pelajaran pada Status Kelengkapan Soal
+  const statusMapelFilterOptions = useMemo(() => {
+    if (!statusKelengkapanSoalSemua) return [];
+    const all = [...statusKelengkapanSoalSemua.sudahAda, ...statusKelengkapanSoalSemua.belumAda];
+    const map = new Map();
+    all.forEach(item => {
+      if (!map.has(String(item.mapelId))) {
+        map.set(String(item.mapelId), item.mapelNama);
+      }
+    });
+    return Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [statusKelengkapanSoalSemua]);
+
+  // Pilihan Dropdown Filter Guru Pengampu pada Status Kelengkapan Soal
+  const statusGuruFilterOptions = useMemo(() => {
+    if (!statusKelengkapanSoalSemua) return [];
+    const all = [...statusKelengkapanSoalSemua.sudahAda, ...statusKelengkapanSoalSemua.belumAda];
+    const map = new Map();
+    all.forEach(item => {
+      (item.guruPengampuArr || []).forEach(g => {
+        if (!map.has(String(g.id))) {
+          map.set(String(g.id), g.nama);
+        }
+      });
+    });
+    // Jika ada guru di data_guru yang belum muncul di item, tetap sediakan dari guruList
+    if (guruList && guruList.length > 0) {
+      guruList.forEach(g => {
+        if (!map.has(String(g.id))) {
+          map.set(String(g.id), g.nama || g.nama_guru);
+        }
+      });
+    }
+    return Array.from(map.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [statusKelengkapanSoalSemua, guruList]);
+
+  // Item yang telah difilter berdasarkan Guru Pengampu & Mapel
+  const filteredStatusSudahAda = useMemo(() => {
+    if (!statusKelengkapanSoalSemua) return [];
+    return statusKelengkapanSoalSemua.sudahAda.filter(item => {
+      if (filterStatusMapel && String(item.mapelId) !== String(filterStatusMapel)) return false;
+      if (filterStatusGuru && !item.guruIds.includes(Number(filterStatusGuru))) return false;
+      return true;
+    });
+  }, [statusKelengkapanSoalSemua, filterStatusMapel, filterStatusGuru]);
+
+  const filteredStatusBelumAda = useMemo(() => {
+    if (!statusKelengkapanSoalSemua) return [];
+    return statusKelengkapanSoalSemua.belumAda.filter(item => {
+      if (filterStatusMapel && String(item.mapelId) !== String(filterStatusMapel)) return false;
+      if (filterStatusGuru && !item.guruIds.includes(Number(filterStatusGuru))) return false;
+      return true;
+    });
+  }, [statusKelengkapanSoalSemua, filterStatusMapel, filterStatusGuru]);
 
   const handleSaveJadwal = async (e) => {
     e.preventDefault();
@@ -271,12 +607,12 @@ export default function CbtJadwalUjian() {
         jam_mulai: formData.jam_mulai,
         jam_selesai: formData.jam_selesai,
         durasi_menit: parseInt(formData.durasi_menit, 10) || 90,
-        kelas_id: formData.kelas_id || null,
+        kelas_id: null,
         mapel_id: formData.mapel_id || null,
-        guru_id: formData.guru_id || null,
-        ruang_id: formData.ruang_id || null,
-        pengawas_guru_id: formData.pengawas_guru_id || null,
-        bank_soal_id: formData.bank_soal_id || null,
+        guru_id: null,
+        ruang_id: null,
+        pengawas_guru_id: null,
+        bank_soal_id: null,
         status: formData.status,
         acak_soal: formData.acak_soal,
         acak_opsi: formData.acak_opsi,
@@ -524,64 +860,68 @@ export default function CbtJadwalUjian() {
     }
   };
 
-  // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Bukan Kantor)
+  // Helper: Pemetaan Default Ruang Berdasarkan Kelas Asal Siswa (Prioritas data_kelas)
   const getRuangDefaultForSiswa = (siswa, kList, rList) => {
     const sKelas = (siswa?.kelas || '').trim().toLowerCase();
 
-    // 1. Cek dari data_kelas yang memiliki ruang_id bukan kantor/teras
+    // 1. Cek dari data_kelas: jika kelas siswa memiliki ruang_id di data_kelas, gunakan langsung!
     const matchedK = (kList || []).find((k) => (k.nama_kelas || '').trim().toLowerCase() === sKelas);
     if (matchedK && matchedK.ruang_id) {
       const foundR = (rList || []).find((r) => Number(r.id) === Number(matchedK.ruang_id));
-      if (
-        foundR &&
-        !foundR.nama_ruang.toLowerCase().includes('kantor') &&
-        !foundR.nama_ruang.toLowerCase().includes('teras')
-      ) {
+      if (foundR) {
         return String(foundR.id);
       }
     }
 
-    const nonKantor = (rList || []).filter((r) => {
-      const nr = (r.nama_ruang || '').toLowerCase();
-      return !nr.includes('kantor') && !nr.includes('teras');
+    // Ruangan non-kantor umum (hanya mengecualikan ruang yang bernama persis kantor/teras kantor)
+    const validRuang = (rList || []).filter((r) => {
+      const nr = (r.nama_ruang || '').trim().toLowerCase();
+      return nr !== 'kantor' && nr !== 'teras' && nr !== 'teras kantor';
     });
 
-    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang
+    // 2. Pencocokan cerdas teks nama kelas dengan nama ruang (jika di data_kelas belum diatur)
     if (sKelas.includes('vii') || sKelas.startsWith('7')) {
-      const r7 = nonKantor.find(
+      const r7 = validRuang.find(
         (r) => r.nama_ruang.toLowerCase().includes('7') || r.nama_ruang.toLowerCase().includes('vii')
       );
       if (r7) return String(r7.id);
     }
     if (sKelas.includes('viii') || sKelas.startsWith('8')) {
-      const r8 = nonKantor.find(
+      const r8 = validRuang.find(
         (r) => r.nama_ruang.toLowerCase().includes('8') || r.nama_ruang.toLowerCase().includes('viii')
       );
       if (r8) return String(r8.id);
     }
     if (sKelas.includes('ix-a') || sKelas.includes('9-a') || sKelas.includes('9a')) {
-      const r9a = nonKantor.find((r) => {
+      const r9a = validRuang.find((r) => {
         const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
         return nr.includes('9a') || nr.includes('ixa');
       });
       if (r9a) return String(r9a.id);
     }
     if (sKelas.includes('ix-b') || sKelas.includes('9-b') || sKelas.includes('9b')) {
-      const r9b = nonKantor.find((r) => {
+      const r9b = validRuang.find((r) => {
         const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
         return nr.includes('9b') || nr.includes('ixb');
       });
       if (r9b) return String(r9b.id);
     }
+    if (sKelas.includes('ix-c') || sKelas.includes('9-c') || sKelas.includes('9c')) {
+      const r9c = validRuang.find((r) => {
+        const nr = r.nama_ruang.toLowerCase().replace(/[\s-]/g, '');
+        return nr.includes('9c') || nr.includes('ixc');
+      });
+      if (r9c) return String(r9c.id);
+    }
     if (sKelas.includes('ix') || sKelas.startsWith('9')) {
-      const r9 = nonKantor.find(
+      const r9 = validRuang.find(
         (r) => r.nama_ruang.toLowerCase().includes('9') || r.nama_ruang.toLowerCase().includes('ix')
       );
       if (r9) return String(r9.id);
     }
 
     if (matchedK && matchedK.ruang_id) return String(matchedK.ruang_id);
-    if (nonKantor.length > 0) return String(nonKantor[0].id);
+    if (validRuang.length > 0) return String(validRuang[0].id);
     return rList?.[0] ? String(rList[0].id) : '1';
   };
 
@@ -714,6 +1054,8 @@ export default function CbtJadwalUjian() {
     }
   };
 
+  const todayName = getOperationalDayName();
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
       {/* Header Halaman */}
@@ -757,12 +1099,12 @@ export default function CbtJadwalUjian() {
                   jam_mulai: '07:30',
                   jam_selesai: '09:00',
                   durasi_menit: 90,
-                  kelas_id: kelasList[0]?.id || '',
+                  kelas_id: '',
                   mapel_id: mapelList[0]?.id || '',
                   guru_id: '',
-                  ruang_id: ruangList[0]?.id || '',
+                  ruang_id: '',
                   pengawas_guru_id: '',
-                  bank_soal_id: bankSoalList[0]?.id || '',
+                  bank_soal_id: '',
                   status: 'terjadwal',
                   acak_soal: true,
                   acak_opsi: true,
@@ -821,10 +1163,9 @@ export default function CbtJadwalUjian() {
         {['Semua', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map((hari) => {
           const count = hari === 'Semua'
             ? jadwalList.length
-            : jadwalList.filter(j => (j.hari || calculateHari(j.tanggal_ujian)).toLowerCase() === hari.toLowerCase()).length;
+            : jadwalList.filter(j => (String(j?.hari || calculateHari(j?.tanggal_ujian) || '')).toLowerCase() === hari.toLowerCase()).length;
 
           const isActive = filterHari === hari;
-          const todayName = getOperationalDayName();
           const isHariIni = todayName.toLowerCase() === hari.toLowerCase();
 
           return (
@@ -839,9 +1180,13 @@ export default function CbtJadwalUjian() {
             >
               <span>{hari === 'Semua' ? 'Semua Hari' : hari}</span>
               {isHariIni && (
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-black ${
-                  isActive ? 'bg-secondary text-gray-900' : 'bg-emerald-100 text-emerald-700'
-                }`}>
+                <span
+                  className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow-xs ${
+                    isActive
+                      ? 'bg-[#85c226] text-gray-950 ring-2 ring-white/50'
+                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  }`}
+                >
                   Hari Ini
                 </span>
               )}
@@ -965,6 +1310,11 @@ export default function CbtJadwalUjian() {
                           <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-bold rounded">
                             {j.data_ruang?.nama_ruang || 'Ruang CBT'}
                           </span>
+                          {(String(j?.hari || calculateHari(j?.tanggal_ujian) || '')).toLowerCase() === todayName.toLowerCase() && (
+                            <span className="px-2 py-0.5 bg-[#85c226] text-white text-[10px] font-black rounded-full uppercase tracking-wider shadow-xs animate-pulse">
+                              Hari Ini
+                            </span>
+                          )}
                         </div>
                         <span
                           className={`px-2.5 py-1 text-[11px] font-bold rounded-lg ${
@@ -1003,14 +1353,29 @@ export default function CbtJadwalUjian() {
                         <span className="truncate">Guru Pengampu: {j.guru_pengampu?.nama || j.guru_pengampu?.nama_guru || '-'}</span>
                       </div>
 
-                      {/* Bank Soal Terhubung */}
-                      <div className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
-                        <BookOpen size={13} className="text-purple-500" />
-                        <span>
-                          Bank Soal: <strong>{j.cbt_bank_soal?.judul || 'Belum dipilih'}</strong> (
-                          {j.cbt_bank_soal?.total_soal || 0} butir)
-                        </span>
-                      </div>
+                      {/* Bank Soal Terhubung (Dinamis per tingkat untuk 1 Card Semua Kelas) */}
+                      {(() => {
+                        const mapelBanks = (bankSoalList || []).filter(b => Number(b.mapel_id) === Number(j.mapel_id));
+                        const totalSoalAll = mapelBanks.reduce((sum, b) => sum + (Number(b.total_soal) || 0), 0);
+                        return (
+                          <div className="mt-2 text-[11px] text-gray-500 flex items-center gap-1.5">
+                            <BookOpen size={13} className="text-purple-500 shrink-0" />
+                            <span className="truncate">
+                              Bank Soal:{' '}
+                              {mapelBanks.length > 0 ? (
+                                <>
+                                  <strong>{mapelBanks.map(b => `Kls ${b.tingkat_kelas} (${b.total_soal || 0} butir)`).join(' • ')}</strong>
+                                  <span className="text-gray-400 ml-1">({totalSoalAll} butir)</span>
+                                </>
+                              ) : j.cbt_bank_soal?.judul ? (
+                                <strong>{j.cbt_bank_soal.judul} ({j.cbt_bank_soal.total_soal || 0} butir)</strong>
+                              ) : (
+                                <span className="text-rose-500 font-medium">Belum ada paket bank soal</span>
+                              )}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* HAK AKSES PER ROLE PADA TOMBOL CARD JADWAL */}
@@ -1192,6 +1557,210 @@ export default function CbtJadwalUjian() {
         ))
       )}
 
+      {/* Widget Pemantauan Kelengkapan Soal Seluruh Mata Pelajaran Ujian (Diletakkan di Urutan Terakhir Halaman) */}
+      {statusKelengkapanSoalSemua && (
+        <div className="bg-white rounded-3xl p-6 border border-indigo-100 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-700 flex items-center justify-center shadow-xs">
+                <FileCheck size={22} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-black text-gray-900">
+                    Status Kelengkapan Soal Seluruh Mata Pelajaran Ujian
+                  </h3>
+                  <span className="text-[11px] font-extrabold uppercase px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {statusKelengkapanSoalSemua.totalMapel} Mapel Terjadwal
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Monitoring kesiapan paket bank soal per tingkat kelas (7, 8, 9) untuk seluruh mata pelajaran yang diujikan
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <span className="px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 shadow-2xs">
+                <CheckCircle2 size={14} className="text-emerald-600" />
+                <span>{filteredStatusSudahAda.length} Sudah Ada Soal</span>
+              </span>
+              <span className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1.5 shadow-2xs">
+                <AlertCircle size={14} className="text-rose-600" />
+                <span>{filteredStatusBelumAda.length} Belum Ada Soal</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Filter Bar Pencarian Guru Pengampu & Mata Pelajaran */}
+          <div className="bg-slate-50/90 p-3.5 rounded-2xl border border-slate-200/80 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs font-extrabold text-slate-700 shrink-0">
+              <Filter size={15} className="text-indigo-600" />
+              <span>Filter Status Soal:</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 max-w-2xl">
+              {/* Filter Guru Pengampu (Searchable Dropdown) */}
+              <SearchableSelect
+                placeholder="Semua Guru Pengampu"
+                searchPlaceholder="Ketik untuk mencari nama guru..."
+                icon={Users}
+                options={statusGuruFilterOptions}
+                value={filterStatusGuru}
+                onChange={setFilterStatusGuru}
+              />
+
+              {/* Filter Mata Pelajaran (Searchable Dropdown) */}
+              <SearchableSelect
+                placeholder="Semua Mata Pelajaran"
+                searchPlaceholder="Ketik untuk mencari mata pelajaran..."
+                icon={BookOpen}
+                options={statusMapelFilterOptions}
+                value={filterStatusMapel}
+                onChange={setFilterStatusMapel}
+              />
+            </div>
+
+            {/* Tombol Reset Filter */}
+            {(filterStatusGuru || filterStatusMapel) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterStatusGuru('');
+                  setFilterStatusMapel('');
+                }}
+                className="px-3.5 py-2.5 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-2xs shrink-0 cursor-pointer"
+              >
+                <RotateCcw size={13} />
+                <span>Reset Filter</span>
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Kolom 1: Sudah Ada Soal */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-bold text-emerald-800 bg-emerald-50/80 px-3.5 py-2 rounded-xl border border-emerald-100">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 size={14} className="text-emerald-600" />
+                  <span>Mata Pelajaran & Kelas Siap ({filteredStatusSudahAda.length})</span>
+                </span>
+                <span className="text-[11px] font-semibold text-emerald-700 bg-white px-2 py-0.5 rounded-lg border border-emerald-200">
+                  Siap Diujikan
+                </span>
+              </div>
+
+              {filteredStatusSudahAda.length === 0 ? (
+                <div className="text-center py-8 border border-dashed border-gray-200 rounded-2xl text-xs text-gray-400">
+                  {filterStatusGuru || filterStatusMapel
+                    ? 'Tidak ada paket soal siap yang cocok dengan filter pencarian.'
+                    : 'Belum ada paket soal yang selesai dibuat.'}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {filteredStatusSudahAda.map((item, idx) => (
+                    <div
+                      key={`sudah-${idx}`}
+                      className="p-3 bg-white hover:bg-emerald-50/30 rounded-2xl border border-emerald-100/90 shadow-2xs flex items-center justify-between gap-3 transition"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-emerald-100 text-emerald-800">
+                            Kelas {item.tingkat}
+                          </span>
+                          <span className="text-xs font-bold text-gray-800">{item.mapelNama}</span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className="font-semibold text-gray-700">{item.bankJudul || 'Paket CBT'}</span>
+                          {item.guruPengampuNama && (
+                            <span className="text-amber-700 font-medium">
+                              • Guru: {item.guruPengampuNama}
+                            </span>
+                          )}
+                          {item.pengawasNama && (
+                            <span className="text-indigo-600 font-semibold">• Pengawas: {item.pengawasNama}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0 flex items-center gap-2">
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          {item.totalSoal} Soal
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/cbt/bank-soal?bankId=${item.bankId || ''}&mapelId=${item.mapelId}&tingkat=${item.tingkat}&jadwalId=${item.jadwalId}&jenisUjian=${encodeURIComponent(item.jenisUjian || 'PSTS')}`)}
+                          className="p-1.5 text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
+                          title="Lihat Bank Soal"
+                        >
+                          <BookOpen size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Kolom 2: Belum Ada Soal */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between text-xs font-bold text-rose-800 bg-rose-50/80 px-3.5 py-2 rounded-xl border border-rose-100">
+                <span className="flex items-center gap-1.5">
+                  <AlertCircle size={14} className="text-rose-600" />
+                  <span>Belum Ada Soal ({filteredStatusBelumAda.length})</span>
+                </span>
+                <span className="text-[11px] font-semibold text-rose-700 bg-white px-2 py-0.5 rounded-lg border border-rose-200">
+                  Perlu Dibuat
+                </span>
+              </div>
+
+              {filteredStatusBelumAda.length === 0 ? (
+                <div className="text-center py-8 border border-dashed border-emerald-200 rounded-2xl text-xs text-emerald-700 font-semibold bg-emerald-50/30">
+                  {filterStatusGuru || filterStatusMapel
+                    ? 'Tidak ada mata pelajaran belum ada soal yang cocok dengan filter pencarian.'
+                    : '🎉 Luar biasa! Seluruh mata pelajaran dan kelas telah memiliki butir soal lengkap.'}
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {filteredStatusBelumAda.map((item, idx) => (
+                    <div
+                      key={`belum-${idx}`}
+                      className="p-3 bg-white hover:bg-rose-50/30 rounded-2xl border border-rose-200/80 shadow-2xs flex items-center justify-between gap-3 transition"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-rose-100 text-rose-800">
+                            Kelas {item.tingkat}
+                          </span>
+                          <span className="text-xs font-bold text-gray-800">{item.mapelNama}</span>
+                        </div>
+                        <div className="text-[11px] text-rose-600 font-medium mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span>{item.bankJudul ? `Paket ada (${item.totalSoal} butir soal)` : 'Paket bank soal belum dibuat'}</span>
+                          {item.guruPengampuNama && (
+                            <span className="text-amber-700 font-semibold">
+                              • Guru: {item.guruPengampuNama}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/cbt/bank-soal?bankId=${item.bankId || ''}&mapelId=${item.mapelId}&tingkat=${item.tingkat}&jadwalId=${item.jadwalId}&jenisUjian=${encodeURIComponent(item.jenisUjian || 'PSTS')}`)}
+                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-xs cursor-pointer"
+                        >
+                          <Plus size={12} />
+                          <span>Buat Soal</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Pengaturan Ujian CBT */}
       <CbtPengaturanUjianModal
         isOpen={isPengaturanModalOpen}
@@ -1237,43 +1806,6 @@ export default function CbtJadwalUjian() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              {/* Guru Pengampu (Otomatis terisi dari jadwal kelas/mapel) & Pengawas */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">
-                    Guru Pengampu <span className="text-[10px] text-primary font-normal">(Otomatis/Manual)</span>
-                  </label>
-                  <select
-                    value={formData.guru_id}
-                    onChange={(e) => setFormData({ ...formData, guru_id: e.target.value })}
-                    className="w-full text-xs border rounded-xl p-2.5 bg-white outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">-- Pilih Guru Pengampu --</option>
-                    {guruList.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.nama || g.nama_guru}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-700 mb-1">Pengawas Ujian (Proctor)</label>
-                  <select
-                    value={formData.pengawas_guru_id}
-                    onChange={(e) => setFormData({ ...formData, pengawas_guru_id: e.target.value })}
-                    className="w-full text-xs border rounded-xl p-2.5 bg-white outline-none focus:ring-2 focus:ring-primary"
-                  >
-                    <option value="">-- Pilih Pengawas --</option>
-                    {guruList.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.nama || g.nama_guru}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               {/* Tanggal & Hari Otomatis */}
@@ -1335,23 +1867,6 @@ export default function CbtJadwalUjian() {
                     required
                   />
                 </div>
-              </div>
-
-              {/* Ruang Ujian */}
-              <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Ruang Ujian</label>
-                <select
-                  value={formData.ruang_id}
-                  onChange={(e) => setFormData({ ...formData, ruang_id: e.target.value })}
-                  className="w-full text-xs border rounded-xl p-2.5 bg-white outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="">-- Pilih Ruang (Default: Lab CBT) --</option>
-                  {ruangList.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.nama_ruang}
-                    </option>
-                  ))}
-                </select>
               </div>
 
               <div className="flex justify-end gap-2 pt-4 border-t border-gray-100">

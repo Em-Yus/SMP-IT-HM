@@ -1,19 +1,27 @@
 import { Tabs } from 'expo-router';
-import { Home, CalendarDays, Wallet, User } from 'lucide-react-native';
+import { Home, CalendarDays, Wallet, User, LayoutGrid } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { View, Pressable } from 'react-native';
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
-  
+
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
-        tabBarActiveTintColor: '#85c226', // Hijau SMP IT HM
-        tabBarInactiveTintColor: '#9ca3af', // gray-400
+        headerShown: false,
+        tabBarActiveTintColor: '#1E257F',
+        tabBarInactiveTintColor: '#9ca3af',
         tabBarStyle: {
-          paddingBottom: insets.bottom + 5,
-          height: 60 + insets.bottom,
+          backgroundColor: '#ffffff',
+          borderTopColor: '#f3f4f6',
+          height: 65 + insets.bottom,
+          paddingBottom: 8 + insets.bottom,
+          paddingTop: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: '500',
         },
       }}
     >
@@ -21,28 +29,68 @@ export default function TabsLayout() {
         name="dashboard"
         options={{
           title: 'Beranda',
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
+          tabBarIcon: ({ color }) => <Home color={color} size={24} />,
         }}
       />
       <Tabs.Screen
         name="presensi"
         options={{
           title: 'Presensi',
-          tabBarIcon: ({ color, size }) => <CalendarDays color={color} size={size} />,
+          tabBarIcon: ({ color }) => <CalendarDays color={color} size={24} />,
+        }}
+      />
+      <Tabs.Screen
+        name="menu"
+        options={{
+          title: 'Menu',
+          tabBarButton: ({ children, style, onPress, onLongPress, accessibilityState }: any) => (
+            <Pressable
+              onPress={onPress}
+              onLongPress={onLongPress}
+              style={style}
+              android_ripple={{
+                radius: 36,
+                borderless: true,
+                color: 'rgba(133, 194, 38, 0.4)',
+              }}
+            >
+              {children}
+            </Pressable>
+          ),
+          tabBarIcon: () => (
+            <View style={{
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: '#85c226',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginTop: -40,
+              shadowColor: '#85c226',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.35,
+              shadowRadius: 6,
+              elevation: 8,
+              borderWidth: 4,
+              borderColor: '#ffffff',
+            }}>
+              <LayoutGrid size={28} color="#ffffff" />
+            </View>
+          ),
         }}
       />
       <Tabs.Screen
         name="tagihan"
         options={{
           title: 'Tagihan',
-          tabBarIcon: ({ color, size }) => <Wallet color={color} size={size} />,
+          tabBarIcon: ({ color }) => <Wallet color={color} size={24} />,
         }}
       />
       <Tabs.Screen
         name="profil"
         options={{
           title: 'Profil',
-          tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
+          tabBarIcon: ({ color }) => <User color={color} size={24} />,
         }}
       />
       <Tabs.Screen

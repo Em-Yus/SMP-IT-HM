@@ -7,20 +7,57 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+// Palette Resmi dari warna.json
+export const AppColors = {
+  // Brand Colors
+  primary: '#1E257F',
+  primaryContainer: '#ECEEFF',
+  secondary: '#84D43F',
+  secondaryContainer: '#F2FBEB',
+
+  // Neutral Colors
+  background: '#FFFFFF',
+  surface: '#F8F9FA',
+  surfaceVariant: '#F1F3F5',
+  border: '#E2E8F0',
+  divider: '#CBD5E1',
+
+  // Typography Colors
+  textPrimary: '#1A1818',
+  textSecondary: '#6C757D',
+  textTertiary: '#ADB5BD',
+  onPrimary: '#FFFFFF',
+  onSecondary: '#1A1818',
+
+  // Semantic Status Colors
+  success: '#2EC4B6',
+  error: '#E63946',
+  warning: '#FFB703',
+  info: '#00B4D8',
+} as const;
+
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#1A1818',
+    background: '#FFFFFF',
+    backgroundElement: '#F1F3F5',
+    backgroundSelected: '#ECEEFF',
+    textSecondary: '#6C757D',
+    primary: '#1E257F',
+    secondary: '#84D43F',
+    border: '#E2E8F0',
+    surface: '#F8F9FA',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#FFFFFF',
+    background: '#121212',
+    backgroundElement: '#1E1E1E',
+    backgroundSelected: '#2A2C87',
+    textSecondary: '#ADB5BD',
+    primary: '#7679FF',
+    secondary: '#84D43F',
+    border: '#2E3135',
+    surface: '#1A1818',
   },
 } as const;
 

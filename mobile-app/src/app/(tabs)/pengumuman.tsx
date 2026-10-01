@@ -4,6 +4,7 @@ import { supabase } from '../../../services/supabaseClient';
 import { Bell, ChevronLeft } from 'lucide-react-native';
 import { router } from 'expo-router';
 import * as Animatable from 'react-native-animatable';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function PengumumanScreen() {
   const [loading, setLoading] = useState(true);
@@ -11,6 +12,8 @@ export default function PengumumanScreen() {
 
   useEffect(() => {
     fetchPengumuman();
+    // Tandai semua pengumuman telah dibaca dengan menyimpan timestamp sekarang
+    AsyncStorage.setItem('pengumuman_last_read', new Date().toISOString());
   
     const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
       console.log('Global refresh triggered in ' + 'src\app\(tabs)\pengumuman.tsx');

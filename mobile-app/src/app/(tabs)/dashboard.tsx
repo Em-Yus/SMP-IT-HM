@@ -8,6 +8,7 @@ import * as Animatable from 'react-native-animatable';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getOperationalDayName } from '../../utils/dateUtils';
 import { scheduleSiswaReminders } from '../../services/scheduleNotificationHelper';
 
@@ -22,8 +23,11 @@ Notifications.setNotificationHandler({
 });
 
 export default function DashboardScreen() {
+  const insets = useSafeAreaInsets();
+  const topPadding = Math.max(insets.top, Platform.OS === 'android' ? 24 : 44);
   const [userData, setUserData] = useState<any>(null);
   const [isNotificationDenied, setIsNotificationDenied] = useState(false);
+  const [hasUnreadNotif, setHasUnreadNotif] = useState(false);
   const [activeCbtExam, setActiveCbtExam] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>({
     kehadiran: 0,
@@ -34,15 +38,40 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     fetchSessionAndData();
+    checkUnreadNotif();
     
     const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
       console.log('Global refresh triggered in Dashboard Siswa');
       if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
       fetchSessionAndData();
+      checkUnreadNotif();
     });
 
     return () => listener.remove();
   }, []);
+
+  const checkUnreadNotif = async () => {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const lastRead = await AsyncStorage.getItem('pengumuman_last_read');
+      const { data } = await supabase
+        .from('cms_pengumuman')
+        .select('created_at')
+        .eq('status', 'Aktif')
+        .in('target', ['Siswa', 'Semua'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) {
+        const latestCreatedAt = data[0].created_at;
+        // Tampilkan titik jika belum pernah buka, atau ada pengumuman baru setelah terakhir buka
+        setHasUnreadNotif(!lastRead || latestCreatedAt > lastRead);
+      } else {
+        setHasUnreadNotif(false);
+      }
+    } catch (e) {
+      setHasUnreadNotif(false);
+    }
+  };
 
   const registerForPushNotificationsAsync = async () => {
     let token;
@@ -149,15 +178,26 @@ export default function DashboardScreen() {
   const fetchDashboardData = async (user: any) => {
     try {
       // 1. Presensi
-      const { data: presensi } = await supabase
-        .from('presensi_siswa')
-        .select('status')
-        .eq('nipd', user.nipd);
-      
+      const targetNipd = user.nipd || user.nisn || user.nis;
       let kehadiranRate = 0;
-      if (presensi && presensi.length > 0) {
-        const hadir = presensi.filter(p => ['Hadir', 'Terlambat', 'H', 'T'].includes(p.status)).length;
-        kehadiranRate = Math.round((hadir / presensi.length) * 100);
+
+      if (targetNipd) {
+        let presensiQuery = supabase.from('presensi_siswa').select('status');
+        if (user.nipd && user.nisn && user.nipd !== user.nisn) {
+          presensiQuery = presensiQuery.or(`nipd.eq.${user.nipd},nipd.eq.${user.nisn}`);
+        } else {
+          presensiQuery = presensiQuery.eq('nipd', targetNipd);
+        }
+
+        const { data: presensi } = await presensiQuery;
+        
+        if (presensi && presensi.length > 0) {
+          const hadir = presensi.filter(p => {
+            const s = (p.status || '').toLowerCase();
+            return s.includes('hadir') || s.includes('terlambat') || s.includes('dispensasi') || s === 'h' || s === 't';
+          }).length;
+          kehadiranRate = Math.round((hadir / presensi.length) * 100);
+        }
       }
 
       // 2. Tagihan Aktif
@@ -405,192 +445,166 @@ export default function DashboardScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-      {/* Header */}
-      <Animatable.View animation="fadeInDown" duration={600} style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.greeting}>Halo, {userData?.nama || 'Siswa'}! 👋</Text>
-          <Text style={styles.subtitle}>Selamat datang di Portal Siswa SIAKAD.</Text>
-        </View>
-        <TouchableOpacity onPress={() => router.push('/pengumuman')}>
-          <Bell size={24} color="#6C757D" />
-        </TouchableOpacity>
-      </Animatable.View>
-
-      {/* Warning Banner for Push Notifications */}
-      {isNotificationDenied && (
-        <Animatable.View animation="zoomIn" duration={500} style={styles.warningBanner}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Megaphone size={20} color="#fff" />
-            <Text style={styles.warningTitle}>PENTING: Izin Notifikasi Ditolak!</Text>
+    <View style={styles.container}>
+      {/* Header Utama Beranda Siswa (Aman dari status bar) */}
+      <LinearGradient
+        colors={['#1E257F', '#2a349c']}
+        style={[styles.headerContainer, { paddingTop: topPadding + 10 }]}
+      >
+        <Animatable.View animation="fadeInDown" duration={600}>
+          <View style={styles.headerTopRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerGreetingText}>{getGreeting()},</Text>
+              <Text style={styles.headerNameText} numberOfLines={1}>
+                {userData?.nama || 'Siswa'}
+              </Text>
+            </View>
           </View>
-          <Text style={styles.warningText}>
-            Anda mungkin akan melewatkan pengumuman darurat, jadwal penting, atau informasi tagihan.
-          </Text>
-          <TouchableOpacity 
-            style={styles.warningBtn}
-            onPress={() => Linking.openSettings()}
-          >
-            <Text style={styles.warningBtnText}>Ketuk di sini untuk Mengaktifkan</Text>
-          </TouchableOpacity>
-        </Animatable.View>
-      )}
 
-      {/* Metrics Cards */}
-      <View style={styles.metricsContainer}>
-        {/* Kehadiran */}
-        <Animatable.View animation="bounceInRight" delay={100} duration={800}>
-          <LinearGradient colors={['#3740A1', '#1E257F']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
-            <CalendarDays size={80} color="#fff" style={styles.cardIconBg} />
-            <Text style={styles.cardTitle}>Kehadiran Anda</Text>
-            <Text style={styles.cardValue}>{metrics.kehadiran}%</Text>
-            <Text style={styles.cardSubtitle}>Sepanjang masa akademik</Text>
-          </LinearGradient>
-        </Animatable.View>
-
-        {/* Tagihan */}
-        <Animatable.View animation="bounceInRight" delay={200} duration={800}>
-          <LinearGradient colors={['#FFC736', '#FFB703']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
-            <Wallet size={80} color="#fff" style={styles.cardIconBg} />
-            <Text style={styles.cardTitle}>Tagihan Aktif</Text>
-            <Text style={styles.cardValue} numberOfLines={1}>{formatRupiah(metrics.tagihan)}</Text>
-            <Text style={styles.cardSubtitle}>Segera lakukan pembayaran</Text>
-          </LinearGradient>
-        </Animatable.View>
-
-        {/* Nilai */}
-        <Animatable.View animation="bounceInRight" delay={300} duration={800}>
-          <LinearGradient colors={['#9EEA5A', '#84D43F']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
-            <Award size={80} color="#fff" style={styles.cardIconBg} />
-            <Text style={styles.cardTitle}>Rata-rata Nilai</Text>
-            <Text style={styles.cardValue}>{metrics.rataRata}</Text>
-            <Text style={styles.cardSubtitle}>Dari semua mata pelajaran</Text>
-          </LinearGradient>
-        </Animatable.View>
-      </View>
-
-      {/* Quick Access Menu */}
-      <Animatable.View animation="fadeInUp" delay={350} duration={600} style={styles.quickAccessContainer}>
-        <Text style={styles.sectionTitle}>Akses Cepat</Text>
-        <View style={styles.quickAccessGrid}>
-          {/* Menu Ujian CBT (Selalu Muncul Permanen) */}
-          <TouchableOpacity 
-            style={[
-              styles.quickAccessBtn, 
-              activeCbtExam && { borderColor: '#ef4444', borderWidth: 1.5, backgroundColor: '#FFF5F5' }
-            ]} 
-            onPress={() => {
-              if (activeCbtExam) {
-                router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } });
-              } else {
-                router.push('/cbt-jadwal-siswa' as any);
-              }
-            }}
-          >
-            <View style={[styles.qaIconBox, { backgroundColor: activeCbtExam ? '#FEE2E2' : '#FEE2E2' }]}>
-              <Laptop size={24} color="#dc2626" />
+          <View style={styles.headerBadgeRow}>
+            <View style={styles.badgeGroup}>
+              <View style={styles.roleBadge}>
+                <Text style={styles.roleBadgeText}>
+                  {userData?.kelas ? `Kelas ${userData.kelas}` : 'Siswa Aktif'}
+                </Text>
+              </View>
+              {(userData?.nisn || userData?.nipd) ? (
+                <View style={styles.nisnBadge}>
+                  <Text style={styles.nisnBadgeText}>
+                    NISN: {userData?.nisn || userData?.nipd}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            <Text style={[styles.qaText, { color: '#dc2626', fontWeight: 'bold' }]}>
-              Ujian CBT
+            <TouchableOpacity
+              style={styles.bellButton}
+              onPress={() => router.push('/pengumuman')}
+              activeOpacity={0.8}
+            >
+              <Bell size={20} color="#FFFFFF" />
+              {hasUnreadNotif && <View style={styles.bellBadgeDot} />}
+            </TouchableOpacity>
+          </View>
+        </Animatable.View>
+      </LinearGradient>
+
+      {/* Konten Halaman Scrollable */}
+      <ScrollView
+        style={styles.mainScrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Warning Banner for Push Notifications */}
+        {isNotificationDenied && (
+          <Animatable.View animation="zoomIn" duration={500} style={styles.warningBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Megaphone size={20} color="#fff" />
+              <Text style={styles.warningTitle}>PENTING: Izin Notifikasi Ditolak!</Text>
+            </View>
+            <Text style={styles.warningText}>
+              Anda mungkin akan melewatkan pengumuman darurat, jadwal penting, atau informasi tagihan.
             </Text>
-          </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.warningBtn}
+              onPress={() => Linking.openSettings()}
+            >
+              <Text style={styles.warningBtnText}>Ketuk di sini untuk Mengaktifkan</Text>
+            </TouchableOpacity>
+          </Animatable.View>
+        )}
 
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/nilai')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#ECEEFF' }]}>
-              <Award size={24} color="#1E257F" />
-            </View>
-            <Text style={styles.qaText}>Nilai</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/jadwal')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#F2FBEB' }]}>
-              <CalendarDays size={24} color="#84D43F" />
-            </View>
-            <Text style={styles.qaText}>Jadwal</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/rapor')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#FCECEE' }]}>
-              <FileText size={24} color="#E63946" />
-            </View>
-            <Text style={styles.qaText}>Rapor</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/mengaji')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#E5F7FB' }]}>
-              <Book size={24} color="#00B4D8" />
-            </View>
-            <Text style={styles.qaText}>Mengaji</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/prestasi')}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#FFF8E5' }]}>
-              <Trophy size={24} color="#FFB703" />
-            </View>
-            <Text style={styles.qaText}>Prestasi</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.quickAccessBtn} onPress={() => router.push('/ekskul' as any)}>
-            <View style={[styles.qaIconBox, { backgroundColor: '#E9F9F8' }]}>
-              <Tent size={24} color="#2EC4B6" />
-            </View>
-            <Text style={styles.qaText}>Ekskul</Text>
-          </TouchableOpacity>
+        {/* Metrics Cards */}
+        <View style={styles.metricsContainer}>
+          {/* Kehadiran */}
+          <Animatable.View animation="bounceInRight" delay={100} duration={800}>
+            <LinearGradient colors={['#3740A1', '#1E257F']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+              <CalendarDays size={80} color="#fff" style={styles.cardIconBg} />
+              <Text style={styles.cardTitle}>Kehadiran Anda</Text>
+              <Text style={styles.cardValue}>{metrics.kehadiran}%</Text>
+              <Text style={styles.cardSubtitle}>Sepanjang masa akademik</Text>
+            </LinearGradient>
+          </Animatable.View>
+
+          {/* Tagihan */}
+          <Animatable.View animation="bounceInRight" delay={200} duration={800}>
+            <LinearGradient colors={['#7679ff', '#6266f8']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+              <Wallet size={80} color="#fff" style={styles.cardIconBg} />
+              <Text style={styles.cardTitle}>Tagihan Aktif</Text>
+              <Text style={styles.cardValue} numberOfLines={1}>{formatRupiah(metrics.tagihan)}</Text>
+              <Text style={styles.cardSubtitle}>Segera lakukan pembayaran</Text>
+            </LinearGradient>
+          </Animatable.View>
+
+          {/* Nilai */}
+          <Animatable.View animation="bounceInRight" delay={300} duration={800}>
+            <LinearGradient colors={['#84D43F', '#6EB32B']} style={styles.card} start={{x: 0, y: 0}} end={{x: 1, y: 1}}>
+              <Award size={80} color="#fff" style={styles.cardIconBg} />
+              <Text style={styles.cardTitle}>Rata-rata Nilai</Text>
+              <Text style={styles.cardValue}>{metrics.rataRata}</Text>
+              <Text style={styles.cardSubtitle}>Dari semua mata pelajaran</Text>
+            </LinearGradient>
+          </Animatable.View>
         </View>
 
-        {/* Banner Ujian Aktif */}
+        {/* Banner Ujian Aktif jika Sedang Berlangsung */}
         {activeCbtExam && (
-          <TouchableOpacity
-            style={styles.activeExamBanner}
-            onPress={() => router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } })}
-            activeOpacity={0.85}
-          >
-            <View style={styles.activeExamHeader}>
-              <View style={styles.pulseDot} />
-              <Text style={styles.activeExamBadgeText}>Ujian CBT Sedang Berlangsung</Text>
-            </View>
-            <Text style={styles.activeExamTitle}>
-              {activeCbtExam.data_mapel?.nama_mapel || activeCbtExam.nama_ujian}
-            </Text>
-            <Text style={styles.activeExamSub}>
-              Pukul {activeCbtExam.jam_mulai?.slice(0, 5)} - {activeCbtExam.jam_selesai?.slice(0, 5)} WIB • Klik untuk Memulai
-            </Text>
-          </TouchableOpacity>
+          <Animatable.View animation="fadeInUp" delay={350} duration={600} style={{ marginHorizontal: 20, marginBottom: 15 }}>
+            <TouchableOpacity
+              style={styles.activeExamBanner}
+              onPress={() => router.push({ pathname: '/cbt-ujian' as any, params: { jadwalId: activeCbtExam.id } })}
+              activeOpacity={0.85}
+            >
+              <View style={styles.activeExamHeader}>
+                <View style={styles.pulseDot} />
+                <Text style={styles.activeExamBadgeText}>Ujian CBT Sedang Berlangsung</Text>
+              </View>
+              <Text style={styles.activeExamTitle}>
+                {activeCbtExam.data_mapel?.nama_mapel || activeCbtExam.nama_ujian}
+              </Text>
+              <Text style={styles.activeExamSub}>
+                Pukul {activeCbtExam.jam_mulai?.slice(0, 5)} - {activeCbtExam.jam_selesai?.slice(0, 5)} WIB • Ketuk untuk Memulai
+              </Text>
+            </TouchableOpacity>
+          </Animatable.View>
         )}
-      </Animatable.View>
 
-      {/* Jadwal Hari Ini */}
-      <Animatable.View animation="fadeInUp" delay={400} duration={600} style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Clock size={18} color="#1E257F" />
-            <Text style={styles.sectionTitle}>Jadwal Kelas Hari Ini</Text>
-          </View>
-          <TouchableOpacity onPress={() => router.push('/jadwal')}>
-            <Text style={styles.linkText}>Lihat Semua</Text>
-          </TouchableOpacity>
-        </View>
-
-        {metrics.jadwal.length === 0 ? (
-          <View style={styles.emptyBox}>
-            <Text style={styles.emptyText}>Tidak ada jadwal pelajaran hari ini.</Text>
-          </View>
-        ) : (
-          metrics.jadwal.map((j: any, idx: number) => (
-            <View key={idx} style={[styles.jadwalItem, j.is_istirahat && styles.jadwalIstirahat]}>
-              <View style={[styles.jadwalTimeBox, j.is_istirahat ? styles.timeBoxIstirahat : styles.timeBoxNormal]}>
-                <Text style={[styles.jadwalTime, j.is_istirahat ? styles.timeIstirahat : styles.timeNormal]}>{j.waktu}</Text>
-              </View>
-              <View style={styles.jadwalInfo}>
-                <Text style={[styles.jadwalMapel, j.is_istirahat && styles.mapelIstirahat]}>{j.mapel}</Text>
-                {!j.is_istirahat && <Text style={styles.jadwalGuru}>{j.guru}</Text>}
-              </View>
-              <View style={styles.jadwalBadge}>
-                <Text style={styles.jadwalBadgeText}>Ke-{j.jam_ke}</Text>
-              </View>
+        {/* Jadwal Hari Ini */}
+        <Animatable.View animation="fadeInUp" delay={400} duration={600} style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Clock size={18} color="#1E257F" />
+              <Text style={styles.sectionTitle}>Jadwal Kelas Hari Ini</Text>
             </View>
-          ))
-        )}
-      </Animatable.View>
+            <TouchableOpacity onPress={() => router.push('/jadwal')}>
+              <Text style={styles.linkText}>Lihat Semua</Text>
+            </TouchableOpacity>
+          </View>
 
-      
-      <View style={{ height: 20 }} />
-    </ScrollView>
+          {metrics.jadwal.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>Tidak ada jadwal pelajaran hari ini.</Text>
+            </View>
+          ) : (
+            metrics.jadwal.map((j: any, idx: number) => (
+              <View key={idx} style={[styles.jadwalItem, j.is_istirahat && styles.jadwalIstirahat]}>
+                <View style={[styles.jadwalTimeBox, j.is_istirahat ? styles.timeBoxIstirahat : styles.timeBoxNormal]}>
+                  <Text style={[styles.jadwalTime, j.is_istirahat ? styles.timeIstirahat : styles.timeNormal]}>{j.waktu}</Text>
+                </View>
+                <View style={styles.jadwalInfo}>
+                  <Text style={[styles.jadwalMapel, j.is_istirahat && styles.mapelIstirahat]}>{j.mapel}</Text>
+                  {!j.is_istirahat && <Text style={styles.jadwalGuru}>{j.guru}</Text>}
+                </View>
+                <View style={styles.jadwalBadge}>
+                  <Text style={styles.jadwalBadgeText}>Ke-{j.jam_ke}</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </Animatable.View>
+
+        <View style={{ height: 20 }} />
+      </ScrollView>
+    </View>
   );
 }
 
@@ -599,29 +613,95 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F8F9FA',
   },
-  scrollContent: {
-    padding: 16,
+  headerContainer: {
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    elevation: 8,
+    shadowColor: '#1E257F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
-  header: {
+  headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
+    alignItems: 'center',
   },
-  greeting: {
+  headerGreetingText: {
+    color: '#D0D6F9',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  headerNameText: {
+    color: '#FFFFFF',
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#1A1818',
+    marginTop: 2,
   },
-  subtitle: {
-    fontSize: 14,
-    color: '#6C757D',
-    marginTop: 4,
+  bellButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
-  logoutBtn: {
-    padding: 8,
-    backgroundColor: '#FCECEE',
-    borderRadius: 8,
+  bellBadgeDot: {
+    position: 'absolute',
+    top: 7,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FFB703',
+  },
+  headerBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+  badgeGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  roleBadge: {
+    backgroundColor: 'rgba(132, 212, 63, 0.22)',
+    borderWidth: 1,
+    borderColor: 'rgba(132, 212, 63, 0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  roleBadgeText: {
+    color: '#84D43F',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  nisnBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.14)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  nisnBadgeText: {
+    color: '#E2E8F0',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  mainScrollView: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+  },
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 24,
   },
   metricsContainer: {
     flexDirection: 'column',

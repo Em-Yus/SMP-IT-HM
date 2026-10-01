@@ -3,8 +3,20 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Picker } from '@react-native-picker/picker';
 import { supabase } from '../../services/supabaseClient';
-import { DollarSign, ChevronLeft, Calendar, Printer, Search, Eye, FileText, X, CheckCircle, Clock, Award, ShieldCheck, User, Edit3, Save, Settings, Plus, Trash2, Sparkles } from 'lucide-react-native';
+import { 
+  DollarSign, ChevronLeft, Calendar, Printer, Search, Eye, FileText, 
+  X, CheckCircle, Clock, Award, ShieldCheck, User, Edit3, Save, 
+  Settings, Plus, Trash2, Sparkles, CheckSquare, Square, ChevronDown 
+} from 'lucide-react-native';
 import { router } from 'expo-router';
+import { 
+  terbilang, 
+  bulanNames, 
+  formatPeriodeBulan, 
+  generateSingleSlipHtml, 
+  generateCompletePrintPage, 
+  SingleSlipData 
+} from '../utils/slipHonorHelper';
 
 export default function RekapHonorGuruScreen() {
   const [guruList, setGuruList] = useState<any[]>([]);
@@ -12,16 +24,25 @@ export default function RekapHonorGuruScreen() {
   const [dataJabatanList, setDataJabatanList] = useState<any[]>([]);
   const [presensiGuruList, setPresensiGuruList] = useState<any[]>([]);
   const [presensiKbmList, setPresensiKbmList] = useState<any[]>([]);
-  const [apresiasiKinerjaMap, setApresiasiKinerjaMap] = useState<Record<number, { id?: number; nominal: number; keterangan: string }>>({});
+  const [kelasList, setKelasList] = useState<any[]>([]);
+  const [jadwalList, setJadwalList] = useState<any[]>([]);
+  const [mapelList, setMapelList] = useState<any[]>([]);
+  const [apresiasiKinerjaMap, setApresiasiKinerjaMap] = useState<Record<number, { id?: number; nominal: number; keteranganList: string[] }>>({});
   const [dataLembaga, setDataLembaga] = useState<any>(null);
 
   const [canEditApresiasi, setCanEditApresiasi] = useState(false);
   const [canViewAll, setCanViewAll] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedBulan, setSelectedBulan] = useState(new Date().getMonth() + 1);
-  const [selectedTahun, setSelectedTahun] = useState(new Date().getFullYear());
+  const [selectedBulanList, setSelectedBulanList] = useState<number[]>([new Date().getMonth() + 1]);
+  const [selectedTahun, setSelectedTahun] = useState<number>(new Date().getFullYear());
+  const [monthModalOpen, setMonthModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Guru Checklist Filter State
+  const [selectedGuruIdList, setSelectedGuruIdList] = useState<any[]>([]);
+  const [guruModalOpen, setGuruModalOpen] = useState(false);
+  const [guruSearchModal, setGuruSearchModal] = useState('');
 
   // Modal State Detail
   const [selectedGuruDetail, setSelectedGuruDetail] = useState<any>(null);
@@ -29,11 +50,12 @@ export default function RekapHonorGuruScreen() {
 
   // Modal State Apresiasi Kinerja
   const [apresiasiModalOpen, setApresiasiModalOpen] = useState(false);
-  const [apresiasiForm, setApresiasiForm] = useState<{ guru_id: number; guru_nama: string; nominal: string; keterangan: string }>({
+  const [apresiasiForm, setApresiasiForm] = useState<{ guru_id: number; guru_nama: string; nominal: string; keterangan: string; bulan: number }>({
     guru_id: 0,
     guru_nama: '',
     nominal: '',
-    keterangan: ''
+    keterangan: '',
+    bulan: new Date().getMonth() + 1
   });
   const [isSavingApresiasi, setIsSavingApresiasi] = useState(false);
   const [masterJenisApresiasi, setMasterJenisApresiasi] = useState<any[]>([]);
@@ -45,21 +67,14 @@ export default function RekapHonorGuruScreen() {
   });
   const [isSavingJenis, setIsSavingJenis] = useState(false);
 
-  const bulanNames = [
-    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
-  ];
-
   useEffect(() => {
     fetchData();
-  }, [selectedBulan, selectedTahun]);
+  }, [selectedBulanList, selectedTahun]);
 
   const fetchData = async () => {
     setLoading(true);
     try {
       // 0. Cek hak akses:
-      // Hanya Operator, Bendahara, dan Kepala Sekolah (serta Admin) yang dapat melihat SEMUA nama.
-      // Guru lainnya hanya melihat data dirinya sendiri berdasarkan akun login.
       const userStr = await AsyncStorage.getItem('user_guru');
       if (userStr) {
         try {
@@ -94,6 +109,12 @@ export default function RekapHonorGuruScreen() {
         .order('nama', { ascending: true });
       if (errGuru) throw errGuru;
       setGuruList(guru || []);
+      setSelectedGuruIdList((prev) => {
+        if (prev.length === 0 && guru && guru.length > 0) {
+          return guru.map((g: any) => g.id);
+        }
+        return prev;
+      });
 
       const { data: jabatan } = await supabase.from('data_jabatan').select('*');
       setDataJabatanList(jabatan || []);
@@ -105,40 +126,69 @@ export default function RekapHonorGuruScreen() {
       });
       setJabatanGuruMap(jMap);
 
-      const startMonthStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-01`;
-      const endMonthStr = `${selectedTahun}-${String(selectedBulan).padStart(2, '0')}-31`;
+      // Fetch Kelas
+      const { data: kelas } = await supabase.from('data_kelas').select('*');
+      setKelasList(kelas || []);
+
+      // Fetch Mapel & Jadwal
+      const { data: mapel } = await supabase.from('data_mapel').select('*');
+      setMapelList(mapel || []);
+
+      const { data: jadwal } = await supabase.from('jadwal_pelajaran').select('*').is('is_istirahat', false);
+      setJadwalList(jadwal || []);
+
+      const safeBulanList = selectedBulanList.length > 0 ? selectedBulanList : [new Date().getMonth() + 1];
+      const minMonth = Math.min(...safeBulanList);
+      const maxMonth = Math.max(...safeBulanList);
+      const startMonthStr = `${selectedTahun}-${String(minMonth).padStart(2, '0')}-01`;
+      const endMonthStr = `${selectedTahun}-${String(maxMonth).padStart(2, '0')}-31`;
 
       const { data: presensi } = await supabase
         .from('presensi_guru')
         .select('*')
         .gte('tanggal', startMonthStr)
         .lte('tanggal', endMonthStr);
-      setPresensiGuruList(presensi || []);
+
+      const filteredPresensi = (presensi || []).filter((p) => {
+        if (!p.tanggal) return false;
+        const m = parseInt(p.tanggal.substring(5, 7), 10);
+        return safeBulanList.includes(m);
+      });
+      setPresensiGuruList(filteredPresensi);
 
       const { data: kbm } = await supabase
         .from('presensi_kbm_guru')
         .select('*')
         .gte('tanggal', startMonthStr)
         .lte('tanggal', endMonthStr);
-      setPresensiKbmList(kbm || []);
+
+      const filteredKbm = (kbm || []).filter((k) => {
+        if (!k.tanggal) return false;
+        const m = parseInt(k.tanggal.substring(5, 7), 10);
+        return safeBulanList.includes(m);
+      });
+      setPresensiKbmList(filteredKbm);
 
       // Fetch Apresiasi Kinerja Guru
-      const { data: apresiasiList, error: errApresiasi } = await supabase
+      const { data: apresiasiList } = await supabase
         .from('apresiasi_kinerja_guru')
         .select('*')
-        .eq('bulan', selectedBulan)
+        .in('bulan', safeBulanList)
         .eq('tahun', selectedTahun);
-      if (errApresiasi && errApresiasi.code !== '42P01') {
-        console.error('Fetch apresiasi error:', errApresiasi);
-      }
 
-      const apMap: Record<number, { id?: number; nominal: number; keterangan: string }> = {};
+      const apMap: Record<number, { id?: number; nominal: number; keteranganList: string[] }> = {};
       (apresiasiList || []).forEach((item: any) => {
-        apMap[item.guru_id] = {
-          id: item.id,
-          nominal: Number(item.nominal) || 0,
-          keterangan: item.keterangan || ''
-        };
+        if (!apMap[item.guru_id]) {
+          apMap[item.guru_id] = {
+            id: item.id,
+            nominal: 0,
+            keteranganList: []
+          };
+        }
+        apMap[item.guru_id].nominal += Number(item.nominal) || 0;
+        if (item.keterangan && !apMap[item.guru_id].keteranganList.includes(item.keterangan)) {
+          apMap[item.guru_id].keteranganList.push(item.keterangan);
+        }
       });
       setApresiasiKinerjaMap(apMap);
       await fetchMasterJenis();
@@ -151,69 +201,199 @@ export default function RekapHonorGuruScreen() {
     }
   };
 
+  // Helper membuat keterangan jadwal mengajar (e.g. - Informatika : 12 JP/Pekan \n - Nahwu Kelas 7 : 2 JP/Pekan)
+  const getGuruMapelKeterangan = (guruId: number): string => {
+    const myJadwal = (jadwalList || []).filter((j) => String(j.guru_id) === String(guruId));
+    if (myJadwal.length === 0) return '';
+
+    const mapelNameMap: Record<number, string> = {};
+    (mapelList || []).forEach((m) => {
+      mapelNameMap[m.id] = m.nama_mapel;
+    });
+
+    const kelasNameMap: Record<number, string> = {};
+    (kelasList || []).forEach((k) => {
+      kelasNameMap[k.id] = k.nama_kelas;
+    });
+
+    const grouped: Record<string, { totalJp: number; classes: Set<string> }> = {};
+    myJadwal.forEach((j) => {
+      const mName = mapelNameMap[j.mapel_id] || 'Mata Pelajaran';
+      const kName = kelasNameMap[j.kelas_id] || '';
+      if (!grouped[mName]) {
+        grouped[mName] = { totalJp: 0, classes: new Set() };
+      }
+      grouped[mName].totalJp += 1;
+      if (kName) grouped[mName].classes.add(kName);
+    });
+
+    const lines = Object.entries(grouped).map(([mName, info]) => {
+      const classesArr = Array.from(info.classes);
+      if (classesArr.length === 1) {
+        const c = classesArr[0];
+        const kelasLabel = c.startsWith('VII') ? 'Kelas 7' : c.startsWith('VIII') ? 'Kelas 8' : c.startsWith('IX') ? 'Kelas 9' : c;
+        return `- ${mName} ${kelasLabel} : ${info.totalJp} JP/Pekan`;
+      }
+      return `- ${mName} : ${info.totalJp} JP/Pekan`;
+    });
+
+    return lines.join('\n');
+  };
+
+  // Helper perhitungan terperinci 6 baris komponen honor sesuai Gambar 1 & Gambar 2
   const calculateTeacherHonor = (guruId: number) => {
     const jg = jabatanGuruMap[guruId];
+    const numBulan = selectedBulanList.length || 1;
 
-    // Standar honor Guru Ngaji di data_jabatan
-    const djNgaji = dataJabatanList.find((dj) => dj.nama_jabatan?.toLowerCase().includes('ngaji'));
-    const defaultHonorNgaji = djNgaji && djNgaji.honor ? Number(djNgaji.honor) : 200000;
-
-    let tunjanganJabatan = 0;
-    let honorGuruNgaji = 0;
-    let isGuruNgaji = false;
-    let namaJabatanUtama = '-';
+    // 1. Tunjangan Jabatan (Operator, Tata Usaha, Kepala Sekolah, Panitia, dsb)
+    let tunjanganJabatanPerBulan = 0;
+    const jabatanNames: string[] = [];
 
     if (jg) {
-      namaJabatanUtama = jg.jabatan_utama || '-';
       const rawRoles = [jg.jabatan_utama, jg.jabatan_lain_1, jg.jabatan_lain_2, jg.jabatan_lain_3].filter(Boolean);
-      const allRoles = [...new Set(rawRoles.map((r) => (r ? String(r).trim() : '')).filter(Boolean))];
+      const allRoles = [...new Set(rawRoles.map((r) => String(r).trim()).filter(Boolean))];
 
       allRoles.forEach((roleName) => {
         const lower = roleName.toLowerCase();
+        if (lower.includes('ngaji') || lower.includes('wali kelas') || lower.includes('guru mata pelajaran')) return;
         const found = dataJabatanList.find((dj) => dj.nama_jabatan?.toLowerCase() === lower);
         const honorVal = found && found.honor ? Number(found.honor) : 0;
-
-        if (lower.includes('ngaji')) {
-          isGuruNgaji = true;
-          honorGuruNgaji = honorVal > 0 ? honorVal : defaultHonorNgaji;
-        } else {
-          tunjanganJabatan += honorVal;
+        if (honorVal > 0) {
+          tunjanganJabatanPerBulan += honorVal;
+          jabatanNames.push(found.nama_jabatan || roleName);
         }
       });
     }
 
+    const tunjanganJabatanTotal = tunjanganJabatanPerBulan * numBulan;
+    const rowJabatan = {
+      vol: tunjanganJabatanPerBulan > 0 ? numBulan : '',
+      satuan: tunjanganJabatanPerBulan > 0 ? 'Bulan' : '',
+      nominal: tunjanganJabatanPerBulan > 0 ? tunjanganJabatanPerBulan : '',
+      jumlah: tunjanganJabatanTotal > 0 ? tunjanganJabatanTotal : '',
+      keterangan: jabatanNames.join(', ')
+    };
+
+    // 2. Guru Mapel (KBM)
+    const myKbm = presensiKbmList.filter((k) => String(k.guru_id) === String(guruId));
+    const totalJp = myKbm.reduce((sum, k) => sum + (Number(k.jumlah_jp) || 1), 0);
+    const totalHonorKbm = totalJp * 6500;
+    const totalJpInval = myKbm.filter((k) => k.is_pengganti).reduce((sum, k) => sum + (Number(k.jumlah_jp) || 1), 0);
+    const mapelKeterangan = getGuruMapelKeterangan(guruId);
+
+    const rowMapel = {
+      vol: totalJp > 0 ? totalJp : '',
+      satuan: totalJp > 0 ? 'Jam Pelajaran' : '',
+      nominal: totalJp > 0 ? 6500 : '',
+      jumlah: totalHonorKbm > 0 ? totalHonorKbm : '',
+      keterangan: mapelKeterangan || (totalJp > 0 ? `Total KBM ${totalJp} JP` : '')
+    };
+
+    // 3. Guru Ngaji (Standar Rp 200.000 / bln, Khusus Rp 100.000 / bln -> Vol 1/2)
+    let isGuruNgaji = false;
+    let isNgajiKhusus = false;
+    let honorNgajiPerBulan = 0;
+
+    if (jg) {
+      const rawRoles = [jg.jabatan_utama, jg.jabatan_lain_1, jg.jabatan_lain_2, jg.jabatan_lain_3].filter(Boolean);
+      rawRoles.forEach((r) => {
+        const lower = String(r).toLowerCase();
+        if (lower.includes('ngaji khusus')) {
+          isNgajiKhusus = true;
+          isGuruNgaji = true;
+          honorNgajiPerBulan = 100000;
+        } else if (lower.includes('ngaji')) {
+          isGuruNgaji = true;
+          if (!isNgajiKhusus) honorNgajiPerBulan = 200000;
+        }
+      });
+    }
+
+    let volNgaji: string | number = '';
+    let totalHonorNgaji = 0;
+    if (isGuruNgaji) {
+      if (isNgajiKhusus) {
+        volNgaji = numBulan === 1 ? '1/2' : (numBulan % 2 === 0 ? `${numBulan / 2}` : `${numBulan}/2`);
+        totalHonorNgaji = numBulan * 100000;
+      } else {
+        volNgaji = numBulan;
+        totalHonorNgaji = numBulan * 200000;
+      }
+    }
+
+    const rowNgaji = {
+      vol: volNgaji,
+      satuan: isGuruNgaji ? 'Bulan' : '',
+      nominal: isGuruNgaji ? honorNgajiPerBulan : '',
+      jumlah: totalHonorNgaji > 0 ? totalHonorNgaji : '',
+      keterangan: isGuruNgaji ? "Ngaji Al-Qur'an" : ''
+    };
+
+    // 4. Kehadiran
     const myPresensi = presensiGuruList.filter((p) => String(p.guru_id) === String(guruId));
     const totalHariHadir = myPresensi.filter((p) => p.status === 'Hadir').length;
     const totalHonorKehadiran = myPresensi.reduce((sum, p) => sum + (Number(p.honor_kehadiran) || 0), 0);
 
-    const myKbm = presensiKbmList.filter((k) => String(k.guru_id) === String(guruId));
-    const totalJp = myKbm.reduce((sum, k) => sum + (Number(k.jumlah_jp) || 1), 0);
-    // Arahan Kepala Sekolah: KBM mengacu pada jadwal, walaupun telat atau keluar lebih dulu tidak ada pemotongan honor sama sekali (Rp 6.500/JP penuh)
-    const totalHonorKbm = totalJp * 6500;
-    const totalJpInval = myKbm.filter((k) => k.is_pengganti).reduce((sum, k) => sum + (Number(k.jumlah_jp) || 1), 0);
+    const rowKehadiran = {
+      vol: totalHariHadir > 0 ? totalHariHadir : '',
+      satuan: totalHariHadir > 0 ? 'Hari' : '',
+      nominal: totalHariHadir > 0 ? 5000 : '',
+      jumlah: totalHonorKehadiran > 0 ? totalHonorKehadiran : '',
+      keterangan: totalHariHadir > 0 ? 'Kehadiran Penuh Tanpa Potongan' : ''
+    };
 
-    const apItem = apresiasiKinerjaMap[guruId] || { nominal: 0, keterangan: '' };
+    // 5. Wali Kelas (Rp 75.000 / kelas / bulan)
+    const myKelasWali = (kelasList || []).filter((k) => String(k.wali_kelas_id) === String(guruId));
+    const isWaliKelas = myKelasWali.length > 0;
+    const jumlahKelasWali = myKelasWali.length;
+    const totalHonorWali = isWaliKelas ? (75000 * jumlahKelasWali * numBulan) : 0;
+
+    const rowWali = {
+      vol: isWaliKelas ? (numBulan === 1 ? jumlahKelasWali : numBulan * jumlahKelasWali) : '',
+      satuan: isWaliKelas ? 'Bulan' : '',
+      nominal: isWaliKelas ? 75000 : '',
+      jumlah: totalHonorWali > 0 ? totalHonorWali : '',
+      keterangan: isWaliKelas ? `${jumlahKelasWali} Kelas` : ''
+    };
+
+    // 6. Apresiasi Kinerja
+    const apItem = apresiasiKinerjaMap[guruId] || { nominal: 0, keteranganList: [] };
     const apresiasiKinerja = Number(apItem.nominal) || 0;
-    const keteranganApresiasi = apItem.keterangan || '';
+    const keteranganApresiasi = (apItem.keteranganList || []).join(', ');
 
-    // Total Bersih: Kehadiran + KBM + Tunjangan Jabatan Lain + Honor Guru Ngaji (tanpa potongan walaupun tidak hadir) + Apresiasi Kinerja
-    const totalHonorBersih = totalHonorKehadiran + totalHonorKbm + tunjanganJabatan + honorGuruNgaji + apresiasiKinerja;
+    const rowApresiasi = {
+      vol: apresiasiKinerja > 0 ? 1 : '',
+      satuan: apresiasiKinerja > 0 ? 'Kegiatan' : '',
+      nominal: apresiasiKinerja > 0 ? apresiasiKinerja : '',
+      jumlah: apresiasiKinerja > 0 ? apresiasiKinerja : '',
+      keterangan: keteranganApresiasi
+    };
+
+    const totalHonorBersih = tunjanganJabatanTotal + totalHonorKbm + totalHonorNgaji + totalHonorKehadiran + totalHonorWali + apresiasiKinerja;
+    const namaJabatanUtama = jg ? (jg.jabatan_utama || '-') : '-';
 
     return {
       namaJabatanUtama,
       isGuruNgaji,
-      honorGuruNgaji,
+      honorGuruNgaji: totalHonorNgaji,
       totalHariHadir,
       totalHonorKehadiran,
       totalJp,
       totalJpInval,
       totalHonorKbm,
-      tunjanganJabatan,
+      tunjanganJabatan: tunjanganJabatanTotal,
       apresiasiKinerja,
       keteranganApresiasi,
       totalHonorBersih,
       myPresensi,
-      myKbm
+      myKbm,
+      // 6-row slip components
+      rowJabatan,
+      rowMapel,
+      rowNgaji,
+      rowKehadiran,
+      rowWali,
+      rowApresiasi
     };
   };
 
@@ -224,15 +404,86 @@ export default function RekapHonorGuruScreen() {
       ? guruList.filter((g) => String(g.id) === String(currentUser.id))
       : [];
 
-  const filteredGuru = availableGuru.filter((g) =>
-    g.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    g.nip?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredGuru = availableGuru.filter((g) => {
+    const matchesSearch =
+      g.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      g.nip?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesGuru = selectedGuruIdList.length > 0 ? selectedGuruIdList.includes(g.id) : true;
+    return matchesSearch && matchesGuru;
+  });
 
   const totalHonorSeluruh = filteredGuru.reduce((sum, g) => {
     const calc = calculateTeacherHonor(g.id);
     return sum + calc.totalHonorBersih;
   }, 0);
+
+  // Guru checklist filter actions
+  const toggleGuru = (guruId: any) => {
+    if (selectedGuruIdList.includes(guruId)) {
+      if (selectedGuruIdList.length === 1) {
+        Alert.alert('Perhatian', 'Minimal satu guru harus dipilih.');
+        return;
+      }
+      setSelectedGuruIdList((prev) => prev.filter((id) => id !== guruId));
+    } else {
+      setSelectedGuruIdList((prev) => [...prev, guruId]);
+    }
+  };
+
+  const handleSelectAllGuru = () => {
+    setSelectedGuruIdList(availableGuru.map((g) => g.id));
+  };
+
+  const handleClearAllGuru = () => {
+    if (availableGuru.length > 0) {
+      setSelectedGuruIdList([availableGuru[0].id]);
+      Alert.alert('Reset Pilihan', 'Disisakan 1 guru terpilih.');
+    }
+  };
+
+  const getGuruFilterSummary = (): string => {
+    if (!availableGuru || availableGuru.length === 0) return '0 Guru';
+    if (selectedGuruIdList.length === availableGuru.length) {
+      return `Semua (${availableGuru.length})`;
+    }
+    if (selectedGuruIdList.length === 1) {
+      const found = availableGuru.find((g) => g.id === selectedGuruIdList[0]);
+      return found ? found.nama.split(' ')[0] : '1 Guru';
+    }
+    return `${selectedGuruIdList.length} Guru`;
+  };
+
+  // Month checklist filter actions
+  const toggleBulan = (bulanNum: number) => {
+    if (selectedBulanList.includes(bulanNum)) {
+      if (selectedBulanList.length === 1) {
+        Alert.alert('Perhatian', 'Minimal satu bulan harus dipilih.');
+        return;
+      }
+      setSelectedBulanList((prev) => prev.filter((b) => b !== bulanNum).sort((a, b) => a - b));
+    } else {
+      setSelectedBulanList((prev) => [...prev, bulanNum].sort((a, b) => a - b));
+    }
+  };
+
+  const handleSelectAllBulan = () => {
+    setSelectedBulanList([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  };
+
+  const handleSelectCurrentBulan = () => {
+    setSelectedBulanList([new Date().getMonth() + 1]);
+  };
+
+  const getBulanFilterSummary = (): string => {
+    if (selectedBulanList.length === 1) {
+      return bulanNames[selectedBulanList[0] - 1];
+    }
+    if (selectedBulanList.length === 12) {
+      return 'Semua Bulan (12)';
+    }
+    const sorted = [...selectedBulanList].sort((a, b) => a - b);
+    return `${bulanNames[sorted[0] - 1].substring(0, 3)} - ${bulanNames[sorted[sorted.length - 1] - 1].substring(0, 3)} (${selectedBulanList.length} Bln)`;
+  };
 
   const openDetail = (guru: any) => {
     const calc = calculateTeacherHonor(guru.id);
@@ -255,8 +506,8 @@ export default function RekapHonorGuruScreen() {
   };
 
   const openEditApresiasi = (guru: any) => {
-    const apItem = apresiasiKinerjaMap[guru.id] || { nominal: 0, keterangan: '' };
-    let initKet = apItem.keterangan || '';
+    const apItem = apresiasiKinerjaMap[guru.id] || { nominal: 0, keteranganList: [] };
+    let initKet = (apItem.keteranganList && apItem.keteranganList[0]) || '';
     let initNom = apItem.nominal ? String(apItem.nominal) : '';
 
     if (!initKet && masterJenisApresiasi.length > 0) {
@@ -270,7 +521,8 @@ export default function RekapHonorGuruScreen() {
       guru_id: guru.id,
       guru_nama: guru.nama,
       nominal: initNom,
-      keterangan: initKet
+      keterangan: initKet,
+      bulan: selectedBulanList[0] || (new Date().getMonth() + 1)
     });
     setApresiasiModalOpen(true);
   };
@@ -357,11 +609,13 @@ export default function RekapHonorGuruScreen() {
     setIsSavingApresiasi(true);
     try {
       const numNominal = Number(apresiasiForm.nominal.toString().replace(/[^0-9]/g, '')) || 0;
+      const targetBulan = Number(apresiasiForm.bulan) || selectedBulanList[0] || (new Date().getMonth() + 1);
+
       const { error } = await supabase
         .from('apresiasi_kinerja_guru')
         .upsert({
           guru_id: apresiasiForm.guru_id,
-          bulan: selectedBulan,
+          bulan: targetBulan,
           tahun: selectedTahun,
           nominal: numNominal,
           keterangan: apresiasiForm.keterangan,
@@ -370,16 +624,9 @@ export default function RekapHonorGuruScreen() {
 
       if (error) throw error;
 
-      setApresiasiKinerjaMap((prev) => ({
-        ...prev,
-        [apresiasiForm.guru_id]: {
-          nominal: numNominal,
-          keterangan: apresiasiForm.keterangan
-        }
-      }));
-
       setApresiasiModalOpen(false);
       Alert.alert('Berhasil', `Apresiasi kinerja untuk ${apresiasiForm.guru_nama} berhasil disimpan.`);
+      fetchData();
     } catch (err: any) {
       console.error('Save apresiasi error:', err);
       Alert.alert('Gagal', 'Gagal menyimpan apresiasi kinerja.');
@@ -388,133 +635,45 @@ export default function RekapHonorGuruScreen() {
     }
   };
 
+  // Print single slip (Format Gambar 1)
   const printSingleSlip = async (guru: any) => {
     let Print: any;
     try {
       Print = require('expo-print');
     } catch (e) {
-      Alert.alert('Perhatian', 'Fitur cetak membutuhkan build aplikasi terbaru.');
+      Alert.alert('Perhatian', 'Fitur cetak membutuhkan modul expo-print.');
       return;
     }
 
     const calc = calculateTeacherHonor(guru.id);
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <style>
-            @page { size: A5 portrait; margin: 10mm; }
-            body { font-family: sans-serif; padding: 10px; color: #111827; }
-            .header { text-align: center; border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 15px; }
-            .title { font-size: 14px; font-weight: 900; text-transform: uppercase; }
-            .sub { font-size: 10px; color: #6b7280; }
-            .badge { display: inline-block; background: #111827; color: white; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: bold; margin-top: 6px; }
-            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px; background: #f9fafb; padding: 8px; border-radius: 8px; }
-            .info-table td { padding: 4px 6px; }
-            .rincian-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 11px; border-top: 1px dashed #9ca3af; border-bottom: 1px dashed #9ca3af; }
-            .rincian-table td { padding: 8px 4px; }
-            .total-box { background: #ecfdf5; border: 1px solid #a7f3d0; padding: 10px; border-radius: 8px; font-size: 12px; font-weight: bold; color: #065f46; display: flex; justify-content: space-between; }
-            .signature { margin-top: 30px; width: 100%; font-size: 10px; text-align: center; }
-          </style>
-        </head>
-        <body>
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 12px;">
-            <tr>
-              <td width="55" align="center" valign="middle">
-                ${dataLembaga?.logo_url ? `<img src="${dataLembaga.logo_url}" style="width: 50px; height: 50px; object-fit: contain;" />` : ''}
-              </td>
-              <td align="center" valign="middle" style="padding: 0 8px;">
-                <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #374151;">${(dataLembaga?.nama_yayasan || 'YAYASAN HIDAYATUL MUBTADI-IEN').toUpperCase()}</div>
-                <div style="font-size: 14px; font-weight: 900; text-transform: uppercase; color: #111827; margin: 2px 0;">${(dataLembaga?.nama_lembaga || 'SMP IT HIDAYATUL MUBTADI-IEN').toUpperCase()}</div>
-                <div style="font-size: 9px; color: #6b7280;">${dataLembaga?.alamat || 'Sukaseneng - Compreng - Subang'}</div>
-              </td>
-              <td width="55" align="center" valign="middle">
-                ${dataLembaga?.logo_url ? `<div style="width: 50px;"></div>` : ''}
-              </td>
-            </tr>
-          </table>
-          <div style="text-align: center; margin-bottom: 12px;">
-            <div class="badge">SLIP HONORARIUM GURU</div>
-          </div>
-
-          <table class="info-table">
-            <tr>
-              <td width="30%"><strong>Nama Guru:</strong></td>
-              <td>${guru.nama}</td>
-              <td width="20%"><strong>Periode:</strong></td>
-              <td>${bulanNames[selectedBulan - 1]} ${selectedTahun}</td>
-            </tr>
-            <tr>
-              <td><strong>Jabatan:</strong></td>
-              <td>${calc.namaJabatanUtama} ${calc.isGuruNgaji ? '(Guru Ngaji)' : ''}</td>
-              <td><strong>NIP / NIK:</strong></td>
-              <td>${guru.nip || guru.nik || '-'}</td>
-            </tr>
-          </table>
-
-          <table class="rincian-table">
-            <tr>
-              <td>1. Honor Kehadiran (${calc.totalHariHadir} hari)</td>
-              <td align="right"><strong>Rp ${calc.totalHonorKehadiran.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            <tr>
-              <td>2. Honor Mengajar KBM (${calc.totalJp} JP ${calc.totalJpInval > 0 ? `[Inval: ${calc.totalJpInval} JP]` : ''})</td>
-              <td align="right"><strong>Rp ${calc.totalHonorKbm.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            <tr>
-              <td>3. Tunjangan Jabatan</td>
-              <td align="right"><strong>Rp ${calc.tunjanganJabatan.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ${calc.isGuruNgaji ? `
-            <tr>
-              <td>4. Honor Guru Ngaji <span style="font-size: 9px; color: #059669;">(Tetap, tanpa potongan)</span></td>
-              <td align="right"><strong>Rp ${calc.honorGuruNgaji.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ` : ''}
-            ${calc.apresiasiKinerja > 0 ? `
-            <tr>
-              <td>${calc.isGuruNgaji ? '5' : '4'}. Apresiasi Kinerja ${calc.keteranganApresiasi ? `<em>(${calc.keteranganApresiasi})</em>` : ''}</td>
-              <td align="right"><strong>Rp ${calc.apresiasiKinerja.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ` : ''}
-          </table>
-
-          <div class="total-box">
-            <span>TOTAL HONOR DITERIMA:</span>
-            <span>Rp ${calc.totalHonorBersih.toLocaleString('id-ID')}</span>
-          </div>
-
-          <table class="signature">
-            <tr>
-              <td width="50%">
-                Penerima,<br/><br/><br/><br/>
-                <u><b>${guru.nama}</b></u>
-              </td>
-              <td width="50%">
-                Subang, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br/>
-                Bendahara Sekolah,<br/><br/><br/><br/>
-                <u><b>____________________</b></u>
-              </td>
-            </tr>
-          </table>
-        </body>
-      </html>
-    `;
+    const slipData: SingleSlipData = {
+      guruNama: guru.nama,
+      rowJabatan: calc.rowJabatan,
+      rowMapel: calc.rowMapel,
+      rowNgaji: calc.rowNgaji,
+      rowKehadiran: calc.rowKehadiran,
+      rowWali: calc.rowWali,
+      rowApresiasi: calc.rowApresiasi,
+      totalHonor: calc.totalHonorBersih
+    };
+    const periodeText = formatPeriodeBulan(selectedBulanList, selectedTahun);
+    const singleHtml = generateSingleSlipHtml(slipData, dataLembaga, periodeText);
+    const fullHtml = generateCompletePrintPage(singleHtml);
 
     try {
-      await Print.printAsync({ html });
+      await Print.printAsync({ html: fullHtml });
     } catch (e) {
       Alert.alert('Gagal', 'Terjadi kesalahan saat mencetak slip.');
     }
   };
 
+  // Print all slips (Format Gambar 2: Menyambung dalam 1 lembar HVS/A4, nomor diulang dari 1 tiap slip)
   const printAllSlips = async () => {
     let Print: any;
     try {
       Print = require('expo-print');
     } catch (e) {
-      Alert.alert('Perhatian', 'Fitur cetak membutuhkan build aplikasi terbaru.');
+      Alert.alert('Perhatian', 'Fitur cetak membutuhkan modul expo-print.');
       return;
     }
 
@@ -523,122 +682,26 @@ export default function RekapHonorGuruScreen() {
       return;
     }
 
-    const slipsHtml = filteredGuru.map((guru) => {
+    const periodeText = formatPeriodeBulan(selectedBulanList, selectedTahun);
+    const allSlipsHtml = filteredGuru.map((guru) => {
       const calc = calculateTeacherHonor(guru.id);
-      return `
-        <div class="slip-card">
-          <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 12px;">
-            <tr>
-              <td width="55" align="center" valign="middle">
-                ${dataLembaga?.logo_url ? `<img src="${dataLembaga.logo_url}" style="width: 50px; height: 50px; object-fit: contain;" />` : ''}
-              </td>
-              <td align="center" valign="middle" style="padding: 0 8px;">
-                <div style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: #374151;">${(dataLembaga?.nama_yayasan || 'YAYASAN HIDAYATUL MUBTADI-IEN').toUpperCase()}</div>
-                <div style="font-size: 14px; font-weight: 900; text-transform: uppercase; color: #111827; margin: 2px 0;">${(dataLembaga?.nama_lembaga || 'SMP IT HIDAYATUL MUBTADI-IEN').toUpperCase()}</div>
-                <div style="font-size: 9px; color: #6b7280;">${dataLembaga?.alamat || 'Sukaseneng - Compreng - Subang'}</div>
-              </td>
-              <td width="55" align="center" valign="middle">
-                ${dataLembaga?.logo_url ? `<div style="width: 50px;"></div>` : ''}
-              </td>
-            </tr>
-          </table>
-          <div style="text-align: center; margin-bottom: 12px;">
-            <div class="badge">SLIP HONORARIUM GURU</div>
-          </div>
+      const slipData: SingleSlipData = {
+        guruNama: guru.nama,
+        rowJabatan: calc.rowJabatan,
+        rowMapel: calc.rowMapel,
+        rowNgaji: calc.rowNgaji,
+        rowKehadiran: calc.rowKehadiran,
+        rowWali: calc.rowWali,
+        rowApresiasi: calc.rowApresiasi,
+        totalHonor: calc.totalHonorBersih
+      };
+      return generateSingleSlipHtml(slipData, dataLembaga, periodeText);
+    }).join('\n');
 
-          <table class="info-table">
-            <tr>
-              <td width="30%"><strong>Nama Guru:</strong></td>
-              <td>${guru.nama}</td>
-              <td width="20%"><strong>Periode:</strong></td>
-              <td>${bulanNames[selectedBulan - 1]} ${selectedTahun}</td>
-            </tr>
-            <tr>
-              <td><strong>Jabatan:</strong></td>
-              <td>${calc.namaJabatanUtama} ${calc.isGuruNgaji ? '(Guru Ngaji)' : ''}</td>
-              <td><strong>NIP / NIK:</strong></td>
-              <td>${guru.nip || guru.nik || '-'}</td>
-            </tr>
-          </table>
-
-          <table class="rincian-table">
-            <tr>
-              <td>1. Honor Kehadiran (${calc.totalHariHadir} hari)</td>
-              <td align="right"><strong>Rp ${calc.totalHonorKehadiran.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            <tr>
-              <td>2. Honor Mengajar KBM (${calc.totalJp} JP ${calc.totalJpInval > 0 ? `[Inval: ${calc.totalJpInval} JP]` : ''})</td>
-              <td align="right"><strong>Rp ${calc.totalHonorKbm.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            <tr>
-              <td>3. Tunjangan Jabatan</td>
-              <td align="right"><strong>Rp ${calc.tunjanganJabatan.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ${calc.isGuruNgaji ? `
-            <tr>
-              <td>4. Honor Guru Ngaji <span style="font-size: 9px; color: #059669;">(Tetap, tanpa potongan)</span></td>
-              <td align="right"><strong>Rp ${calc.honorGuruNgaji.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ` : ''}
-            ${calc.apresiasiKinerja > 0 ? `
-            <tr>
-              <td>${calc.isGuruNgaji ? '5' : '4'}. Apresiasi Kinerja ${calc.keteranganApresiasi ? `<em>(${calc.keteranganApresiasi})</em>` : ''}</td>
-              <td align="right"><strong>Rp ${calc.apresiasiKinerja.toLocaleString('id-ID')}</strong></td>
-            </tr>
-            ` : ''}
-          </table>
-
-          <div class="total-box">
-            <span>TOTAL HONOR DITERIMA:</span>
-            <span>Rp ${calc.totalHonorBersih.toLocaleString('id-ID')}</span>
-          </div>
-
-          <table class="signature">
-            <tr>
-              <td width="50%">
-                Penerima,<br/><br/><br/><br/>
-                <u><b>${guru.nama}</b></u>
-              </td>
-              <td width="50%">
-                Subang, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}<br/>
-                Bendahara Sekolah,<br/><br/><br/><br/>
-                <u><b>____________________</b></u>
-              </td>
-            </tr>
-          </table>
-        </div>
-      `;
-    }).join('');
-
-    const html = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-          <style>
-            @page { size: A5 portrait; margin: 10mm; }
-            body { font-family: sans-serif; padding: 0; margin: 0; color: #111827; }
-            .slip-card { padding: 10px; page-break-after: always; break-after: page; min-height: 90vh; }
-            .header { text-align: center; border-bottom: 2px solid #111827; padding-bottom: 8px; margin-bottom: 15px; }
-            .title { font-size: 14px; font-weight: 900; text-transform: uppercase; }
-            .sub { font-size: 10px; color: #6b7280; }
-            .badge { display: inline-block; background: #111827; color: white; padding: 4px 10px; border-radius: 20px; font-size: 10px; font-weight: bold; margin-top: 6px; }
-            .info-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 11px; background: #f9fafb; padding: 8px; border-radius: 8px; }
-            .info-table td { padding: 4px 6px; }
-            .rincian-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 11px; border-top: 1px dashed #9ca3af; border-bottom: 1px dashed #9ca3af; }
-            .rincian-table td { padding: 8px 4px; }
-            .total-box { background: #ecfdf5; border: 1px solid #a7f3d0; padding: 10px; border-radius: 8px; font-size: 12px; font-weight: bold; color: #065f46; display: flex; justify-content: space-between; }
-            .signature { margin-top: 30px; width: 100%; font-size: 10px; text-align: center; }
-          </style>
-        </head>
-        <body>
-          ${slipsHtml}
-        </body>
-      </html>
-    `;
+    const fullHtml = generateCompletePrintPage(allSlipsHtml);
 
     try {
-      await Print.printAsync({ html });
+      await Print.printAsync({ html: fullHtml });
     } catch (e) {
       Alert.alert('Gagal', 'Terjadi kesalahan saat mencetak semua slip.');
     }
@@ -655,25 +718,33 @@ export default function RekapHonorGuruScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Month & Year Filter Dropdown */}
+      {/* Month & Year Filter Checklist Trigger */}
       <View style={styles.filterCard}>
         <View style={styles.filterHeaderRow}>
           <Calendar size={16} color="#1E257F" />
           <Text style={styles.filterTitle}>Periode Honor Guru:</Text>
         </View>
         <View style={styles.filterDropdownRow}>
-          <View style={[styles.pickerWrapper, { flex: 3 }]}>
-            <Picker
-              selectedValue={selectedBulan}
-              onValueChange={(val) => setSelectedBulan(Number(val))}
-              style={styles.picker}
-              dropdownIconColor="#1E257F"
-            >
-              {bulanNames.map((b, idx) => (
-                <Picker.Item key={idx} label={`Bulan ${b}`} value={idx + 1} />
-              ))}
-            </Picker>
-          </View>
+          {/* Multi-Month Touchable Selector */}
+          <TouchableOpacity 
+            style={[styles.pickerWrapper, { flex: 3, paddingVertical: 10, paddingHorizontal: 12, justifyContent: 'center' }]}
+            onPress={() => setMonthModalOpen(true)}
+            activeOpacity={0.8}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1, marginRight: 4 }}>
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E257F' }} numberOfLines={1}>
+                  {getBulanFilterSummary()}
+                </Text>
+                <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
+                  {selectedBulanList.length} Bulan (Ketuk ganti)
+                </Text>
+              </View>
+              <ChevronDown size={16} color="#1E257F" />
+            </View>
+          </TouchableOpacity>
+
+          {/* Year Picker */}
           <View style={[styles.pickerWrapper, { flex: 2 }]}>
             <Picker
               selectedValue={selectedTahun}
@@ -687,19 +758,48 @@ export default function RekapHonorGuruScreen() {
             </Picker>
           </View>
         </View>
+
+        {/* Multi-Guru Checklist Filter Trigger */}
+        {canViewAll && (
+          <View style={{ marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 6 }}>
+              <User size={15} color="#1E257F" />
+              <Text style={styles.filterTitle}>Filter Guru:</Text>
+            </View>
+            <TouchableOpacity 
+              style={[styles.pickerWrapper, { paddingVertical: 10, paddingHorizontal: 12, justifyContent: 'center' }]}
+              onPress={() => setGuruModalOpen(true)}
+              activeOpacity={0.8}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1, marginRight: 4 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#1E257F' }} numberOfLines={1}>
+                    Guru: {getGuruFilterSummary()}
+                  </Text>
+                  <Text style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
+                    {selectedGuruIdList.length === availableGuru.length 
+                      ? `Semua guru terpilih (${availableGuru.length})` 
+                      : `${selectedGuruIdList.length} dari ${availableGuru.length} guru terpilih (Ketuk ganti)`}
+                  </Text>
+                </View>
+                <ChevronDown size={16} color="#1E257F" />
+              </View>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
         {/* Total Budget Card */}
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>
-            {canViewAll ? `Total Anggaran Honor (${bulanNames[selectedBulan - 1]} ${selectedTahun})` : `Total Honor Anda (${bulanNames[selectedBulan - 1]} ${selectedTahun})`}
+            {canViewAll ? `Total Anggaran Honor (${getBulanFilterSummary()} ${selectedTahun})` : `Total Honor Anda (${getBulanFilterSummary()} ${selectedTahun})`}
           </Text>
           <Text style={styles.summaryValue}>Rp {totalHonorSeluruh.toLocaleString('id-ID')}</Text>
           <View style={styles.summaryMetaRow}>
             <Text style={styles.summaryMetaText}>• Hadir: Rp 5rb</Text>
-            <Text style={styles.summaryMetaText}>• KBM: Rp 6.500/JP (Penuh)</Text>
-            <Text style={styles.summaryMetaText}>• Ngaji: Rp 200rb (Tetap)</Text>
+            <Text style={styles.summaryMetaText}>• KBM: Rp 6.500/JP</Text>
+            <Text style={styles.summaryMetaText}>• Ngaji: Rp 200rb/100rb</Text>
           </View>
 
           {canViewAll && (
@@ -756,7 +856,7 @@ export default function RekapHonorGuruScreen() {
                     </View>
                     <View style={styles.breakdownItem}>
                       <Text style={styles.breakdownLabel}>Tunjangan</Text>
-                      <Text style={styles.breakdownVal}>-</Text>
+                      <Text style={styles.breakdownVal}>{calc.tunjanganJabatan > 0 ? 'Ada' : '-'}</Text>
                       <Text style={styles.breakdownSub}>Rp {calc.tunjanganJabatan.toLocaleString('id-ID')}</Text>
                     </View>
                     {calc.isGuruNgaji && (
@@ -796,6 +896,232 @@ export default function RekapHonorGuruScreen() {
         )}
       </ScrollView>
 
+      {/* Modal Filter Checklist Bulan */}
+      <Modal
+        visible={monthModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setMonthModalOpen(false)}
+      >
+        <View style={styles.modalOverlayCenter}>
+          <View style={styles.modalCardCenter}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Pilih Bulan Rekapitulasi</Text>
+                <Text style={styles.modalSub}>Bisa mencentang lebih dari satu bulan</Text>
+              </View>
+              <TouchableOpacity onPress={() => setMonthModalOpen(false)}>
+                <X color="#6C757D" size={22} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Actions */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={handleSelectAllBulan}
+                style={{ flex: 1, backgroundColor: '#ECFDF5', paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#065F46' }}>Pilih Semua</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSelectCurrentBulan}
+                style={{ flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#374151' }}>Bulan Ini</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* 12 Months Checklist Grid */}
+            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {bulanNames.map((bName, idx) => {
+                  const bNum = idx + 1;
+                  const isChecked = selectedBulanList.includes(bNum);
+                  return (
+                    <TouchableOpacity
+                      key={bNum}
+                      onPress={() => toggleBulan(bNum)}
+                      style={{
+                        width: '48%',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        paddingVertical: 10,
+                        paddingHorizontal: 10,
+                        borderRadius: 12,
+                        backgroundColor: isChecked ? '#059669' : '#F9FAFB',
+                        borderWidth: 1,
+                        borderColor: isChecked ? '#059669' : '#E5E7EB'
+                      }}
+                    >
+                      {isChecked ? (
+                        <CheckSquare size={16} color="#fff" />
+                      ) : (
+                        <Square size={16} color="#9CA3AF" />
+                      )}
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '700',
+                          color: isChecked ? '#fff' : '#374151'
+                        }}
+                      >
+                        {bName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={{ marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, color: '#6B7280' }}>
+                Terpilih: <Text style={{ fontWeight: 'bold', color: '#1F2937' }}>{selectedBulanList.length} Bulan</Text>
+              </Text>
+              <TouchableOpacity
+                style={[styles.btnSave, { backgroundColor: '#1E257F' }]}
+                onPress={() => setMonthModalOpen(false)}
+              >
+                <Text style={styles.btnSaveText}>Terapkan & Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Filter Checklist Guru */}
+      <Modal
+        visible={guruModalOpen}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setGuruModalOpen(false)}
+      >
+        <View style={styles.modalOverlayCenter}>
+          <View style={[styles.modalCardCenter, { maxHeight: '82%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Pilih Guru Rekap</Text>
+                <Text style={styles.modalSub}>Centang guru yang ingin ditampilkan & dicetak</Text>
+              </View>
+              <TouchableOpacity onPress={() => setGuruModalOpen(false)}>
+                <X color="#6C757D" size={22} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Quick Search inside Modal */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#F9FAFB',
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              borderRadius: 10,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              marginBottom: 10
+            }}>
+              <Search size={16} color="#9CA3AF" style={{ marginRight: 6 }} />
+              <TextInput
+                placeholder="Cari guru..."
+                value={guruSearchModal}
+                onChangeText={setGuruSearchModal}
+                style={{ flex: 1, fontSize: 13, color: '#1F2937', padding: 0 }}
+              />
+              {guruSearchModal ? (
+                <TouchableOpacity onPress={() => setGuruSearchModal('')}>
+                  <X size={16} color="#9CA3AF" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Quick Actions */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              <TouchableOpacity
+                onPress={handleSelectAllGuru}
+                style={{ flex: 1, backgroundColor: '#ECFDF5', paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#065F46' }}>
+                  Pilih Semua ({availableGuru.length})
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleClearAllGuru}
+                style={{ flex: 1, backgroundColor: '#F3F4F6', paddingVertical: 8, borderRadius: 10, alignItems: 'center' }}
+              >
+                <Text style={{ fontSize: 11, fontWeight: 'bold', color: '#374151' }}>Reset (Pilih 1)</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Guru Checklist List */}
+            <ScrollView style={{ maxHeight: 280 }} showsVerticalScrollIndicator={true}>
+              <View style={{ gap: 6 }}>
+                {availableGuru
+                  .filter((g) => 
+                    !guruSearchModal ||
+                    g.nama?.toLowerCase().includes(guruSearchModal.toLowerCase()) ||
+                    g.nip?.toLowerCase().includes(guruSearchModal.toLowerCase())
+                  )
+                  .map((g) => {
+                    const isChecked = selectedGuruIdList.includes(g.id);
+                    const jg = jabatanGuruMap[g.id];
+                    const jabTitle = jg?.jabatan_utama || 'Guru';
+                    return (
+                      <TouchableOpacity
+                        key={g.id}
+                        onPress={() => toggleGuru(g.id)}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingVertical: 9,
+                          paddingHorizontal: 12,
+                          borderRadius: 12,
+                          backgroundColor: isChecked ? '#ECEEFF' : '#F9FAFB',
+                          borderWidth: 1,
+                          borderColor: isChecked ? '#1E257F' : '#E5E7EB'
+                        }}
+                      >
+                        {isChecked ? (
+                          <CheckSquare size={18} color="#1E257F" />
+                        ) : (
+                          <Square size={18} color="#9CA3AF" />
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text
+                            style={{
+                              fontSize: 13,
+                              fontWeight: isChecked ? '700' : '600',
+                              color: isChecked ? '#1E257F' : '#1F2937'
+                            }}
+                            numberOfLines={1}
+                          >
+                            {g.nama}
+                          </Text>
+                          <Text style={{ fontSize: 11, color: '#6B7280' }} numberOfLines={1}>
+                            {jabTitle} {g.nip ? `• NIP: ${g.nip}` : ''}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+              </View>
+            </ScrollView>
+
+            <View style={{ marginTop: 14, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#F3F4F6', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, color: '#6B7280' }}>
+                Terpilih: <Text style={{ fontWeight: 'bold', color: '#1F2937' }}>{selectedGuruIdList.length} Guru</Text>
+              </Text>
+              <TouchableOpacity
+                style={[styles.btnSave, { backgroundColor: '#1E257F' }]}
+                onPress={() => setGuruModalOpen(false)}
+              >
+                <Text style={styles.btnSaveText}>Terapkan & Tutup</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Modal Edit Apresiasi Kinerja (Khusus Kepala Sekolah & Bendahara) */}
       <Modal
         visible={apresiasiModalOpen}
@@ -813,6 +1139,22 @@ export default function RekapHonorGuruScreen() {
               <TouchableOpacity onPress={() => setApresiasiModalOpen(false)}>
                 <X color="#6C757D" size={22} />
               </TouchableOpacity>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Bulan Rekap *</Text>
+              <View style={styles.pickerWrapper}>
+                <Picker
+                  selectedValue={apresiasiForm.bulan}
+                  onValueChange={(val) => setApresiasiForm({ ...apresiasiForm, bulan: Number(val) })}
+                  style={styles.picker}
+                  dropdownIconColor="#7c3aed"
+                >
+                  {selectedBulanList.map((b) => (
+                    <Picker.Item key={b} label={`${bulanNames[b - 1]} ${selectedTahun}`} value={b} />
+                  ))}
+                </Picker>
+              </View>
             </View>
 
             <View style={styles.inputGroup}>
@@ -846,7 +1188,6 @@ export default function RekapHonorGuruScreen() {
                   )}
                 </Picker>
               </View>
-              <Text style={styles.inputHint}>Pilih opsi dari master agar rapi tanpa mengetik manual.</Text>
             </View>
 
             <View style={styles.inputGroup}>
@@ -858,7 +1199,6 @@ export default function RekapHonorGuruScreen() {
                 value={apresiasiForm.nominal}
                 onChangeText={(val) => setApresiasiForm({ ...apresiasiForm, nominal: val })}
               />
-              <Text style={styles.inputHint}>Otomatis terisi standar, dapat disesuaikan Kepala Sekolah / Bendahara.</Text>
             </View>
 
             <View style={styles.modalActions}>

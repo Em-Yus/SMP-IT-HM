@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import CryptoJS from 'crypto-js';
 import * as Animatable from 'react-native-animatable';
-import { Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, FileText, ChevronLeft, ChevronRight, UserCheck, XCircle, PieChart, Filter, Settings, AlertTriangle, Send, Printer, CalendarDays, Eye, X, ShieldAlert } from 'lucide-react-native';
+import { Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, FileText, ChevronLeft, ChevronRight, UserCheck, XCircle, PieChart, Filter, Settings, AlertTriangle, Send, Printer, CalendarDays, Eye, X, ShieldAlert, Award, SwitchCamera } from 'lucide-react-native';
 import { router } from 'expo-router';
 import CustomDatePicker from '../components/CustomDatePicker';
 import { Picker } from '@react-native-picker/picker';
@@ -20,6 +20,17 @@ export default function PresensiSiswa() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [facing, setFacing] = useState<'back' | 'front'>('back');
+  const [scanResult, setScanResult] = useState<{
+    id?: number;
+    type: 'success' | 'warning' | 'info' | 'error';
+    title: string;
+    nama?: string;
+    kelas?: string;
+    waktu?: string;
+    status?: string;
+    message: string;
+  } | null>(null);
 
   // Settings Kedisiplinan & Master Jam Global
   const [jamMasuk, setJamMasuk] = useState('07:00');
@@ -339,8 +350,14 @@ export default function PresensiSiswa() {
       nipd = bytes.toString(CryptoJS.enc.Utf8).trim();
       if (!nipd) throw new Error('Dekripsi kosong');
     } catch (e) {
-      Alert.alert('Tidak Valid', 'QR Code tidak dikenali atau bukan format resmi aplikasi.');
-      setTimeout(() => { setScanned(false); setIsProcessing(false); }, 3000);
+      setScanResult({
+        id: Date.now(),
+        type: 'error',
+        title: 'QR TIDAK VALID',
+        message: 'QR Code tidak dikenali atau bukan format resmi aplikasi.'
+      });
+      setIsProcessing(false);
+      setTimeout(() => { setScanned(false); }, 2000);
       return;
     }
 
@@ -352,8 +369,14 @@ export default function PresensiSiswa() {
         .maybeSingle();
 
       if (errSiswa || !dataSiswa) {
-        Alert.alert('Tidak Ditemukan', `Siswa dengan NIPD ${nipd} tidak ada di database.`);
-        setTimeout(() => { setScanned(false); setIsProcessing(false); }, 3000);
+        setScanResult({
+          id: Date.now(),
+          type: 'error',
+          title: 'SISWA TIDAK DITEMUKAN',
+          message: `Siswa dengan NIPD ${nipd} tidak ada di database.`
+        });
+        setIsProcessing(false);
+        setTimeout(() => { setScanned(false); }, 2000);
         return;
       }
 
@@ -398,33 +421,81 @@ export default function PresensiSiswa() {
           if (errUpdate) throw errUpdate;
         }
 
-        Alert.alert('TAP MASUK BERHASIL', `${dataSiswa.nama}\nWaktu: ${currentTime}`);
+        setScanResult({
+          id: Date.now(),
+          type: 'success',
+          title: 'TAP MASUK BERHASIL',
+          nama: dataSiswa.nama,
+          kelas: dataSiswa.kelas,
+          waktu: currentTime,
+          status: actStatus,
+          message: `Berhasil tap masuk pada ${currentTime} WIB`
+        });
+
+        if (Platform.OS === 'android') {
+          ToastAndroid.show(`Tap Masuk: ${dataSiswa.nama}`, ToastAndroid.SHORT);
+        }
         sendWhatsAppNotification(dataSiswa.nama, dataSiswa.kelas, dataSiswa.wa_ortu, actStatus, currentTime);
         sendPushNotification(dataSiswa.nipd, 'Tap Masuk Berhasil', `Ananda ${dataSiswa.nama} telah melakukan tap masuk pada ${currentTime} dengan status: ${actStatus}.`);
       } else {
         if (existingData.status.includes('Izin') || existingData.status.includes('Sakit') || existingData.status.includes('Dispensasi')) {
-          Alert.alert('Info', `Siswa ini sudah diabsen dengan status ${existingData.status} hari ini!`);
-          setTimeout(() => { setScanned(false); setIsProcessing(false); }, 2000);
+          setScanResult({
+            id: Date.now(),
+            type: 'info',
+            title: 'SUDAH DIABSEN',
+            nama: dataSiswa.nama,
+            kelas: dataSiswa.kelas,
+            status: existingData.status,
+            message: `Siswa ini sudah diabsen dengan status "${existingData.status}" hari ini.`
+          });
+          setIsProcessing(false);
+          setTimeout(() => { setScanned(false); }, 2000);
           return;
         }
 
         if (existingData.waktu_masuk && existingData.waktu_pulang) {
-          Alert.alert('Info', 'Siswa sudah melakukan Tap Pulang hari ini!');
-          setTimeout(() => { setScanned(false); setIsProcessing(false); }, 2000);
+          setScanResult({
+            id: Date.now(),
+            type: 'info',
+            title: 'SUDAH TAP PULANG',
+            nama: dataSiswa.nama,
+            kelas: dataSiswa.kelas,
+            waktu: existingData.waktu_pulang,
+            status: existingData.status,
+            message: `Siswa sudah melakukan Tap Pulang pada ${existingData.waktu_pulang} WIB hari ini.`
+          });
+          setIsProcessing(false);
+          setTimeout(() => { setScanned(false); }, 2000);
           return;
         }
 
         if (existingData.waktu_masuk) {
           const diffMins = timeToMinutes(currentTime) - timeToMinutes(existingData.waktu_masuk);
           if (diffMins < 5) {
-            Alert.alert('Peringatan', 'Tap terlalu cepat! Beri jeda minimal 5 menit dari Tap Masuk sebelumnya.');
-            setTimeout(() => { setScanned(false); setIsProcessing(false); }, 2000);
+            setScanResult({
+              id: Date.now(),
+              type: 'warning',
+              title: 'TAP TERLALU CEPAT',
+              nama: dataSiswa.nama,
+              kelas: dataSiswa.kelas,
+              message: 'Beri jeda minimal 5 menit dari waktu Tap Masuk sebelumnya.'
+            });
+            setIsProcessing(false);
+            setTimeout(() => { setScanned(false); }, 2000);
             return;
           }
 
           if (timeToMinutes(currentTime) < timeToMinutes('10:00')) {
-            Alert.alert('Peringatan', `Ananda sudah Tap Masuk pada pukul ${existingData.waktu_masuk}. Saat ini belum waktunya Tap Pulang!`);
-            setTimeout(() => { setScanned(false); setIsProcessing(false); }, 2000);
+            setScanResult({
+              id: Date.now(),
+              type: 'warning',
+              title: 'BELUM WAKTUNYA PULANG',
+              nama: dataSiswa.nama,
+              kelas: dataSiswa.kelas,
+              message: `Sudah Tap Masuk pada pukul ${existingData.waktu_masuk}. Saat ini belum waktunya Tap Pulang!`
+            });
+            setIsProcessing(false);
+            setTimeout(() => { setScanned(false); }, 2000);
             return;
           }
 
@@ -439,19 +510,37 @@ export default function PresensiSiswa() {
 
           if (errUpdate) throw errUpdate;
 
-          Alert.alert('TAP PULANG BERHASIL', `${dataSiswa.nama}\nWaktu: ${currentTime}`);
+          setScanResult({
+            id: Date.now(),
+            type: 'success',
+            title: 'TAP PULANG BERHASIL',
+            nama: dataSiswa.nama,
+            kelas: dataSiswa.kelas,
+            waktu: currentTime,
+            status: actStatus,
+            message: `Berhasil tap pulang pada ${currentTime} WIB`
+          });
+
+          if (Platform.OS === 'android') {
+            ToastAndroid.show(`Tap Pulang: ${dataSiswa.nama}`, ToastAndroid.SHORT);
+          }
           sendWhatsAppNotification(dataSiswa.nama, dataSiswa.kelas, dataSiswa.wa_ortu, actStatus, currentTime);
           sendPushNotification(dataSiswa.nipd, 'Tap Pulang Berhasil', `Ananda ${dataSiswa.nama} telah melakukan tap pulang pada ${currentTime}.`);
         }
       }
     } catch (e: any) {
       console.error(e);
-      Alert.alert('Error', `Gagal memproses presensi: ${e.message}`);
+      setScanResult({
+        id: Date.now(),
+        type: 'error',
+        title: 'GAGAL MEMPROSES',
+        message: `Gagal memproses presensi: ${e.message || 'Terjadi kesalahan'}`
+      });
     } finally {
+      setIsProcessing(false);
       setTimeout(() => {
         setScanned(false);
-        setIsProcessing(false);
-      }, 3000);
+      }, 2000);
     }
   };
 
@@ -621,9 +710,10 @@ export default function PresensiSiswa() {
       if (rekapFilterKelas !== 'Semua' && String(d.kelas) !== rekapFilterKelas) return false;
       if (rekapFilterStatus !== 'Semua') {
         if (rekapFilterStatus === 'Hadir' && !d.status.includes('Hadir')) return false;
+        if (rekapFilterStatus === 'Dispensasi' && !d.status.includes('Dispensasi')) return false;
         if (rekapFilterStatus === 'Terlambat' && !d.status.includes('Terlambat')) return false;
         if (rekapFilterStatus === 'Bolos' && !(d.status.includes('Bolos') || d.status === 'Alfa')) return false;
-        if (rekapFilterStatus === 'Izin' && !(d.status.includes('Izin') || d.status.includes('Sakit') || d.status.includes('Dispensasi'))) return false;
+        if (rekapFilterStatus === 'Izin' && !(d.status.includes('Izin') || d.status.includes('Sakit'))) return false;
       }
       if (rekapSearch) {
         const q = rekapSearch.toLowerCase();
@@ -635,13 +725,14 @@ export default function PresensiSiswa() {
     });
   }, [rekapData, rekapFilterKelas, rekapFilterStatus, rekapSearch]);
 
-  let rHadir = 0, rIzin = 0, rTerlambat = 0, rBolos = 0;
+  let rHadir = 0, rDispensasi = 0, rIzin = 0, rTerlambat = 0, rBolos = 0;
   filteredRekapData.forEach(d => {
     const st = d.status || '';
-    if (st.includes('Hadir')) rHadir++;
-    if (st.includes('Izin') || st.includes('Sakit') || st.includes('Dispensasi')) rIzin++;
-    if (st.includes('Terlambat')) rTerlambat++;
-    if (st.includes('Bolos') || st === 'Alfa') rBolos++;
+    if (st.includes('Dispensasi')) rDispensasi++;
+    else if (st.includes('Hadir')) rHadir++;
+    else if (st.includes('Izin') || st.includes('Sakit')) rIzin++;
+    else if (st.includes('Terlambat')) rTerlambat++;
+    else if (st.includes('Bolos') || st === 'Alfa') rBolos++;
   });
 
   const classOptions = useMemo(() => {
@@ -1082,17 +1173,36 @@ export default function PresensiSiswa() {
 
       {/* TAB SCAN */}
       {currentTab === 'scan' && (
-        <View style={styles.content}>
+        <ScrollView 
+          style={styles.scanScroll} 
+          contentContainerStyle={styles.scanScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           <TouchableOpacity onPress={() => router.push('/master-jam-presensi' as any)} style={styles.infoBar}>
-            <Clock size={16} color="#2a2c87" />
+            <Clock size={16} color="#1E257F" />
             <Text style={styles.infoBarText}>
               Opsi: <Text style={{ fontWeight: '700' }}>{namaOpsi}</Text> (Masuk: {jamMasuk} | Pulang: {jamPulang})
             </Text>
             <Settings size={14} color="#6b7280" />
           </TouchableOpacity>
-          <Text style={styles.scanTitle}>Arahkan Kartu QR Siswa ke Kamera</Text>
+
+          {/* Subheader bar: Judul & Tombol Toggle Kamera Depan/Belakang */}
+          <View style={styles.scanHeaderRow}>
+            <Text style={styles.scanTitle}>Arahkan Kartu QR Siswa</Text>
+            <TouchableOpacity 
+              style={styles.switchCameraBtn} 
+              onPress={() => setFacing(prev => prev === 'back' ? 'front' : 'back')}
+              activeOpacity={0.7}
+            >
+              <SwitchCamera size={16} color="#1E257F" style={{ marginRight: 6 }} />
+              <Text style={styles.switchCameraBtnText}>
+                {facing === 'back' ? 'Kamera Depan' : 'Kamera Belakang'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {!permission ? (
-            <ActivityIndicator size="large" color="#2a2c87" />
+            <ActivityIndicator size="large" color="#1E257F" style={{ marginVertical: 40 }} />
           ) : !permission.granted ? (
             <View style={styles.permissionBox}>
               <Text style={{ textAlign: 'center', marginBottom: 16 }}>Aplikasi membutuhkan akses kamera untuk memindai kartu absen.</Text>
@@ -1104,11 +1214,20 @@ export default function PresensiSiswa() {
             <View style={styles.cameraWrapper}>
               <CameraView 
                 style={styles.camera} 
-                facing="back"
+                facing={facing}
                 onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
                 barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
               />
               <View style={styles.overlayContainer}>
+                {/* Floating camera switch button on camera */}
+                <TouchableOpacity
+                  style={styles.cameraFloatingFlipBtn}
+                  onPress={() => setFacing(prev => prev === 'back' ? 'front' : 'back')}
+                  activeOpacity={0.8}
+                >
+                  <SwitchCamera size={18} color="#FFFFFF" />
+                </TouchableOpacity>
+
                 {/* Dark Masking */}
                 <View style={styles.maskRow}>
                   <View style={styles.maskSide} />
@@ -1145,13 +1264,92 @@ export default function PresensiSiswa() {
               </View>
             </View>
           )}
+
+          {/* 1. INFORMASI LOADING (Tepat di atas pesan informasi absensi) */}
           {isProcessing && (
-            <View style={styles.processingBadge}>
-              <ActivityIndicator color="#fff" size="small" style={{ marginRight: 8 }} />
-              <Text style={{ color: '#fff', fontWeight: 'bold' }}>Memproses...</Text>
+            <Animatable.View animation="fadeIn" duration={200} style={styles.loadingInfoContainer}>
+              <ActivityIndicator color="#1E257F" size="small" style={{ marginRight: 8 }} />
+              <Text style={styles.loadingInfoText}>Memproses data presensi siswa...</Text>
+            </Animatable.View>
+          )}
+
+          {/* 2. PESAN INFORMASI ABSENSI (Yang tadinya berupa Alert bertombol OK) */}
+          {scanResult ? (
+            <Animatable.View
+              key={scanResult.id || scanResult.title + (scanResult.nama || '')}
+              animation="bounceIn"
+              duration={500}
+              style={[
+                styles.resultCard,
+                scanResult.type === 'success' && styles.resultCardSuccess,
+                scanResult.type === 'warning' && styles.resultCardWarning,
+                scanResult.type === 'info' && styles.resultCardInfo,
+                scanResult.type === 'error' && styles.resultCardError,
+              ]}
+            >
+              <View style={styles.resultCardHeader}>
+                <View style={styles.resultCardIconTitle}>
+                  {scanResult.type === 'success' && <CheckCircle size={22} color="#059669" />}
+                  {scanResult.type === 'warning' && <AlertTriangle size={22} color="#D97706" />}
+                  {scanResult.type === 'info' && <AlertCircle size={22} color="#2563EB" />}
+                  {scanResult.type === 'error' && <XCircle size={22} color="#DC2626" />}
+                  <Text style={[
+                    styles.resultCardTitle,
+                    scanResult.type === 'success' && { color: '#059669' },
+                    scanResult.type === 'warning' && { color: '#D97706' },
+                    scanResult.type === 'info' && { color: '#2563EB' },
+                    scanResult.type === 'error' && { color: '#DC2626' },
+                  ]}>
+                    {scanResult.title}
+                  </Text>
+                </View>
+                {scanResult.waktu && (
+                  <View style={styles.resultTimeBadge}>
+                    <Clock size={12} color="#1E257F" style={{ marginRight: 4 }} />
+                    <Text style={styles.resultTimeText}>{scanResult.waktu} WIB</Text>
+                  </View>
+                )}
+              </View>
+
+              {scanResult.nama ? (
+                <View style={styles.resultBody}>
+                  <Text style={styles.resultNama} numberOfLines={1}>{scanResult.nama}</Text>
+                  <View style={styles.resultMetaRow}>
+                    {scanResult.kelas && (
+                      <View style={styles.resultMetaBadge}>
+                        <Text style={styles.resultMetaBadgeText}>Kelas {scanResult.kelas}</Text>
+                      </View>
+                    )}
+                    {scanResult.status && (
+                      <View style={[
+                        styles.resultMetaBadge,
+                        scanResult.status.includes('Hadir') ? { backgroundColor: '#D1FAE5' } : { backgroundColor: '#FEF3C7' }
+                      ]}>
+                        <Text style={[
+                          styles.resultMetaBadgeText,
+                          scanResult.status.includes('Hadir') ? { color: '#065F46' } : { color: '#92400E' }
+                        ]}>
+                          {scanResult.status}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              ) : null}
+
+              {scanResult.message ? (
+                <Text style={styles.resultMessage}>{scanResult.message}</Text>
+              ) : null}
+            </Animatable.View>
+          ) : (
+            <View style={styles.resultPlaceholder}>
+              <QrCode size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
+              <Text style={styles.resultPlaceholderText}>Siap memindai kartu QR siswa...</Text>
             </View>
           )}
-        </View>
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
       )}
 
       {/* TAB MANUAL */}
@@ -1358,6 +1556,7 @@ export default function PresensiSiswa() {
                 >
                   <Picker.Item label="Semua Status" value="Semua" style={{ fontSize: 13 }} />
                   <Picker.Item label="Hadir" value="Hadir" style={{ fontSize: 13 }} />
+                  <Picker.Item label="Dispensasi" value="Dispensasi" style={{ fontSize: 13 }} />
                   <Picker.Item label="Terlambat" value="Terlambat" style={{ fontSize: 13 }} />
                   <Picker.Item label="Bolos / Alfa" value="Bolos" style={{ fontSize: 13 }} />
                   <Picker.Item label="Izin / Sakit" value="Izin" style={{ fontSize: 13 }} />
@@ -1382,35 +1581,42 @@ export default function PresensiSiswa() {
             </View>
           </View>
 
-          {/* 4 Stat KPI Boxes */}
+          {/* 5 Stat KPI Boxes (Termasuk Dispensasi) */}
           <View style={styles.statsGrid}>
             <View style={[styles.statBox, { backgroundColor: '#ecfdf5', borderColor: '#d1fae5' }]}>
               <View>
                 <Text style={[styles.statLabel, { color: '#059669' }]}>HADIR</Text>
                 <Text style={styles.statValue}>{rHadir}</Text>
               </View>
-              <CheckCircle size={28} color="#10b981" />
+              <CheckCircle size={26} color="#10b981" />
+            </View>
+            <View style={[styles.statBox, { backgroundColor: '#f0f9ff', borderColor: '#bae6fd' }]}>
+              <View>
+                <Text style={[styles.statLabel, { color: '#0284c7' }]}>DISPENSASI</Text>
+                <Text style={styles.statValue}>{rDispensasi}</Text>
+              </View>
+              <Award size={26} color="#0284c7" />
             </View>
             <View style={[styles.statBox, { backgroundColor: '#fff7ed', borderColor: '#ffedd5' }]}>
               <View>
                 <Text style={[styles.statLabel, { color: '#ea580c' }]}>IZIN/SAKIT</Text>
                 <Text style={styles.statValue}>{rIzin}</Text>
               </View>
-              <AlertCircle size={28} color="#f97316" />
+              <AlertCircle size={26} color="#f97316" />
             </View>
             <View style={[styles.statBox, { backgroundColor: '#fefce8', borderColor: '#fef08a' }]}>
               <View>
                 <Text style={[styles.statLabel, { color: '#ca8a04' }]}>TERLAMBAT</Text>
                 <Text style={styles.statValue}>{rTerlambat}</Text>
               </View>
-              <Clock size={28} color="#eab308" />
+              <Clock size={26} color="#eab308" />
             </View>
             <View style={[styles.statBox, { backgroundColor: '#fef2f2', borderColor: '#fee2e2' }]}>
               <View>
                 <Text style={[styles.statLabel, { color: '#dc2626' }]}>BOLOS/ALFA</Text>
                 <Text style={styles.statValue}>{rBolos}</Text>
               </View>
-              <XCircle size={28} color="#ef4444" />
+              <XCircle size={26} color="#ef4444" />
             </View>
           </View>
 
@@ -1908,15 +2114,21 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#2a2c87' },
   
   content: { flex: 1, alignItems: 'center', paddingTop: 16 },
-  infoBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e0e7ff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 8, marginBottom: 14, borderWidth: 1, borderColor: '#c7d2fe', width: '90%' },
+  scanScroll: { flex: 1 },
+  scanScrollContent: { alignItems: 'center', paddingTop: 16, paddingHorizontal: 16 },
+  infoBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e0e7ff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 8, marginBottom: 14, borderWidth: 1, borderColor: '#c7d2fe', width: 320, maxWidth: '100%' },
   infoBarText: { fontSize: 13, color: '#1e1b4b', flex: 1 },
-  scanTitle: { fontSize: 16, color: '#4b5563', fontWeight: '600', marginBottom: 20 },
+  scanHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 320, maxWidth: '100%', marginBottom: 12 },
+  scanTitle: { fontSize: 15, color: '#374151', fontWeight: '700' },
+  switchCameraBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECEEFF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#C7D2FE' },
+  switchCameraBtnText: { fontSize: 12, fontWeight: '700', color: '#1E257F' },
   permissionBox: { padding: 24, backgroundColor: '#fff', borderRadius: 16, marginHorizontal: 20 },
-  btnPrimary: { backgroundColor: '#2a2c87', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  btnPrimary: { backgroundColor: '#1E257F', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   btnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
   
-  cameraWrapper: { width: 320, height: 420, borderRadius: 24, overflow: 'hidden', position: 'relative' },
+  cameraWrapper: { width: 320, height: 380, borderRadius: 24, overflow: 'hidden', position: 'relative' },
   camera: { flex: 1 },
+  cameraFloatingFlipBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: 'rgba(0,0,0,0.5)', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
   overlayContainer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   maskRow: { flex: 1 },
   maskCenterRow: { flexDirection: 'row', height: 220 },
@@ -1929,6 +2141,28 @@ const styles = StyleSheet.create({
   cornerBR: { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 12 },
   scanLaser: { width: '100%', height: 2, backgroundColor: '#10b981', shadowColor: '#10b981', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 4, elevation: 4 },
   
+  loadingInfoContainer: { width: 320, maxWidth: '100%', backgroundColor: '#ECEEFF', borderColor: '#C7D2FE', borderWidth: 1, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, marginBottom: 8 },
+  loadingInfoText: { color: '#1E257F', fontWeight: '700', fontSize: 13 },
+  
+  resultCard: { width: 320, maxWidth: '100%', borderRadius: 16, padding: 14, marginTop: 8, borderWidth: 1.5, backgroundColor: '#FFFFFF', elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  resultCardSuccess: { borderColor: '#10B981', backgroundColor: '#F0FDF4' },
+  resultCardWarning: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
+  resultCardInfo: { borderColor: '#3B82F6', backgroundColor: '#EFF6FF' },
+  resultCardError: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },
+  resultCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  resultCardIconTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  resultCardTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.3 },
+  resultTimeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECEEFF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  resultTimeText: { fontSize: 11, fontWeight: '700', color: '#1E257F' },
+  resultBody: { marginTop: 4, marginBottom: 6 },
+  resultNama: { fontSize: 16, fontWeight: '800', color: '#1F2937' },
+  resultMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  resultMetaBadge: { backgroundColor: '#E5E7EB', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  resultMetaBadgeText: { fontSize: 11, fontWeight: '700', color: '#374151' },
+  resultMessage: { fontSize: 12, color: '#4B5563', lineHeight: 17, marginTop: 2 },
+  resultPlaceholder: { width: 320, maxWidth: '100%', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  resultPlaceholderText: { fontSize: 13, color: '#9CA3AF', fontWeight: '600' },
+
   processingBadge: { position: 'absolute', bottom: 40, backgroundColor: '#10b981', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 30, flexDirection: 'row', alignItems: 'center' },
 
   contentManual: { flex: 1 },

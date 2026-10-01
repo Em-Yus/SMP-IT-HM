@@ -9,7 +9,9 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  Platform
+  Platform,
+  Modal,
+  Image
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,9 +27,28 @@ import {
   Users,
   CheckCircle2,
   Clock,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Sparkles,
+  X,
+  Save,
+  Check,
+  AlertCircle
 } from 'lucide-react-native';
 import { supabase } from '../../../services/supabaseClient';
+import { calculateCbtFinalScore } from '../../services/cbt/scoringService';
+
+const parseOpsiJawaban = (rawOpsi: any): Array<{ id: string; text: string; gambar_url?: string }> => {
+  if (!rawOpsi) return [];
+  let parsed = rawOpsi;
+  if (typeof rawOpsi === 'string') {
+    try {
+      parsed = JSON.parse(rawOpsi);
+    } catch (_e) {
+      return [];
+    }
+  }
+  return Array.isArray(parsed) ? parsed : [];
+};
 
 export default function UjianNilai() {
   const { jadwalId, kelasId } = useLocalSearchParams<{ jadwalId?: string; kelasId?: string }>();
@@ -41,6 +62,15 @@ export default function UjianNilai() {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isExporting, setIsExporting] = useState(false);
+
+  // State Modal Tinjau & Koreksi AI Guru
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<any>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [soalList, setSoalList] = useState<any[]>([]);
+  const [studentAnswers, setStudentAnswers] = useState<any[]>([]);
+  const [tempScores, setTempScores] = useState<Record<number, string>>({});
+  const [savingScores, setSavingScores] = useState(false);
 
   useEffect(() => {
     fetchJadwalList();
@@ -98,10 +128,13 @@ export default function UjianNilai() {
       }
       const { data: allSiswa } = await siswaQuery;
 
-      // Ambil sesi nilai siswa
+      // Ambil sesi nilai siswa beserta data siswa
       const { data: sesiData, error: sesiErr } = await supabase
         .from('cbt_sesi_siswa')
-        .select('*')
+        .select(`
+          *,
+          data_siswa(id, nama, nipd, nisn, kelas)
+        `)
         .eq('jadwal_id', jId);
 
       if (sesiErr) throw sesiErr;
@@ -111,19 +144,37 @@ export default function UjianNilai() {
         sesiMap[s.siswa_id] = s;
       });
 
-      const combined = (allSiswa || []).map(sw => {
+      // Kumpulkan siswa: gabungkan siswa dari kelas target dan siswa yang sudah ada sesi ujiannya
+      const studentMap = new Map();
+      (allSiswa || []).forEach(sw => {
+        studentMap.set(Number(sw.id), sw);
+      });
+
+      (sesiData || []).forEach(s => {
+        if (s.data_siswa) {
+          const matchKelas = targetKelas
+            ? (s.data_siswa.kelas || '').trim().toLowerCase() === targetKelas.trim().toLowerCase()
+            : true;
+          if (matchKelas && !studentMap.has(Number(s.siswa_id))) {
+            studentMap.set(Number(s.siswa_id), s.data_siswa);
+          }
+        }
+      });
+
+      const combined = Array.from(studentMap.values()).map(sw => {
         const s = sesiMap[sw.id];
         return {
+          id: s?.id,
           siswa_id: sw.id,
           nama: sw.nama,
           nipd: sw.nipd,
           nisn: sw.nisn,
           kelas: sw.kelas,
           status: s?.status || 'belum_mulai',
-          skor_pg: s?.skor_pg ?? null,
-          skor_isian: s?.skor_isian ?? null,
-          skor_esai: s?.skor_esai ?? null,
-          nilai_akhir: s?.nilai_akhir ?? null,
+          skor_pg: s?.skor_pg !== null && s?.skor_pg !== undefined ? parseFloat(s.skor_pg) : null,
+          skor_isian: s?.skor_isian !== null && s?.skor_isian !== undefined ? parseFloat(s.skor_isian) : null,
+          skor_esai: s?.skor_esai !== null && s?.skor_esai !== undefined ? parseFloat(s.skor_esai) : null,
+          nilai_akhir: s?.nilai_akhir !== null && s?.nilai_akhir !== undefined ? parseFloat(s.nilai_akhir) : null,
           waktu_selesai: s?.waktu_selesai || null
         };
       });
@@ -133,6 +184,165 @@ export default function UjianNilai() {
       console.error('Error fetchNilaiData:', e);
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const openReviewModal = async (item: any) => {
+    try {
+      setSelectedStudent(item);
+      setIsReviewModalOpen(true);
+      setReviewLoading(true);
+
+      let targetBankId = selectedJadwal?.bank_soal_id;
+      if (!targetBankId && selectedJadwal?.mapel_id) {
+        const { data: qBank } = await supabase
+          .from('cbt_bank_soal')
+          .select('id')
+          .eq('mapel_id', selectedJadwal.mapel_id)
+          .order('id', { ascending: false })
+          .limit(1);
+        if (qBank && qBank.length > 0) {
+          targetBankId = qBank[0].id;
+        }
+      }
+
+      let fetchedSoals: any[] = [];
+      if (targetBankId) {
+        const { data: qSoal } = await supabase
+          .from('cbt_soal')
+          .select('*')
+          .eq('bank_soal_id', targetBankId)
+          .order('nomor_urut', { ascending: true });
+        fetchedSoals = qSoal || [];
+      }
+      setSoalList(fetchedSoals);
+
+      let fetchedAnswers: any[] = [];
+      if (item.id && !String(item.id).startsWith('draft_')) {
+        const { data: aData } = await supabase
+          .from('cbt_jawaban_siswa')
+          .select('*')
+          .eq('sesi_id', item.id);
+        fetchedAnswers = aData || [];
+      }
+      setStudentAnswers(fetchedAnswers);
+
+      const initScores: Record<number, string> = {};
+      fetchedSoals.forEach((s: any) => {
+        const a = fetchedAnswers.find((ans: any) => Number(ans.soal_id) === Number(s.id));
+        const scoreVal = a?.skor_final_guru !== null && a?.skor_final_guru !== undefined
+          ? parseFloat(a.skor_final_guru)
+          : a?.skor_ai !== null && a?.skor_ai !== undefined
+          ? parseFloat(a.skor_ai)
+          : 0;
+        initScores[s.id] = String(scoreVal);
+      });
+      setTempScores(initScores);
+    } catch (e: any) {
+      console.error('Error openReviewModal:', e);
+      Alert.alert('Gagal Memuat Soal', e.message || 'Terjadi kesalahan sistem.');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const handleSaveGuruReview = async () => {
+    if (!selectedStudent) return;
+    try {
+      setSavingScores(true);
+      let totalSkorPg = 0;
+      let maxBobotPg = 0;
+      let countPg = 0;
+
+      let totalSkorIsian = 0;
+      let maxBobotIsian = 0;
+      let countIsian = 0;
+
+      let totalSkorEsai = 0;
+      let maxBobotEsai = 0;
+      let countEsai = 0;
+
+      for (const soal of soalList) {
+        const bobot = parseFloat(soal.bobot_nilai || 1);
+        const newScore = parseFloat(tempScores[soal.id] || '0') || 0;
+
+        if (soal.jenis_soal === 'pg') {
+          countPg++;
+          maxBobotPg += bobot;
+          totalSkorPg += newScore;
+        } else if (soal.jenis_soal === 'isian') {
+          countIsian++;
+          maxBobotIsian += bobot;
+          totalSkorIsian += newScore;
+        } else {
+          countEsai++;
+          maxBobotEsai += bobot;
+          totalSkorEsai += newScore;
+        }
+
+        const ans = studentAnswers.find((a: any) => Number(a.soal_id) === Number(soal.id));
+        if (ans) {
+          await supabase
+            .from('cbt_jawaban_siswa')
+            .update({
+              skor_final_guru: newScore,
+              status_koreksi: 'manual_guru',
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', ans.id);
+        } else if (selectedStudent.id && !String(selectedStudent.id).startsWith('draft_')) {
+          await supabase
+            .from('cbt_jawaban_siswa')
+            .insert({
+              sesi_id: selectedStudent.id,
+              soal_id: soal.id,
+              jawaban_siswa: '',
+              skor_final_guru: newScore,
+              status_koreksi: 'manual_guru',
+              updated_at: new Date().toISOString()
+            });
+        }
+      }
+
+      const skema = selectedJadwal?.skema_konversi || selectedJadwal?.cbt_bank_soal?.skema_konversi || 'asli';
+      const scoreResult = calculateCbtFinalScore({
+        skorPg: totalSkorPg,
+        maxBobotPg: maxBobotPg,
+        countPg: countPg,
+
+        skorIsian: totalSkorIsian,
+        maxBobotIsian: maxBobotIsian,
+        countIsian: countIsian,
+
+        skorEsai: totalSkorEsai,
+        maxBobotEsai: maxBobotEsai,
+        countEsai: countEsai,
+
+        skemaKonversi: skema,
+        kkm: 75,
+      });
+
+      const final100 = scoreResult.finalScore;
+
+      if (selectedStudent.id && !String(selectedStudent.id).startsWith('draft_')) {
+        await supabase
+          .from('cbt_sesi_siswa')
+          .update({
+            skor_pg: totalSkorPg,
+            skor_isian: totalSkorIsian,
+            skor_esai: totalSkorEsai,
+            nilai_akhir: final100,
+          })
+          .eq('id', selectedStudent.id);
+      }
+
+      Alert.alert('Berhasil', `Koreksi tersimpan! Nilai akhir diperbarui menjadi ${final100}.`);
+      setIsReviewModalOpen(false);
+      fetchNilaiData(selectedJadwalId);
+    } catch (err: any) {
+      Alert.alert('Gagal Menyimpan', err.message || 'Terjadi kesalahan sistem.');
+    } finally {
+      setSavingScores(false);
     }
   };
 
@@ -394,12 +604,241 @@ export default function UjianNilai() {
                       </View>
                     </View>
                   )}
+
+                  {/* Tombol Tinjau AI & Koreksi */}
+                  {isSelesai && (
+                    <TouchableOpacity
+                      style={styles.tinjauBtn}
+                      onPress={() => openReviewModal(item)}
+                    >
+                      <Sparkles size={14} color="#3740A1" />
+                      <Text style={styles.tinjauBtnText}>Tinjau AI & Koreksi</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               );
             })
           )}
         </ScrollView>
       )}
+
+      {/* Modal Review & Koreksi AI oleh Guru */}
+      <Modal
+        visible={isReviewModalOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsReviewModalOpen(false)}
+      >
+        <View style={styles.modalContainer}>
+          <LinearGradient colors={['#2a2c87', '#3b3e9e']} style={styles.modalHeader}>
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Sparkles size={18} color="#fde047" />
+                  <Text style={styles.modalTitleText}>Koreksi & Verifikasi Nilai AI</Text>
+                </View>
+                <Text style={styles.modalSubText}>
+                  Siswa: {selectedStudent?.nama} ({selectedStudent?.nisn || selectedStudent?.nipd || '-'}) • {selectedStudent?.kelas || '-'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setIsReviewModalOpen(false)}
+              >
+                <X size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </LinearGradient>
+
+          {reviewLoading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#2a2c87" />
+              <Text style={styles.loadingText}>Memuat lembar pengerjaan siswa...</Text>
+            </View>
+          ) : (
+            <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent}>
+              {soalList.length === 0 ? (
+                <View style={styles.emptyCard}>
+                  <AlertCircle size={40} color="#94a3b8" />
+                  <Text style={styles.emptyTitle}>Soal Ujian Belum Dibuat</Text>
+                  <Text style={styles.emptySubtitle}>Tidak ada butir soal pada jadwal ujian ini.</Text>
+                </View>
+              ) : (
+                soalList.map((soal: any) => {
+                  const ans = studentAnswers.find((a: any) => Number(a.soal_id) === Number(soal.id));
+                  const currentScore = tempScores[soal.id] !== undefined ? tempScores[soal.id] : '0';
+                  const userAns = ans?.jawaban_siswa;
+                  const hasAnswered = userAns !== undefined && userAns !== null && String(userAns).trim() !== '';
+
+                  const opsiList = parseOpsiJawaban(soal.opsi_jawaban);
+                  const chosenOpsi = opsiList.find(
+                    (o) => String(o.id).trim().toUpperCase() === String(userAns).trim().toUpperCase()
+                  );
+                  const keyOpsi = opsiList.find(
+                    (o) => String(o.id).trim().toUpperCase() === String(soal.kunci_jawaban).trim().toUpperCase()
+                  );
+
+                  const isPg = soal.jenis_soal === 'pg';
+                  const isIsian = soal.jenis_soal === 'isian';
+                  const isEsai = soal.jenis_soal === 'esai';
+
+                  return (
+                    <View key={soal.id} style={styles.modalSoalCard}>
+                      {/* Soal Header */}
+                      <View style={styles.modalSoalCardHeader}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                          <View style={styles.modalSoalNumBadge}>
+                            <Text style={styles.modalSoalNumText}>{soal.nomor_urut}</Text>
+                          </View>
+                          <Text style={styles.modalSoalMetaText}>
+                            {soal.jenis_soal.toUpperCase()} • Bobot: {soal.bobot_nilai} Poin
+                          </Text>
+                        </View>
+                        <View style={styles.modalScoreInputWrap}>
+                          <Text style={styles.modalScoreInputLabel}>Skor Guru:</Text>
+                          <TextInput
+                            style={styles.modalScoreInput}
+                            keyboardType="numeric"
+                            value={currentScore}
+                            onChangeText={(text) =>
+                              setTempScores({ ...tempScores, [soal.id]: text })
+                            }
+                          />
+                        </View>
+                      </View>
+
+                      {/* Question Text & Image */}
+                      <Text style={styles.modalPertanyaanText}>{soal.pertanyaan}</Text>
+                      {soal.gambar_url ? (
+                        <Image source={{ uri: soal.gambar_url }} style={styles.modalSoalImage} resizeMode="contain" />
+                      ) : null}
+
+                      {/* PG Question View */}
+                      {isPg && (
+                        <View style={{ gap: 8, marginTop: 4 }}>
+                          <View style={styles.answerBox}>
+                            <Text style={styles.answerBoxLabel}>Jawaban Siswa:</Text>
+                            {hasAnswered ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <View style={[styles.badgePill, ans?.is_benar ? styles.badgeSuccess : styles.badgeDanger]}>
+                                  <Text style={[styles.badgePillText, ans?.is_benar ? styles.badgeSuccessText : styles.badgeDangerText]}>
+                                    Pilihan {userAns} {ans?.is_benar ? '(Benar) ✓' : '(Salah) ✗'}
+                                  </Text>
+                                </View>
+                                {chosenOpsi?.text ? (
+                                  <Text style={styles.answerValueText}>{chosenOpsi.text}</Text>
+                                ) : null}
+                              </View>
+                            ) : (
+                              <Text style={styles.notAnsweredText}>(Siswa tidak menjawab)</Text>
+                            )}
+                          </View>
+                          <View style={styles.keyBox}>
+                            <Text style={styles.keyBoxLabel}>Kunci Jawaban Resmi:</Text>
+                            <Text style={styles.keyValueText}>
+                              Pilihan {soal.kunci_jawaban} {keyOpsi?.text ? `(${keyOpsi.text})` : ''}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Isian Question View */}
+                      {isIsian && (
+                        <View style={{ gap: 8, marginTop: 4 }}>
+                          <View style={styles.answerBox}>
+                            <Text style={styles.answerBoxLabel}>Jawaban Siswa:</Text>
+                            {hasAnswered ? (
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <Text style={[styles.answerValueText, { fontWeight: '800' }]}>"{userAns}"</Text>
+                                <View style={[styles.badgePill, ans?.is_benar ? styles.badgeSuccess : styles.badgeDanger]}>
+                                  <Text style={[styles.badgePillText, ans?.is_benar ? styles.badgeSuccessText : styles.badgeDangerText]}>
+                                    {ans?.is_benar ? 'Benar ✓' : 'Salah ✗'}
+                                  </Text>
+                                </View>
+                              </View>
+                            ) : (
+                              <Text style={styles.notAnsweredText}>(Siswa tidak menjawab)</Text>
+                            )}
+                          </View>
+                          <View style={styles.keyBox}>
+                            <Text style={styles.keyBoxLabel}>Kunci Jawaban Resmi:</Text>
+                            <Text style={styles.keyValueText}>"{soal.kunci_jawaban || '-'}"</Text>
+                          </View>
+                        </View>
+                      )}
+
+                      {/* Esai Question View */}
+                      {isEsai && (
+                        <View style={{ gap: 8, marginTop: 4 }}>
+                          <View style={styles.answerBox}>
+                            <Text style={styles.answerBoxLabel}>Jawaban Uraian Siswa:</Text>
+                            {hasAnswered ? (
+                              <Text style={styles.esaiAnswerText}>{userAns}</Text>
+                            ) : (
+                              <Text style={styles.notAnsweredText}>(Siswa tidak menjawab)</Text>
+                            )}
+                          </View>
+                          {soal.rubrik_esai ? (
+                            <View style={styles.rubrikBox}>
+                              <Text style={styles.rubrikBoxLabel}>Rubrik Penilaian Guru:</Text>
+                              <Text style={styles.rubrikValueText}>{soal.rubrik_esai}</Text>
+                            </View>
+                          ) : null}
+                          <View style={styles.aiEvalBox}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Sparkles size={13} color="#7c3aed" />
+                                <Text style={styles.aiEvalBoxLabel}>Evaluasi Semantik Model AI:</Text>
+                              </View>
+                              {ans?.skor_ai !== null && ans?.skor_ai !== undefined && (
+                                <View style={styles.aiScoreBadge}>
+                                  <Text style={styles.aiScoreBadgeText}>
+                                    Rekomendasi AI: {ans.skor_ai} / {soal.bobot_nilai} Poin
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={styles.aiEvalText}>
+                              {ans?.feedback_ai ||
+                                (ans?.skor_ai !== null && ans?.skor_ai !== undefined
+                                  ? `Model AI mengevaluasi kesesuaian uraian siswa dengan kata kunci rubrik dan merekomendasikan skor ${ans.skor_ai} poin.`
+                                  : 'Model AI mencocokkan kemiripan semantik dengan rubrik guru.')}
+                            </Text>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          )}
+
+          {/* Bottom Actions */}
+          <View style={styles.modalBottomBar}>
+            <TouchableOpacity
+              style={styles.modalCancelBtn}
+              onPress={() => setIsReviewModalOpen(false)}
+            >
+              <Text style={styles.modalCancelBtnText}>Batal</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalSaveBtn}
+              onPress={handleSaveGuruReview}
+              disabled={savingScores}
+            >
+              {savingScores ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Save size={16} color="#fff" />
+                  <Text style={styles.modalSaveBtnText}>Simpan Penilaian</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -654,5 +1093,294 @@ const styles = StyleSheet.create({
     width: 1,
     height: 20,
     backgroundColor: '#e2e8f0',
+  },
+  tinjauBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    borderRadius: 8,
+    paddingVertical: 7,
+    marginTop: 10,
+  },
+  tinjauBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3740A1',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  modalHeader: {
+    paddingTop: Platform.OS === 'ios' ? 52 : 44,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  modalTitleText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  modalSubText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.85)',
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  modalScroll: {
+    flex: 1,
+  },
+  modalScrollContent: {
+    padding: 16,
+    gap: 12,
+    paddingBottom: 30,
+  },
+  modalSoalCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 8,
+  },
+  modalSoalCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    paddingBottom: 8,
+  },
+  modalSoalNumBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    backgroundColor: '#2a2c87',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSoalNumText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  modalSoalMetaText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalScoreInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  modalScoreInputLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  modalScoreInput: {
+    width: 50,
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#2a2c87',
+    textAlign: 'center',
+  },
+  modalPertanyaanText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1e293b',
+    lineHeight: 19,
+  },
+  modalSoalImage: {
+    width: '100%',
+    height: 160,
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+  },
+  answerBox: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 4,
+  },
+  answerBoxLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748b',
+    textTransform: 'uppercase',
+  },
+  answerValueText: {
+    fontSize: 12,
+    color: '#1e293b',
+    fontWeight: '600',
+  },
+  notAnsweredText: {
+    fontSize: 12,
+    fontStyle: 'italic',
+    color: '#dc2626',
+  },
+  badgePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgePillText: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  badgeSuccess: {
+    backgroundColor: '#dcfce7',
+  },
+  badgeSuccessText: {
+    color: '#15803d',
+  },
+  badgeDanger: {
+    backgroundColor: '#fee2e2',
+  },
+  badgeDangerText: {
+    color: '#b91c1c',
+  },
+  keyBox: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    gap: 2,
+  },
+  keyBoxLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#166534',
+    textTransform: 'uppercase',
+  },
+  keyValueText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#14532d',
+  },
+  rubrikBox: {
+    backgroundColor: '#eff6ff',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    gap: 2,
+  },
+  rubrikBoxLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#1e40af',
+    textTransform: 'uppercase',
+  },
+  rubrikValueText: {
+    fontSize: 11,
+    color: '#1e3a8a',
+    lineHeight: 16,
+  },
+  aiEvalBox: {
+    backgroundColor: '#faf5ff',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    gap: 3,
+  },
+  aiEvalBoxLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6b21a8',
+    textTransform: 'uppercase',
+  },
+  aiScoreBadge: {
+    backgroundColor: '#f3e8ff',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  aiScoreBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6b21a8',
+  },
+  aiEvalText: {
+    fontSize: 11,
+    color: '#581c87',
+    lineHeight: 16,
+  },
+  esaiAnswerText: {
+    fontSize: 12,
+    color: '#1e293b',
+    lineHeight: 18,
+    backgroundColor: '#fff',
+    padding: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  modalBottomBar: {
+    flexDirection: 'row',
+    padding: 14,
+    gap: 10,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  modalCancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  modalSaveBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#2a2c87',
+  },
+  modalSaveBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

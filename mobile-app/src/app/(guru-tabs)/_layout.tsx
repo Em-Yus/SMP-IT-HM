@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import { Home, CalendarDays, ClipboardCheck, UserCircle, Clock, LayoutGrid } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { View } from 'react-native';
+import { View, Pressable } from 'react-native';
 
 export default function GuruTabLayout() {
   const insets = useSafeAreaInsets();
@@ -42,19 +42,33 @@ export default function GuruTabLayout() {
       <Tabs.Screen
         name="menu"
         options={{
-          title: 'Menu', // Biarkan kosong
-          tabBarIcon: ({ focused }) => (
+          title: 'Menu',
+          tabBarButton: ({ children, style, onPress, onLongPress, accessibilityState }: any) => (
+            <Pressable
+              onPress={onPress}
+              onLongPress={onLongPress}
+              style={style}
+              android_ripple={{
+                radius: 36,
+                borderless: true,
+                color: 'rgba(30, 37, 127, 0.3)',
+              }}
+            >
+              {children}
+            </Pressable>
+          ),
+          tabBarIcon: () => (
             <View style={{
-              width: 72,
-              height: 72,
-              borderRadius: 36,
+              width: 64,
+              height: 64,
+              borderRadius: 32,
               backgroundColor: '#1E257F',
               justifyContent: 'center',
               alignItems: 'center',
-              top: -30, // Floating effect
+              marginTop: -40,
               shadowColor: '#1E257F',
               shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.3,
+              shadowOpacity: 0.35,
               shadowRadius: 6,
               elevation: 8,
               borderWidth: 4,

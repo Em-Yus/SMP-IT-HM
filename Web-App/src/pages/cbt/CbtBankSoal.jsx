@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../services/supabaseClient';
 import Swal from 'sweetalert2';
@@ -7,7 +7,7 @@ import {
   BookOpen, Plus, Trash2, Edit3, Upload, Download, CheckCircle2,
   HelpCircle, FileText, ChevronDown, Save, ArrowLeft, Search, Filter,
   Settings, X, Check, Eye, AlertCircle, Layers, CheckSquare, Radio,
-  Image as ImageIcon, Loader2
+  Image as ImageIcon, Loader2, RefreshCw
 } from 'lucide-react';
 
 export default function CbtBankSoal() {
@@ -17,6 +17,8 @@ export default function CbtBankSoal() {
   const queryJadwalId = searchParams.get('jadwalId');
   const queryMapelId = searchParams.get('mapelId');
   const queryKelasId = searchParams.get('kelasId');
+  const queryTingkat = searchParams.get('tingkat');
+  const queryJenisUjian = searchParams.get('jenisUjian');
 
   const [bankList, setBankList] = useState([]);
   const [mapelList, setMapelList] = useState([]);
@@ -56,9 +58,15 @@ export default function CbtBankSoal() {
     judul: '',
     mapel_id: '',
     tingkat_kelas: '7',
+    jenis_ujian: 'PSTS',
     guru_id: '',
+    pengawas_guru_id: '',
     deskripsi: '',
   });
+
+  // State Deteksi Jadwal Mengajar Guru Login
+  const [teachingScheduleMap, setTeachingScheduleMap] = useState({}); // { '7': [{id, nama_mapel}], ... }
+  const [taughtTingkatList, setTaughtTingkatList] = useState([]); // ['7', '8']
 
   // Modal CRUD Soal
   const [isModalSoalOpen, setIsModalSoalOpen] = useState(false);
@@ -83,7 +91,7 @@ export default function CbtBankSoal() {
 
   useEffect(() => {
     initPage();
-  }, [queryBankId, queryMapelId, queryKelasId]);
+  }, [queryBankId, queryMapelId, queryKelasId, queryTingkat, queryJenisUjian, queryJadwalId]);
 
   const initPage = async () => {
     setLoading(true);
@@ -94,16 +102,57 @@ export default function CbtBankSoal() {
         u = JSON.parse(userSession);
         setCurrentUser(u);
 
-        // Ambil mapel yang diampu dari pembelajaran dan jadwal_pelajaran
+        // Ambil mapel & kelas yang diampu dari jadwal_pelajaran dan pembelajaran
         if (u.id) {
           const [pemRes, jadRes] = await Promise.all([
-            supabase.from('pembelajaran').select('mapel_id').eq('guru_id', u.id),
-            supabase.from('jadwal_pelajaran').select('mapel_id').eq('guru_id', u.id),
+            supabase
+              .from('pembelajaran')
+              .select('kelas_id, mapel_id, data_kelas(id, nama_kelas, tingkat), data_mapel(id, nama_mapel)')
+              .eq('guru_id', u.id),
+            supabase
+              .from('jadwal_pelajaran')
+              .select('kelas_id, mapel_id, data_kelas(id, nama_kelas, tingkat), data_mapel(id, nama_mapel)')
+              .eq('guru_id', u.id)
+              .eq('is_istirahat', false),
           ]);
+
+          const scheduleMap = {};
+          const allRecords = [...(jadRes.data || []), ...(pemRes.data || [])];
           const mIds = new Set();
-          (pemRes.data || []).forEach(p => p.mapel_id && mIds.add(String(p.mapel_id)));
-          (jadRes.data || []).forEach(j => j.mapel_id && mIds.add(String(j.mapel_id)));
+
+          allRecords.forEach(rec => {
+            if (rec.mapel_id) mIds.add(String(rec.mapel_id));
+            let tk = rec.data_kelas?.tingkat ? String(rec.data_kelas.tingkat) : null;
+            if (!tk && rec.data_kelas?.nama_kelas) {
+              const upper = rec.data_kelas.nama_kelas.toUpperCase();
+              if (upper.includes('VII') && !upper.includes('VIII')) tk = '7';
+              else if (upper.includes('VIII')) tk = '8';
+              else if (upper.includes('IX')) tk = '9';
+              else {
+                const m = upper.match(/\b([789])\b/);
+                if (m) tk = m[1];
+              }
+            }
+
+            if (tk && rec.mapel_id && rec.data_mapel) {
+              if (!scheduleMap[tk]) scheduleMap[tk] = new Map();
+              scheduleMap[tk].set(Number(rec.mapel_id), {
+                id: Number(rec.mapel_id),
+                nama_mapel: rec.data_mapel.nama_mapel
+              });
+            }
+          });
+
           setTaughtMapelIds(Array.from(mIds));
+
+          const finalScheduleMap = {};
+          Object.keys(scheduleMap).forEach(tk => {
+            finalScheduleMap[tk] = Array.from(scheduleMap[tk].values()).sort((a, b) => a.nama_mapel.localeCompare(b.nama_mapel));
+          });
+          setTeachingScheduleMap(finalScheduleMap);
+
+          const distinctTingkat = Object.keys(finalScheduleMap).sort();
+          setTaughtTingkatList(distinctTingkat);
         }
       }
       const storedRoles = localStorage.getItem('user_roles');
@@ -124,7 +173,7 @@ export default function CbtBankSoal() {
       const [banksRes, mapelsRes, gurusRes, kelasRes] = await Promise.all([
         supabase
           .from('cbt_bank_soal')
-          .select('*, data_mapel(nama_mapel), data_guru(nama)')
+          .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_bank_soal_guru_id_fkey(nama), pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)')
           .order('created_at', { ascending: false }),
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
         supabase.from('data_guru').select('id, nama').order('nama'),
@@ -137,15 +186,33 @@ export default function CbtBankSoal() {
       if (gurusRes.data) setGuruList(gurusRes.data);
       if (kelasRes.data) setKelasList(kelasRes.data);
 
-      // Tentukan active bank berdasarkan query params:
+      // Tentukan active bank berdasarkan query params secara ketat:
       let targetBank = null;
-      if (queryBankId) {
-        targetBank = banks.find(b => String(b.id) === String(queryBankId));
-      }
-      if (!targetBank && queryMapelId) {
-        targetBank = banks.find(b => String(b.mapel_id) === String(queryMapelId));
-      }
-      if (!targetBank && banks.length > 0) {
+
+      // 1. Jika query param bankId secara eksplisit ada di URL
+      if (searchParams.has('bankId')) {
+        if (queryBankId) {
+          // Cari bank sesuai ID yang diberikan
+          targetBank = banks.find(b => String(b.id) === String(queryBankId)) || null;
+        } else {
+          // bankId ada tapi kosong (bankId=) -> sengaja dikosongkan karena bank belum ada / buat baru
+          targetBank = null;
+        }
+      } else if (queryMapelId || queryTingkat || queryJenisUjian || queryJadwalId) {
+        // 2. Jika tidak ada parameter bankId tapi ada parameter mapel/tingkat/jenis:
+        // Cari bank yang COCOK SECARA KETAT dengan mapel, tingkat kelas, dan jenis ujian
+        targetBank = banks.find(b => {
+          const matchMapel = queryMapelId ? Number(b.mapel_id) === Number(queryMapelId) : true;
+          const matchTingkat = queryTingkat
+            ? (String(b.tingkat_kelas) === String(queryTingkat) || String(b.tingkat_kelas) === 'Semua')
+            : true;
+          const matchJenis = queryJenisUjian
+            ? String(b.jenis_ujian || 'PSTS').toUpperCase() === String(queryJenisUjian).toUpperCase()
+            : true;
+          return matchMapel && matchTingkat && matchJenis;
+        }) || null;
+      } else if (banks.length > 0) {
+        // 3. Hanya buka banks[0] jika pengguna membuka halaman bank soal secara umum tanpa filter spesifik apapun
         targetBank = banks[0];
       }
 
@@ -183,9 +250,6 @@ export default function CbtBankSoal() {
 
   const selectBank = async (bank) => {
     setSelectedBank(bank);
-    if (queryJadwalId && bank?.id) {
-      supabase.from('cbt_jadwal_ujian').update({ bank_soal_id: bank.id }).eq('id', queryJadwalId).then();
-    }
     setPengaturanSoal({
       acak_soal: bank.acak_soal !== false,
       acak_opsi: bank.acak_opsi !== false,
@@ -251,20 +315,94 @@ export default function CbtBankSoal() {
     }
   };
 
+  // Pilihan Tingkat Kelas yang diampu oleh Guru login
+  const availableTingkatOptions = useMemo(() => {
+    if (taughtTingkatList.length > 0) {
+      return taughtTingkatList;
+    }
+    return ['7', '8', '9'];
+  }, [taughtTingkatList]);
+
+  // Pilihan Mata Pelajaran berdasarkan Tingkat Kelas yang dipilih
+  const availableMapelOptions = useMemo(() => {
+    if (isOPSOrPanitia) return mapelList;
+    const selTingkat = String(bankForm.tingkat_kelas || '');
+    if (teachingScheduleMap[selTingkat] && teachingScheduleMap[selTingkat].length > 0) {
+      const list = [...teachingScheduleMap[selTingkat]];
+      if (bankForm.mapel_id && !list.some(m => String(m.id) === String(bankForm.mapel_id))) {
+        const found = mapelList.find(m => String(m.id) === String(bankForm.mapel_id));
+        if (found) list.push(found);
+      }
+      return list;
+    }
+    return mapelList;
+  }, [isOPSOrPanitia, bankForm.tingkat_kelas, bankForm.mapel_id, teachingScheduleMap, mapelList]);
+
+  const handleTingkatKelasChange = (newTingkat) => {
+    const mapelsForNewTingkat = (teachingScheduleMap[newTingkat] && teachingScheduleMap[newTingkat].length > 0)
+      ? teachingScheduleMap[newTingkat]
+      : mapelList;
+    
+    let nextMapelId = bankForm.mapel_id;
+    const exists = mapelsForNewTingkat.some(m => String(m.id) === String(bankForm.mapel_id));
+    if (!exists) {
+      nextMapelId = mapelsForNewTingkat.length > 0 ? String(mapelsForNewTingkat[0].id) : '';
+    }
+
+    setBankForm(prev => {
+      const mObj = mapelList.find(m => String(m.id) === String(nextMapelId));
+      return {
+        ...prev,
+        tingkat_kelas: newTingkat,
+        mapel_id: nextMapelId,
+        judul: prev.id ? prev.judul : `${prev.jenis_ujian || 'PSTS'} - ${mObj?.nama_mapel || 'Mata Pelajaran'} - Kelas ${newTingkat}`
+      };
+    });
+  };
+
+  const handleOpenNewBank = () => {
+    const initialTingkat = queryTingkat || availableTingkatOptions[0] || '7';
+    const initialMapels = (teachingScheduleMap[initialTingkat] && teachingScheduleMap[initialTingkat].length > 0)
+      ? teachingScheduleMap[initialTingkat]
+      : mapelList;
+    const initialMapelId = queryMapelId || (initialMapels[0]?.id ? String(initialMapels[0].id) : '');
+    const curMapelObj = mapelList.find(m => String(m.id) === String(initialMapelId));
+    const curJenisUjian = queryJenisUjian || 'PSTS';
+
+    setBankForm({
+      id: null,
+      kode_bank: `BS-${(curMapelObj?.nama_mapel || 'MAPEL').slice(0, 3).toUpperCase()}-${initialTingkat}-${Date.now().toString().slice(-4)}`,
+      judul: `${curJenisUjian} - ${curMapelObj?.nama_mapel || 'Mata Pelajaran'} - Kelas ${initialTingkat}`,
+      mapel_id: initialMapelId,
+      tingkat_kelas: initialTingkat,
+      jenis_ujian: curJenisUjian,
+      guru_id: currentUser?.id || '',
+      pengawas_guru_id: '',
+      deskripsi: '',
+    });
+    setIsModalBankOpen(true);
+  };
+
   // Simpan Bank Soal (Baru / Edit)
   const handleSaveBank = async (e) => {
     e.preventDefault();
     try {
+      const payload = {
+        kode_bank: bankForm.kode_bank.toUpperCase(),
+        judul: bankForm.judul,
+        mapel_id: bankForm.mapel_id || null,
+        tingkat_kelas: bankForm.tingkat_kelas,
+        jenis_ujian: bankForm.jenis_ujian || 'PSTS',
+        guru_id: bankForm.guru_id || currentUser?.id || null,
+        pengawas_guru_id: bankForm.pengawas_guru_id ? parseInt(bankForm.pengawas_guru_id, 10) : null,
+        deskripsi: bankForm.deskripsi,
+      };
+
       if (bankForm.id) {
         const { error } = await supabase
           .from('cbt_bank_soal')
           .update({
-            kode_bank: bankForm.kode_bank.toUpperCase(),
-            judul: bankForm.judul,
-            mapel_id: bankForm.mapel_id || null,
-            tingkat_kelas: bankForm.tingkat_kelas,
-            guru_id: bankForm.guru_id || null,
-            deskripsi: bankForm.deskripsi,
+            ...payload,
             updated_at: new Date().toISOString(),
           })
           .eq('id', bankForm.id);
@@ -273,12 +411,7 @@ export default function CbtBankSoal() {
       } else {
         const { data, error } = await supabase.from('cbt_bank_soal').insert([
           {
-            kode_bank: bankForm.kode_bank.toUpperCase(),
-            judul: bankForm.judul,
-            mapel_id: bankForm.mapel_id || null,
-            tingkat_kelas: bankForm.tingkat_kelas,
-            guru_id: bankForm.guru_id || currentUser?.id || null,
-            deskripsi: bankForm.deskripsi,
+            ...payload,
             total_soal: 0,
           },
         ]).select().single();
@@ -355,24 +488,80 @@ export default function CbtBankSoal() {
     }
   };
 
-  // Hitung ulang bobot nilai secara otomatis berdasarkan jumlah butir soal (100 / Total Soal)
+  // Hitung ulang bobot nilai secara otomatis berdasarkan jumlah butir soal per jenis soal
+  // Aturan Penilaian Baru: Setiap jenis soal (PG, Isian Singkat, Esai) memiliki total skala 100 poin mandiri.
+  // Bobot per butir = 100 / jumlah butir soal pada jenis tersebut.
   const recalculateAutoBobot = async (bankId) => {
     try {
       const { data: allSoal, error } = await supabase
         .from('cbt_soal')
-        .select('id')
+        .select('id, jenis_soal')
         .eq('bank_soal_id', bankId);
       if (error || !allSoal || allSoal.length === 0) return;
 
-      const total = allSoal.length;
-      const autoBobot = parseFloat((100 / total).toFixed(2));
+      const pgList = allSoal.filter(s => s.jenis_soal === 'pg');
+      const isianList = allSoal.filter(s => s.jenis_soal === 'isian');
+      const esaiList = allSoal.filter(s => s.jenis_soal === 'esai');
 
-      await supabase
-        .from('cbt_soal')
-        .update({ bobot_nilai: autoBobot })
-        .eq('bank_soal_id', bankId);
+      // 1. Bobot Pilihan Ganda (Total 100 Poin)
+      if (pgList.length > 0) {
+        const bobotPg = parseFloat((100 / pgList.length).toFixed(2));
+        const pgIds = pgList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotPg }).in('id', pgIds);
+      }
+
+      // 2. Bobot Isian Singkat (Total 100 Poin)
+      if (isianList.length > 0) {
+        const bobotIsian = parseFloat((100 / isianList.length).toFixed(2));
+        const isianIds = isianList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotIsian }).in('id', isianIds);
+      }
+
+      // 3. Bobot Esai (Total 100 Poin)
+      if (esaiList.length > 0) {
+        const bobotEsai = parseFloat((100 / esaiList.length).toFixed(2));
+        const esaiIds = esaiList.map(s => s.id);
+        await supabase.from('cbt_soal').update({ bobot_nilai: bobotEsai }).in('id', esaiIds);
+      }
     } catch (err) {
       console.error('Error recalculateAutoBobot:', err);
+    }
+  };
+
+  const handleManualSyncBobot = async () => {
+    if (!selectedBank) return;
+    const curPg = (soalList || []).filter(s => s.jenis_soal === 'pg').length;
+    const curIsian = (soalList || []).filter(s => s.jenis_soal === 'isian').length;
+    const curEsai = (soalList || []).filter(s => s.jenis_soal === 'esai').length;
+
+    const res = await Swal.fire({
+      title: 'Sinkronkan Bobot Penilaian?',
+      html: `
+        <div class="text-left text-xs space-y-2 text-gray-700">
+          <p>Sistem akan menyeimbangkan bobot penilaian secara otomatis dengan aturan:</p>
+          <ul class="list-disc pl-4 space-y-1">
+            <li><b>Pilihan Ganda:</b> Total 100 poin (${curPg > 0 ? (100 / curPg).toFixed(2) : 0} poin per butir).</li>
+            <li><b>Isian Singkat:</b> Total 100 poin (${curIsian > 0 ? (100 / curIsian).toFixed(2) : 0} poin per butir).</li>
+            <li><b>Esai:</b> Total 100 poin (${curEsai > 0 ? (100 / curEsai).toFixed(2) : 0} poin per butir).</li>
+          </ul>
+          <p class="text-indigo-700 font-semibold pt-1">Nilai akhir siswa akan dirata-ratakan dari seluruh jenis soal yang ada pada paket ini.</p>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Ya, Sinkronkan Sekarang',
+      cancelButtonText: 'Batal',
+      confirmButtonColor: '#2a2c87',
+    });
+
+    if (res.isConfirmed) {
+      try {
+        await recalculateAutoBobot(selectedBank.id);
+        await selectBank(selectedBank);
+        Swal.fire('Berhasil', 'Bobot butir soal berhasil disinkronkan ke skala 100 poin per jenis soal.', 'success');
+      } catch (err) {
+        Swal.fire('Gagal', err.message || 'Gagal menyeimbangkan bobot.', 'error');
+      }
     }
   };
 
@@ -634,9 +823,14 @@ export default function CbtBankSoal() {
   // Helper metadata
   const activeKelas = kelasList.find(k => String(k.id) === String(queryKelasId));
   const activeMapel = mapelList.find(m => String(m.id) === String(queryMapelId)) || selectedBank?.data_mapel;
-  const filteredBanksForThisMapel = queryMapelId
-    ? bankList.filter(b => String(b.mapel_id) === String(queryMapelId))
-    : bankList;
+  const filteredBanksForThisMapel = useMemo(() => {
+    return bankList.filter(b => {
+      if (queryMapelId && String(b.mapel_id) !== String(queryMapelId)) return false;
+      if (queryTingkat && String(b.tingkat_kelas) !== String(queryTingkat) && String(b.tingkat_kelas) !== 'Semua') return false;
+      if (queryJenisUjian && b.jenis_ujian && String(b.jenis_ujian).toUpperCase() !== String(queryJenisUjian).toUpperCase()) return false;
+      return true;
+    });
+  }, [bankList, queryMapelId, queryTingkat, queryJenisUjian]);
 
   // Filter list soal berdasarkan tab (Semua, PG, Isian, Esai)
   const filteredSoalList = soalList.filter((s) => {
@@ -680,19 +874,7 @@ export default function CbtBankSoal() {
 
         {/* Tombol Buat Bank Soal: Ditaruh di Bagian Header (Sesuai Permintaan User) */}
         <button
-          onClick={() => {
-            const defaultTingkat = activeKelas?.nama_kelas ? String(activeKelas.nama_kelas).charAt(0) : '7';
-            setBankForm({
-              id: null,
-              kode_bank: `BS-${Date.now().toString().slice(-5)}`,
-              judul: activeMapel ? `Paket Soal ${activeMapel.nama_mapel}` : '',
-              mapel_id: queryMapelId || mapelList[0]?.id || '',
-              tingkat_kelas: ['7', '8', '9'].includes(defaultTingkat) ? defaultTingkat : '7',
-              guru_id: currentUser?.id || '',
-              deskripsi: '',
-            });
-            setIsModalBankOpen(true);
-          }}
+          onClick={handleOpenNewBank}
           className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition whitespace-nowrap"
         >
           <Plus size={16} />
@@ -711,12 +893,20 @@ export default function CbtBankSoal() {
                 <span className="px-2.5 py-1 bg-primary text-white text-[11px] font-black rounded-lg uppercase tracking-wider shadow-xs">
                   {selectedBank.kode_bank}
                 </span>
+                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-[11px] font-black rounded-lg border border-indigo-200">
+                  {selectedBank.jenis_ujian || 'PSTS'}
+                </span>
                 <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-[11px] font-bold rounded-lg border border-emerald-200">
                   Tingkat Kelas {selectedBank.tingkat_kelas}
                 </span>
                 <span className="px-2.5 py-1 bg-purple-50 text-purple-700 text-[11px] font-bold rounded-lg border border-purple-200">
                   {selectedBank.data_mapel?.nama_mapel || 'Mata Pelajaran'}
                 </span>
+                {selectedBank.pengawas?.nama && (
+                  <span className="px-2.5 py-1 bg-amber-50 text-amber-800 text-[11px] font-bold rounded-lg border border-amber-200">
+                    Pengawas: {selectedBank.pengawas.nama}
+                  </span>
+                )}
                 <span className="px-2.5 py-1 bg-blue-50 text-primary text-[11px] font-extrabold rounded-lg">
                   {soalList.length} Butir Soal Terisi
                 </span>
@@ -782,7 +972,9 @@ export default function CbtBankSoal() {
                     judul: selectedBank.judul,
                     mapel_id: selectedBank.mapel_id || '',
                     tingkat_kelas: selectedBank.tingkat_kelas || '7',
+                    jenis_ujian: selectedBank.jenis_ujian || 'PSTS',
                     guru_id: selectedBank.guru_id || '',
+                    pengawas_guru_id: selectedBank.pengawas_guru_id || '',
                     deskripsi: selectedBank.deskripsi || '',
                   });
                   setIsModalBankOpen(true);
@@ -868,31 +1060,39 @@ export default function CbtBankSoal() {
         <div className="bg-white rounded-2xl p-10 text-center border-2 border-dashed border-gray-200 space-y-4">
           <BookOpen className="w-12 h-12 text-primary/40 mx-auto" />
           <div>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              {queryJenisUjian && (
+                <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-black rounded-lg border border-indigo-200">
+                  Jenis: {queryJenisUjian}
+                </span>
+              )}
+              {queryTingkat && (
+                <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-lg border border-emerald-200">
+                  Tingkat: Kelas {queryTingkat}
+                </span>
+              )}
+              {activeMapel && (
+                <span className="px-2.5 py-1 bg-purple-50 text-purple-700 text-xs font-bold rounded-lg border border-purple-200">
+                  Mapel: {activeMapel.nama_mapel}
+                </span>
+              )}
+            </div>
             <h3 className="text-base font-bold text-gray-800">
-              Belum Ada Paket Bank Soal
+              Paket Bank Soal Belum Dibuat
             </h3>
             <p className="text-xs text-gray-400 mt-1 max-w-md mx-auto">
-              Mata pelajaran ini belum memiliki paket bank soal. Silakan klik tombol di bawah untuk membuat paket bank soal pertama.
+              {activeMapel
+                ? `Paket bank soal untuk mata pelajaran "${activeMapel.nama_mapel}" (${queryJenisUjian || 'PSTS'}${queryTingkat ? ` - Kelas ${queryTingkat}` : ''}) belum tersedia di sistem. Silakan buat paket bank soal baru terlebih dahulu.`
+                : 'Mata pelajaran ini belum memiliki paket bank soal. Silakan klik tombol di bawah untuk membuat paket bank soal pertama.'}
             </p>
           </div>
           <button
-            onClick={() => {
-              const defaultTingkat = activeKelas?.nama_kelas ? String(activeKelas.nama_kelas).charAt(0) : '7';
-              setBankForm({
-                id: null,
-                kode_bank: `BS-${Date.now().toString().slice(-5)}`,
-                judul: activeMapel ? `Paket Soal ${activeMapel.nama_mapel}` : '',
-                mapel_id: queryMapelId || mapelList[0]?.id || '',
-                tingkat_kelas: ['7', '8', '9'].includes(defaultTingkat) ? defaultTingkat : '7',
-                guru_id: currentUser?.id || '',
-                deskripsi: '',
-              });
-              setIsModalBankOpen(true);
-            }}
+            type="button"
+            onClick={handleOpenNewBank}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition"
           >
             <Plus size={16} />
-            <span>Buat Paket Bank Soal Pertama</span>
+            <span>Buat Paket Bank Soal Baru {queryJenisUjian ? `(${queryJenisUjian})` : ''}</span>
           </button>
         </div>
       )}
@@ -960,8 +1160,32 @@ export default function CbtBankSoal() {
             </button>
           </div>
 
-          <div className="text-xs text-gray-400 font-medium">
-            Total Bobot: <strong>{soalList.reduce((acc, s) => acc + (parseFloat(s.bobot_nilai) || 0), 0)} Poin</strong>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-semibold text-gray-500">Skema Bobot:</span>
+            {pgCount > 0 && (
+              <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 font-bold border border-blue-200">
+                PG: {pgCount} Soal ({(100 / pgCount).toFixed(1)} Poin/butir = 100 Poin)
+              </span>
+            )}
+            {isianCount > 0 && (
+              <span className="px-2 py-0.5 rounded-lg bg-amber-50 text-amber-700 font-bold border border-amber-200">
+                Isian: {isianCount} Soal ({(100 / isianCount).toFixed(1)} Poin/butir = 100 Poin)
+              </span>
+            )}
+            {esaiCount > 0 && (
+              <span className="px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 font-bold border border-purple-200">
+                Esai: {esaiCount} Soal ({(100 / esaiCount).toFixed(1)} Poin/butir = 100 Poin)
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleManualSyncBobot}
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold border border-indigo-200 transition"
+              title="Hitung ulang pembagian bobot 100 poin untuk masing-masing jenis soal"
+            >
+              <RefreshCw size={12} />
+              <span>Seimbangkan Bobot Otomatis</span>
+            </button>
           </div>
         </div>
       )}
@@ -1506,7 +1730,7 @@ export default function CbtBankSoal() {
             </h3>
 
             <form onSubmit={handleSaveBank} className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">Kode Paket *</label>
                   <input
@@ -1518,15 +1742,42 @@ export default function CbtBankSoal() {
                   />
                 </div>
                 <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">Jenis Ujian *</label>
+                  <select
+                    value={bankForm.jenis_ujian || 'PSTS'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setBankForm(prev => {
+                        const mObj = mapelList.find(m => String(m.id) === String(prev.mapel_id));
+                        return {
+                          ...prev,
+                          jenis_ujian: val,
+                          judul: prev.id ? prev.judul : `${val} - ${mObj?.nama_mapel || 'Mata Pelajaran'} - Kelas ${prev.tingkat_kelas}`
+                        };
+                      });
+                    }}
+                    className="w-full text-xs border rounded-xl p-2.5 bg-white font-bold text-indigo-700"
+                    required
+                  >
+                    <option value="PSTS">PSTS</option>
+                    <option value="PSAS">PSAS</option>
+                    <option value="PSAJ">PSAJ</option>
+                    <option value="PAT">PAT</option>
+                    <option value="Formatif">Formatif</option>
+                  </select>
+                </div>
+                <div>
                   <label className="block text-xs font-bold text-gray-700 mb-1">Tingkat Kelas</label>
                   <select
                     value={bankForm.tingkat_kelas}
-                    onChange={(e) => setBankForm({ ...bankForm, tingkat_kelas: e.target.value })}
+                    onChange={(e) => handleTingkatKelasChange(e.target.value)}
                     className="w-full text-xs border rounded-xl p-2.5 bg-white"
                   >
-                    <option value="7">Kelas 7</option>
-                    <option value="8">Kelas 8</option>
-                    <option value="9">Kelas 9</option>
+                    {availableTingkatOptions.map((tk) => (
+                      <option key={tk} value={tk}>
+                        Kelas {tk}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
@@ -1535,25 +1786,60 @@ export default function CbtBankSoal() {
                 <label className="block text-xs font-bold text-gray-700 mb-1">Judul Paket Ujian *</label>
                 <input
                   type="text"
-                  placeholder="Contoh: Paket Soal PSTS Bahasa Indonesia Kls 7"
+                  placeholder="Contoh: PSTS - Bahasa Indonesia - Kelas 7"
                   value={bankForm.judul}
                   onChange={(e) => setBankForm({ ...bankForm, judul: e.target.value })}
-                  className="w-full text-xs border rounded-xl p-2.5"
+                  className="w-full text-xs border rounded-xl p-2.5 font-semibold"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-700 mb-1">Mata Pelajaran</label>
+                <label className="block text-xs font-bold text-gray-700 mb-1">Mata Pelajaran *</label>
                 <select
                   value={bankForm.mapel_id}
-                  onChange={(e) => setBankForm({ ...bankForm, mapel_id: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setBankForm(prev => {
+                      const mObj = mapelList.find(m => String(m.id) === String(val));
+                      return {
+                        ...prev,
+                        mapel_id: val,
+                        judul: prev.id ? prev.judul : `${prev.jenis_ujian || 'PSTS'} - ${mObj?.nama_mapel || 'Mata Pelajaran'} - Kelas ${prev.tingkat_kelas}`
+                      };
+                    });
+                  }}
                   className="w-full text-xs border rounded-xl p-2.5 bg-white"
+                  required
                 >
                   <option value="">-- Pilih Mapel --</option>
-                  {mapelList.map((m) => (
+                  {availableMapelOptions.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.nama_mapel}
+                    </option>
+                  ))}
+                </select>
+                {taughtTingkatList.length > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    * Menampilkan mata pelajaran yang Anda ampu di Kelas {bankForm.tingkat_kelas}
+                  </p>
+                )}
+              </div>
+
+              {/* Pilihan Guru Pengawas */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  Nama Pengawas Ujian
+                </label>
+                <select
+                  value={bankForm.pengawas_guru_id}
+                  onChange={(e) => setBankForm({ ...bankForm, pengawas_guru_id: e.target.value })}
+                  className="w-full text-xs border rounded-xl p-2.5 bg-white"
+                >
+                  <option value="">-- Pilih Guru Pengawas (Opsional) --</option>
+                  {guruList.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.nama}
                     </option>
                   ))}
                 </select>

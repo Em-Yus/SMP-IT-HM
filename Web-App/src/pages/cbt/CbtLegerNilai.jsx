@@ -48,7 +48,7 @@ export default function CbtLegerNilai() {
     setLoading(true);
     try {
       // 1. Ambil jadwal
-      const { data: jData } = await supabase
+      const { data: jData, error: jErr } = await supabase
         .from('cbt_jadwal_ujian')
         .select(`
           *,
@@ -61,45 +61,127 @@ export default function CbtLegerNilai() {
         .eq('id', jadwalId)
         .single();
 
+      if (jErr) throw jErr;
       setJadwal(jData);
 
-      // Ambil daftar kelas & ruang untuk filter
+      // Ambil daftar kelas & ruang untuk filter & mapping
       const [kRes, rRes] = await Promise.all([
-        supabase.from('data_kelas').select('id, nama_kelas').order('nama_kelas'),
+        supabase.from('data_kelas').select('id, nama_kelas, tingkat').order('nama_kelas'),
         supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang')
       ]);
+      const allKelas = kRes.data || [];
+      const allRuang = rRes.data || [];
       if (kRes.data) setKelasList(kRes.data);
       if (rRes.data) setRuangList(rRes.data);
 
       // 2. Ambil butir soal
-      const { data: sData } = await supabase
-        .from('cbt_soal')
-        .select('*')
-        .eq('bank_soal_id', jData.bank_soal_id)
-        .order('nomor_urut');
+      let sData = [];
+      let targetBankId = jData.bank_soal_id;
+      if (!targetBankId && jData.mapel_id) {
+        const { data: qBank } = await supabase
+          .from('cbt_bank_soal')
+          .select('id')
+          .eq('mapel_id', jData.mapel_id)
+          .order('id', { ascending: false })
+          .limit(1);
+        if (qBank && qBank.length > 0) {
+          targetBankId = qBank[0].id;
+        }
+      }
+      if (targetBankId) {
+        const { data: qSoal } = await supabase
+          .from('cbt_soal')
+          .select('*')
+          .eq('bank_soal_id', targetBankId)
+          .order('nomor_urut');
+        sData = qSoal || [];
+      }
+      setSoalList(sData);
 
-      setSoalList(sData || []);
-
-      // 3. Ambil seluruh siswa di kelas jadwal tersebut
-      const { data: siswaKelas } = await supabase
-        .from('data_siswa')
-        .select('id, nama_lengkap, nisn, nipd, kelas_id, data_kelas(nama_kelas)')
-        .eq('kelas_id', jData.kelas_id)
-        .order('nama_lengkap');
-
-      // 4. Ambil seluruh sesi siswa
-      const { data: sList } = await supabase
+      // 3. Ambil seluruh sesi siswa yang sudah ada di cbt_sesi_siswa
+      const { data: sList, error: sErr } = await supabase
         .from('cbt_sesi_siswa')
-        .select('*, data_siswa(id, nama_lengkap, nisn, nipd, kelas_id, data_kelas(nama_kelas))')
+        .select(`
+          *,
+          data_siswa(id, nama, nisn, nipd, kelas)
+        `)
         .eq('jadwal_id', jadwalId);
 
+      if (sErr) throw sErr;
+
+      // 4. Ambil alokasi ruangan siswa di cbt_peserta_ruang jika ada
+      const { data: prList } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('siswa_id, ruang_id, nomor_meja, data_ruang(nama_ruang)')
+        .eq('jadwal_id', jadwalId);
+
+      const prMap = new Map();
+      (prList || []).forEach(pr => prMap.set(Number(pr.siswa_id), pr));
+
+      // 5. Kumpulkan siswa: Masukkan semua yang sudah ikut ujian, ditambah siswa sekelas/alokasi
+      const studentMap = new Map();
+
+      // Prioritas 1: Masukkan semua siswa yang memiliki sesi nilai
+      (sList || []).forEach((s) => {
+        if (s.data_siswa) {
+          studentMap.set(Number(s.siswa_id), s.data_siswa);
+        }
+      });
+
+      // Prioritas 2: Siswa dari kelas target atau alokasi ruang yang belum mulai ujian
+      if (jData.kelas_id) {
+        const kObj = allKelas.find(k => Number(k.id) === Number(jData.kelas_id));
+        const targetKelasNama = kObj?.nama_kelas;
+        if (targetKelasNama) {
+          const { data: siswaKls } = await supabase
+            .from('data_siswa')
+            .select('id, nama, nisn, nipd, kelas')
+            .eq('kelas', targetKelasNama)
+            .order('nama');
+          (siswaKls || []).forEach(sw => {
+            if (!studentMap.has(Number(sw.id))) {
+              studentMap.set(Number(sw.id), sw);
+            }
+          });
+        }
+      } else if (prList && prList.length > 0) {
+        const enrolledSiswaIds = prList.map(pr => Number(pr.siswa_id)).filter(Boolean);
+        if (enrolledSiswaIds.length > 0) {
+          const { data: enrolledStudents } = await supabase
+            .from('data_siswa')
+            .select('id, nama, nisn, nipd, kelas')
+            .in('id', enrolledSiswaIds)
+            .order('nama');
+          (enrolledStudents || []).forEach(sw => {
+            if (!studentMap.has(Number(sw.id))) {
+              studentMap.set(Number(sw.id), sw);
+            }
+          });
+        }
+      } else if (studentMap.size > 0) {
+        // Ambil juga teman sekelas dari siswa yang sudah mulai/selesai ujian
+        const classesInSessions = Array.from(new Set(Array.from(studentMap.values()).map(s => s.kelas).filter(Boolean)));
+        if (classesInSessions.length > 0) {
+          const { data: classmates } = await supabase
+            .from('data_siswa')
+            .select('id, nama, nisn, nipd, kelas')
+            .in('kelas', classesInSessions)
+            .order('nama');
+          (classmates || []).forEach(sw => {
+            if (!studentMap.has(Number(sw.id))) {
+              studentMap.set(Number(sw.id), sw);
+            }
+          });
+        }
+      }
+
       const sesiMap = new Map();
-      (sList || []).forEach((s) => sesiMap.set(s.siswa_id, s));
+      (sList || []).forEach((s) => sesiMap.set(Number(s.siswa_id), s));
 
       // Gabungkan siswa dengan sesi pengerjaannya
-      const mergedList = (siswaKelas || []).map((siswa) => {
-        const s = sesiMap.get(siswa.id);
-        const nilai = s?.nilai_akhir || 0;
+      const mergedList = Array.from(studentMap.values()).map((siswa) => {
+        const s = sesiMap.get(Number(siswa.id));
+        const nilai = s?.nilai_akhir !== null && s?.nilai_akhir !== undefined ? parseFloat(s.nilai_akhir) : 0;
         const statusSesi = s?.status || 'belum_mulai';
 
         let statusKelulusan = 'susulan';
@@ -108,24 +190,35 @@ export default function CbtLegerNilai() {
         } else if (statusSesi === 'mengerjakan' || statusSesi === 'dijeda') {
           statusKelulusan = 'mengerjakan';
         } else {
-          statusKelulusan = 'susulan';
+          statusKelulusan = s?.is_susulan ? 'susulan' : 'belum_mulai';
         }
+
+        const pr = prMap.get(Number(siswa.id));
+        const ruangNama = pr?.data_ruang?.nama_ruang || jData?.data_ruang?.nama_ruang || 'Lab CBT';
+        const ruangId = pr?.ruang_id || jData?.ruang_id;
+
+        const kObj = allKelas.find(k => (k.nama_kelas || '').trim().toLowerCase() === (siswa.kelas || '').trim().toLowerCase());
+        const kelasId = kObj?.id ? String(kObj.id) : (siswa.kelas || 'all');
+        const kelasNama = siswa.kelas || kObj?.nama_kelas || 'Kelas';
 
         return {
           id: s?.id || `draft_${siswa.id}`,
           siswa_id: siswa.id,
-          data_siswa: siswa,
+          data_siswa: {
+            ...siswa,
+            nama_lengkap: siswa.nama || siswa.nama_lengkap,
+          },
           nilai_akhir: nilai,
-          skor_pg: s?.skor_pg || 0,
-          skor_isian: s?.skor_isian || 0,
-          skor_esai: s?.skor_esai || 0,
+          skor_pg: s?.skor_pg ? parseFloat(s.skor_pg) : 0,
+          skor_isian: s?.skor_isian ? parseFloat(s.skor_isian) : 0,
+          skor_esai: s?.skor_esai ? parseFloat(s.skor_esai) : 0,
           status: statusSesi,
           status_kelulusan: statusKelulusan,
           total_pelanggaran: s?.total_pelanggaran || 0,
-          ruang_nama: jData?.data_ruang?.nama_ruang || 'Lab CBT',
-          ruang_id: jData?.ruang_id,
-          kelas_nama: siswa.data_kelas?.nama_kelas || jData?.data_kelas?.nama_kelas || 'Kelas',
-          kelas_id: siswa.kelas_id || jData?.kelas_id,
+          ruang_nama: ruangNama,
+          ruang_id: ruangId,
+          kelas_nama: kelasNama,
+          kelas_id: kelasId,
           is_remedial: s?.is_remedial || false,
           is_susulan: s?.is_susulan || false,
         };
@@ -139,7 +232,7 @@ export default function CbtLegerNilai() {
 
       setSesiList(sortedForRank);
 
-      // 5. Ambil jawaban siswa untuk analisis
+      // 6. Ambil jawaban siswa untuk analisis
       const sesiIds = (sList || []).map((s) => s.id);
       let allAnswers = [];
       if (sesiIds.length > 0) {
@@ -151,7 +244,7 @@ export default function CbtLegerNilai() {
       }
       setJawabanList(allAnswers);
 
-      // 6. Hitung Psikometrik
+      // 7. Hitung Psikometrik
       const psycho = calculatePsychometrics({
         soals: sData || [],
         sessions: sList || [],
@@ -160,6 +253,7 @@ export default function CbtLegerNilai() {
       setPsychometrics(psycho);
     } catch (err) {
       console.error('Error fetching leger data:', err);
+      Swal.fire('Error', err.message || 'Gagal memuat leger nilai.', 'error');
     } finally {
       setLoading(false);
     }
@@ -241,8 +335,18 @@ export default function CbtLegerNilai() {
   };
 
   // Modal Review Jawaban Siswa
-  const openReviewModal = (sesi) => {
-    const studentAnswers = jawabanList.filter((a) => a.sesi_id === sesi.id);
+  const openReviewModal = async (sesi) => {
+    let studentAnswers = jawabanList.filter((a) => Number(a.sesi_id) === Number(sesi.id));
+    if (studentAnswers.length === 0 && sesi.id && !String(sesi.id).startsWith('draft_')) {
+      const { data: freshAns } = await supabase
+        .from('cbt_jawaban_siswa')
+        .select('*')
+        .eq('sesi_id', sesi.id);
+      if (freshAns && freshAns.length > 0) {
+        studentAnswers = freshAns;
+      }
+    }
+
     const scoreInit = {};
     studentAnswers.forEach((a) => {
       scoreInit[a.soal_id] =
@@ -292,12 +396,27 @@ export default function CbtLegerNilai() {
           totalSkorEsai += newScore;
         }
 
-        const ans = selectedStudentAnswers.answers.find((a) => a.soal_id === soal.id);
+        const ans = selectedStudentAnswers.answers.find((a) => Number(a.soal_id) === Number(soal.id));
         if (ans) {
           await supabase
             .from('cbt_jawaban_siswa')
-            .update({ skor_final_guru: newScore, dikoreksi_manual: true })
+            .update({
+              skor_final_guru: newScore,
+              status_koreksi: 'manual_guru',
+              updated_at: new Date().toISOString()
+            })
             .eq('id', ans.id);
+        } else if (selectedStudentAnswers.sesi?.id && !String(selectedStudentAnswers.sesi.id).startsWith('draft_')) {
+          await supabase
+            .from('cbt_jawaban_siswa')
+            .insert({
+              sesi_id: selectedStudentAnswers.sesi.id,
+              soal_id: soal.id,
+              jawaban_siswa: '',
+              skor_final_guru: newScore,
+              status_koreksi: 'manual_guru',
+              updated_at: new Date().toISOString()
+            });
         }
       }
 
@@ -346,12 +465,26 @@ export default function CbtLegerNilai() {
     }
   };
 
+  const parseOptions = (raw) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_e) {
+      return [];
+    }
+  };
+
   // Filter & Urutkan Tabel
   const filteredAndSortedSesi = sesiList
     .filter((item) => {
       // Filter Tab Kelas
-      if (selectedKelasTab !== 'all' && String(item.kelas_id) !== String(selectedKelasTab)) {
-        return false;
+      if (selectedKelasTab !== 'all') {
+        const selKObj = kelasList.find(k => String(k.id) === String(selectedKelasTab));
+        const matchId = String(item.kelas_id) === String(selectedKelasTab);
+        const matchName = selKObj && String(item.kelas_nama).toLowerCase() === String(selKObj.nama_kelas).toLowerCase();
+        if (!matchId && !matchName) return false;
       }
       // Filter Ruang
       if (filterRuang && String(item.ruang_id) !== String(filterRuang)) {
@@ -560,8 +693,8 @@ export default function CbtLegerNilai() {
           Semua Kelas ({sesiList.length})
         </button>
         {kelasList.map((k) => {
-          const count = sesiList.filter((s) => String(s.kelas_id) === String(k.id)).length;
-          if (count === 0 && String(jadwal?.kelas_id) !== String(k.id)) return null;
+          const count = sesiList.filter((s) => String(s.kelas_id) === String(k.id) || (s.kelas_nama && String(s.kelas_nama).toLowerCase() === String(k.nama_kelas).toLowerCase())).length;
+          if (count === 0) return null;
           return (
             <button
               key={k.id}
@@ -727,17 +860,36 @@ export default function CbtLegerNilai() {
 
             <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
               {soalList.map((soal) => {
-                const ans = selectedStudentAnswers.answers.find((a) => a.soal_id === soal.id);
-                const currentScore = tempScores[soal.id] || 0;
+                const ans = selectedStudentAnswers.answers.find((a) => Number(a.soal_id) === Number(soal.id));
+                const currentScore = tempScores[soal.id] !== undefined ? tempScores[soal.id] : (ans?.skor_final_guru ?? ans?.skor_ai ?? 0);
+                const userAns = ans?.jawaban_siswa;
+                const hasAnswered = userAns !== undefined && userAns !== null && String(userAns).trim() !== '';
+
+                const opsiList = parseOptions(soal.opsi_jawaban);
+                const chosenOpsi = opsiList.find(
+                  (o) => String(o.id).trim().toUpperCase() === String(userAns).trim().toUpperCase()
+                );
+                const keyOpsi = opsiList.find(
+                  (o) => String(o.id).trim().toUpperCase() === String(soal.kunci_jawaban).trim().toUpperCase()
+                );
+
+                const isPg = soal.jenis_soal === 'pg';
+                const isIsian = soal.jenis_soal === 'isian';
+                const isEsai = soal.jenis_soal === 'esai';
 
                 return (
-                  <div key={soal.id} className="p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-2">
+                  <div key={soal.id} className="p-4 bg-gray-50 rounded-xl border border-gray-200 space-y-3">
                     <div className="flex justify-between items-start">
-                      <span className="text-xs font-bold text-gray-700">
-                        Soal #{soal.nomor_urut} ({soal.jenis_soal.toUpperCase()}) - Bobot: {soal.bobot_nilai} Poin
-                      </span>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-gray-600">Skor:</span>
+                        <span className="w-6 h-6 rounded-lg bg-primary text-white flex items-center justify-center text-xs font-bold">
+                          {soal.nomor_urut}
+                        </span>
+                        <span className="text-xs font-bold text-gray-700 uppercase">
+                          {soal.jenis_soal} • Bobot: {soal.bobot_nilai} Poin
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-xl border border-gray-200 shadow-2xs">
+                        <span className="text-xs font-bold text-gray-600">Skor Guru:</span>
                         <input
                           type="number"
                           step="0.5"
@@ -747,28 +899,126 @@ export default function CbtLegerNilai() {
                           onChange={(e) =>
                             setTempScores({ ...tempScores, [soal.id]: e.target.value })
                           }
-                          className="w-16 p-1 text-center font-bold text-xs border rounded-lg bg-white"
+                          className="w-16 p-1 text-center font-black text-xs border rounded-lg bg-blue-50/50 text-primary outline-none focus:ring-2 focus:ring-primary"
                         />
                       </div>
                     </div>
 
                     <p className="text-xs text-gray-900 font-medium whitespace-pre-wrap">{soal.pertanyaan}</p>
 
-                    <div className="p-2.5 bg-white rounded-lg border text-xs space-y-1">
-                      <span className="text-[11px] font-bold text-gray-500 block">Jawaban Siswa:</span>
-                      <p className="text-gray-800 italic">
-                        {ans?.jawaban_teks || '(Siswa tidak menjawab)'}
-                      </p>
-                    </div>
+                    {soal.gambar_url && (
+                      <img
+                        src={soal.gambar_url}
+                        alt={`Soal #${soal.nomor_urut}`}
+                        className="max-h-48 rounded-lg border border-gray-200 object-contain bg-white p-1"
+                      />
+                    )}
 
-                    {soal.jenis_soal === 'esai' && (
-                      <div className="p-2.5 bg-purple-50 rounded-lg border border-purple-200 text-xs space-y-1">
-                        <span className="text-[11px] font-bold text-purple-900 block">
-                          Evaluasi Semantik Model AI:
-                        </span>
-                        <p className="text-purple-800 text-[11px] leading-relaxed">
-                          {ans?.penjelasan_ai || 'Model mencocokkan kemiripan semantik dengan rubrik guru.'}
-                        </p>
+                    {/* Tampilan Jawaban & Kunci Berdasarkan Jenis Soal */}
+                    {isPg && (
+                      <div className="space-y-2">
+                        <div className="p-3 bg-white rounded-xl border text-xs space-y-1.5">
+                          <span className="text-[11px] font-bold text-gray-500 block">Jawaban Siswa:</span>
+                          {hasAnswered ? (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[11px] font-black ${
+                                  ans?.is_benar
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}
+                              >
+                                Pilihan {userAns} {ans?.is_benar ? '(Benar) ✓' : '(Salah) ✗'}
+                              </span>
+                              <span className="text-gray-800 font-medium">
+                                {chosenOpsi?.text || ''}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-rose-600 italic font-medium">(Siswa tidak menjawab)</p>
+                          )}
+                        </div>
+
+                        <div className="p-2.5 bg-emerald-50/60 rounded-xl border border-emerald-200 text-xs flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-bold text-emerald-900">Kunci Jawaban Resmi:</span>
+                          <span className="font-bold text-emerald-950">
+                            Pilihan {soal.kunci_jawaban} {keyOpsi?.text ? `(${keyOpsi.text})` : ''}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {isIsian && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="p-3 bg-white rounded-xl border">
+                          <span className="text-[11px] font-bold text-gray-500 block mb-1">Jawaban Siswa:</span>
+                          {hasAnswered ? (
+                            <div className="flex items-center gap-2">
+                              <p className={`font-bold ${ans?.is_benar ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                "{userAns}"
+                              </p>
+                              <span
+                                className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded ${
+                                  ans?.is_benar
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}
+                              >
+                                {ans?.is_benar ? 'Benar ✓' : 'Salah ✗'}
+                              </span>
+                            </div>
+                          ) : (
+                            <p className="text-rose-600 italic font-medium">(Siswa tidak menjawab)</p>
+                          )}
+                        </div>
+
+                        <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200">
+                          <span className="text-[11px] font-bold text-amber-900 block mb-1">Kunci Jawaban Resmi:</span>
+                          <p className="font-bold text-amber-950">"{soal.kunci_jawaban || '-'}"</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {isEsai && (
+                      <div className="space-y-2 text-xs">
+                        <div className="p-3 bg-white rounded-xl border space-y-1">
+                          <span className="text-[11px] font-bold text-gray-500 block">Jawaban Uraian Siswa:</span>
+                          {hasAnswered ? (
+                            <p className="text-gray-900 whitespace-pre-wrap leading-relaxed font-medium bg-gray-50/80 p-2.5 rounded-lg border border-gray-100">
+                              {userAns}
+                            </p>
+                          ) : (
+                            <p className="text-rose-600 italic font-medium">(Siswa tidak menjawab)</p>
+                          )}
+                        </div>
+
+                        {soal.rubrik_esai && (
+                          <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-200 space-y-1">
+                            <span className="text-[11px] font-bold text-blue-900 block">Rubrik Penilaian Guru:</span>
+                            <p className="text-blue-950 text-[11px] whitespace-pre-wrap leading-relaxed">
+                              {soal.rubrik_esai}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-purple-900 flex items-center gap-1.5">
+                              <Brain size={13} className="text-purple-700" /> Evaluasi Semantik Model AI:
+                            </span>
+                            {ans?.skor_ai !== null && ans?.skor_ai !== undefined && (
+                              <span className="text-[10px] font-black px-2 py-0.5 bg-purple-200 text-purple-900 rounded-full">
+                                Rekomendasi Skor AI: {ans.skor_ai} / {soal.bobot_nilai} Poin
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-purple-900 text-[11px] leading-relaxed font-medium">
+                            {ans?.feedback_ai ||
+                              (ans?.skor_ai !== null && ans?.skor_ai !== undefined
+                                ? `Model AI mengevaluasi kesesuaian uraian siswa dengan kata kunci pada rubrik guru dan memberikan rekomendasi skor ${ans.skor_ai} poin.`
+                                : 'Model AI mencocokkan kemiripan semantik dengan rubrik guru.')}
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>

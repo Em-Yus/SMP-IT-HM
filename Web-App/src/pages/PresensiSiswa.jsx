@@ -69,7 +69,7 @@ export default function PresensiSiswa() {
 
   const [rekapData, setRekapData] = useState([]);
   const [isRekapLoading, setIsRekapLoading] = useState(false);
-  const [rekapStats, setRekapStats] = useState({ hadir: 0, izin: 0, terlambat: 0, bolos: 0 });
+  const [rekapStats, setRekapStats] = useState({ hadir: 0, dispensasi: 0, izin: 0, terlambat: 0, bolos: 0 });
 
   // Peringatan Kedisiplinan State
   const [peringatanFilterMode, setPeringatanFilterMode] = useState('semua'); // 'semua' | '7_hari' | 'mingguan' | '30_hari' | 'bulanan'
@@ -435,15 +435,16 @@ export default function PresensiSiswa() {
 
       setRekapData(finalData);
 
-      let hadir = 0, izin = 0, terlambat = 0, bolos = 0;
+      let hadir = 0, dispensasi = 0, izin = 0, terlambat = 0, bolos = 0;
       finalData.forEach(d => {
         const st = d.status || '';
-        if (st.includes('Hadir')) hadir++;
-        if (st.includes('Izin') || st.includes('Sakit') || st.includes('Dispensasi')) izin++;
-        if (st.includes('Terlambat')) terlambat++;
-        if (st.includes('Bolos') || st === 'Alfa') bolos++;
+        if (st.includes('Dispensasi')) dispensasi++;
+        else if (st.includes('Hadir')) hadir++;
+        else if (st.includes('Izin') || st.includes('Sakit')) izin++;
+        else if (st.includes('Terlambat')) terlambat++;
+        else if (st.includes('Bolos') || st === 'Alfa') bolos++;
       });
-      setRekapStats({ hadir, izin, terlambat, bolos });
+      setRekapStats({ hadir, dispensasi, izin, terlambat, bolos });
 
     } catch (e) {
       console.error(e);
@@ -458,7 +459,8 @@ export default function PresensiSiswa() {
       if (rekapFilterKelas && d.kelas !== rekapFilterKelas) return false;
       if (rekapFilterStatus) {
         if (rekapFilterStatus === 'Hadir' && !d.status.includes('Hadir')) return false;
-        if (rekapFilterStatus === 'Izin' && !(d.status.includes('Izin') || d.status.includes('Sakit') || d.status.includes('Dispensasi'))) return false;
+        if (rekapFilterStatus === 'Dispensasi' && !d.status.includes('Dispensasi')) return false;
+        if (rekapFilterStatus === 'Izin' && !(d.status.includes('Izin') || d.status.includes('Sakit'))) return false;
         if (rekapFilterStatus === 'Terlambat' && !d.status.includes('Terlambat')) return false;
         if (rekapFilterStatus === 'Bolos' && !(d.status.includes('Bolos') || d.status === 'Alfa')) return false;
       }
@@ -1574,9 +1576,10 @@ export default function PresensiSiswa() {
               >
                 <option value="">Semua Status</option>
                 <option value="Hadir">Hadir</option>
+                <option value="Dispensasi">Dispensasi</option>
                 <option value="Terlambat">Terlambat</option>
                 <option value="Bolos">Bolos / Alfa</option>
-                <option value="Izin">Izin / Sakit / Dispensasi</option>
+                <option value="Izin">Izin / Sakit</option>
               </select>
 
               <div className="relative flex-1 min-w-[200px]">
@@ -1604,14 +1607,21 @@ export default function PresensiSiswa() {
             </div>
           </div>
 
-          {/* 4 Kartu KPI Kehadiran */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* 5 Kartu KPI Kehadiran (Termasuk Dispensasi) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
             <div className="bg-green-50 rounded-2xl p-5 border border-green-100 flex items-center justify-between">
               <div>
                 <p className="text-xs font-bold text-green-600 uppercase mb-1">Hadir</p>
                 <h4 className="text-3xl font-black text-gray-800">{rekapStats.hadir}</h4>
               </div>
               <CheckCircle size={36} className="text-green-200" />
+            </div>
+            <div className="bg-cyan-50 rounded-2xl p-5 border border-cyan-100 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-cyan-600 uppercase mb-1">Dispensasi</p>
+                <h4 className="text-3xl font-black text-cyan-800">{rekapStats.dispensasi}</h4>
+              </div>
+              <Sparkles size={36} className="text-cyan-200" />
             </div>
             <div className="bg-orange-50 rounded-2xl p-5 border border-orange-100 flex items-center justify-between">
               <div>
@@ -1627,7 +1637,7 @@ export default function PresensiSiswa() {
               </div>
               <Clock size={36} className="text-yellow-200" />
             </div>
-            <div className="bg-red-50 rounded-2xl p-5 border border-red-100 flex items-center justify-between">
+            <div className="bg-red-50 rounded-2xl p-5 border border-red-100 flex items-center justify-between col-span-2 sm:col-span-1">
               <div>
                 <p className="text-xs font-bold text-red-600 uppercase mb-1">Bolos / Alfa</p>
                 <h4 className="text-3xl font-black text-gray-800">{rekapStats.bolos}</h4>

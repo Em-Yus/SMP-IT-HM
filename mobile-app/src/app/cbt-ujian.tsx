@@ -11,13 +11,18 @@ import {
   Modal,
   Platform,
   BackHandler,
-  AppState
+  AppState,
+  ToastAndroid,
+  RefreshControl,
+  StatusBar
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import CryptoJS from 'crypto-js';
 import {
   ChevronLeft,
   ChevronRight,
@@ -38,22 +43,153 @@ import {
   User,
   BookOpen,
   Play,
-  QrCode
+  QrCode,
+  FileQuestion,
+  RefreshCw
 } from 'lucide-react-native';
 import { supabase } from '../../services/supabaseClient';
 import { calculateCbtFinalScore } from '../services/cbt/scoringService';
+import { analyzeMobileFrame } from '../services/cbt/mobileFaceDetector';
+import { evaluateEssayWithAI } from '../services/cbt/aiGradingService';
+
+const SECRET_KEY = process.env.EXPO_PUBLIC_KARTU_SISWA_SECRET || "KARTU_SISWA_SECRET";
+
+// Helper robust parsing opsi jawaban pilihan ganda
+const parseOpsiJawaban = (rawOpsi: any): Array<{ id: string; text: string; gambar_url?: string }> => {
+  if (!rawOpsi) return [];
+  let parsed = rawOpsi;
+  if (typeof rawOpsi === 'string') {
+    try {
+      parsed = JSON.parse(rawOpsi);
+    } catch {
+      return [];
+    }
+  }
+  if (Array.isArray(parsed)) {
+    return parsed.map((item: any, idx: number) => {
+      const defaultId = String.fromCharCode(65 + idx);
+      if (typeof item === 'string') {
+        return { id: defaultId, text: item };
+      }
+      return {
+        id: String(item?.id || defaultId).toUpperCase(),
+        text: String(item?.text ?? item?.teks ?? item?.label ?? item?.opsi ?? item?.value ?? ''),
+        gambar_url: item?.gambar_url,
+      };
+    });
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    return Object.entries(parsed).map(([key, val]) => {
+      if (typeof val === 'object' && val !== null) {
+        return {
+          id: key.toUpperCase(),
+          text: String((val as any)?.text ?? (val as any)?.teks ?? ''),
+          gambar_url: (val as any)?.gambar_url,
+        };
+      }
+      return {
+        id: key.toUpperCase(),
+        text: String(val ?? ''),
+      };
+    });
+  }
+  return [];
+};
+
+// Helper proses pengacakan soal per kelompok jenis dan acak opsi jawaban
+const processExamQuestions = (
+  rawSoals: any[],
+  isAcakSoal: boolean,
+  isAcakOpsi: boolean,
+  siswaId: string | number,
+  seedKey: string | number
+) => {
+  if (!rawSoals || rawSoals.length === 0) return [];
+
+  // Deterministic LCG-based Fisher-Yates shuffle
+  const deterministicShuffle = <T,>(array: T[], seed: number): T[] => {
+    const result = [...array];
+    let m = result.length;
+    let s = Math.abs(Number(seed)) || 1;
+    while (m) {
+      s = (s * 9301 + 49297) % 233280;
+      const i = Math.floor((s / 233280) * m--);
+      const t = result[m];
+      result[m] = result[i];
+      result[i] = t;
+    }
+    return result;
+  };
+
+  const baseSeed = (Math.abs(Number(siswaId) || 1) * 10007 + Math.abs(Number(seedKey) || 1) * 37) % 2147483647;
+
+  // 1. Pisahkan soal berdasarkan jenis soal
+  const pgList = rawSoals.filter((s: any) => s.jenis_soal === 'pg');
+  const isianList = rawSoals.filter((s: any) => s.jenis_soal === 'isian');
+  const esaiList = rawSoals.filter((s: any) => s.jenis_soal === 'esai');
+  const otherList = rawSoals.filter((s: any) => !['pg', 'isian', 'esai'].includes(s.jenis_soal));
+
+  // 2. Acak soal per jenis soal secara mandiri jika isAcakSoal bernilai true
+  const shuffledPg = isAcakSoal ? deterministicShuffle(pgList, baseSeed + 101) : pgList;
+  const shuffledIsian = isAcakSoal ? deterministicShuffle(isianList, baseSeed + 202) : isianList;
+  const shuffledEsai = isAcakSoal ? deterministicShuffle(esaiList, baseSeed + 303) : esaiList;
+
+  // 3. Gabungkan dalam urutan baku: Pilihan Ganda -> Jawaban Singkat -> Esai -> Lainnya
+  const orderedSoals = [...shuffledPg, ...shuffledIsian, ...shuffledEsai, ...otherList];
+
+  // 4. Acak opsi jawaban untuk Pilihan Ganda jika isAcakOpsi bernilai true
+  return orderedSoals.map((soal: any) => {
+    if (soal.jenis_soal !== 'pg') return soal;
+
+    const options = parseOpsiJawaban(soal.opsi_jawaban);
+    if (!options || options.length <= 1) return soal;
+
+    if (isAcakOpsi) {
+      const optionSeed = (baseSeed * 13 + Math.abs(Number(soal.id) || 1) * 41) % 2147483647;
+      const shuffledOptions = deterministicShuffle(options, optionSeed);
+      return {
+        ...soal,
+        opsi_jawaban: shuffledOptions,
+      };
+    }
+
+    return {
+      ...soal,
+      opsi_jawaban: options,
+    };
+  });
+};
 
 export default function CbtUjian() {
+  const insets = useSafeAreaInsets();
   const { jadwalId } = useLocalSearchParams<{ jadwalId: string }>();
 
   // Permissions & Cam
   const [permission, requestPermission] = useCameraPermissions();
   const [isCameraMinimized, setIsCameraMinimized] = useState(false);
+  const [proctorCameraReady, setProctorCameraReady] = useState(false);
+  const [isCameraNativeReady, setIsCameraNativeReady] = useState(false);
+  const isCameraNativeReadyRef = useRef(false);
+  const [settingsUjian, setSettingsUjian] = useState<any>(null);
+  const settingsUjianRef = useRef<any>(null);
+  settingsUjianRef.current = settingsUjian;
+
+  // Akumulator Anomali Kamera (Ketat: Akumulatif tidak direset jika kembali normal)
+  const accumulatedAnomalyMsRef = useRef<number>(0);
+  const nextViolationThresholdRef = useRef<number>(2500);
+  const faceStatusRef = useRef<'normal' | 'look_left_right' | 'tilt_up_down' | 'no_face' | 'multiple_faces'>('normal');
+  const [currentFaceStatus, setCurrentFaceStatus] = useState<string>('normal');
 
   // States
   const [currentStep, setCurrentStep] = useState<'scan' | 'beranda' | 'soal'>('scan');
-  const [showCameraGuide, setShowCameraGuide] = useState(true);
+  const [scanFacing, setScanFacing] = useState<'back' | 'front'>('back');
+  const [isVerifyingCard, setIsVerifyingCard] = useState(false);
+  const [isCardVerified, setIsCardVerified] = useState(false);
+  const isResumingRef = useRef(false);
+  const [showCameraGuide, setShowCameraGuide] = useState(false);
   const [isBlocked, setIsBlocked] = useState(false);
+  const isBlockedRef = useRef(false);
+  isBlockedRef.current = isBlocked;
 
   const [loading, setLoading] = useState(true);
   const [jadwal, setJadwal] = useState<any>(null);
@@ -79,10 +215,120 @@ export default function CbtUjian() {
   const sesiRef = useRef<any>(null);
   sesiRef.current = sesi;
   const leaveTimeRef = useRef<number | null>(null);
+  const bankSoalIdRef = useRef<number | string | null>(null);
+  const isAcakSoalRef = useRef(false);
+  const isAcakOpsiRef = useRef(false);
+  const [isRefreshingSoal, setIsRefreshingSoal] = useState(false);
+  const [isRefreshingBeranda, setIsRefreshingBeranda] = useState(false);
+
+  // Fungsi Refresh Butir Soal Realtime saat Ujian Berlangsung
+  const handleRefreshSoal = async () => {
+    if (!bankSoalIdRef.current || isRefreshingSoal) return;
+    setIsRefreshingSoal(true);
+    try {
+      const { data: updatedSoal, error: sErr } = await supabase
+        .from('cbt_soal')
+        .select('*')
+        .eq('bank_soal_id', bankSoalIdRef.current)
+        .order('nomor_urut', { ascending: true });
+
+      if (sErr) throw sErr;
+      if (updatedSoal && updatedSoal.length > 0) {
+        const processed = processExamQuestions(updatedSoal, isAcakSoalRef.current, isAcakOpsiRef.current, siswa?.id || 1, jadwalId || 1);
+        setSoalList(processed);
+        if (Platform.OS === 'android') {
+          ToastAndroid.show('Soal berhasil diperbarui', ToastAndroid.SHORT);
+        } else {
+          Alert.alert('Sukses', 'Daftar soal berhasil diperbarui dengan data terbaru.');
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Gagal Memperbarui', err.message || 'Terjadi gangguan koneksi.');
+    } finally {
+      setIsRefreshingSoal(false);
+    }
+  };
+
+  // Fungsi Refresh Status Sesi & Beranda Ujian Realtime
+  const handleRefreshBeranda = async () => {
+    if (!jadwalId || !siswa?.id || isRefreshingBeranda) return;
+    setIsRefreshingBeranda(true);
+    try {
+      // 1. Ambil data sesi siswa terkini dari Supabase
+      const { data: latestSesi, error: sErr } = await supabase
+        .from('cbt_sesi_siswa')
+        .select('*')
+        .eq('jadwal_id', jadwalId)
+        .eq('siswa_id', siswa.id)
+        .maybeSingle();
+
+      if (sErr) throw sErr;
+
+      if (latestSesi) {
+        setSesi(latestSesi);
+        sesiRef.current = latestSesi;
+
+        if (latestSesi.status === 'diblokir') {
+          setIsBlocked(true);
+          isBlockedRef.current = true;
+          if (Platform.OS === 'android') {
+            ToastAndroid.show('Status: Akses masih diblokir oleh pengawas.', ToastAndroid.SHORT);
+          } else {
+            Alert.alert('Status Terblokir', 'Akses ujian Anda masih diblokir oleh pengawas.');
+          }
+        } else if (latestSesi.status === 'mengerjakan') {
+          setIsBlocked(false);
+          isBlockedRef.current = false;
+          setIsPaused(false);
+          if (Platform.OS === 'android') {
+            ToastAndroid.show('Blokir dibuka! Silakan lanjutkan ujian.', ToastAndroid.SHORT);
+          } else {
+            Alert.alert('Sukses', 'Blokir telah dibuka oleh pengawas. Anda dapat melanjutkan ujian.');
+          }
+        } else if (latestSesi.status === 'dijeda') {
+          setIsPaused(true);
+        }
+
+        if (latestSesi.sisa_detik !== undefined && latestSesi.sisa_detik > 0) {
+          setSisaDetik(latestSesi.sisa_detik);
+        }
+      }
+
+      // 2. Ambil data jadwal terbaru jika ada perubahan
+      const { data: latestJadwal } = await supabase
+        .from('cbt_jadwal_ujian')
+        .select(`
+          *,
+          data_kelas(id, nama_kelas),
+          data_mapel(nama_mapel),
+          data_ruang(nama_ruang),
+          pengawas:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama),
+          cbt_bank_soal(id, total_soal)
+        `)
+        .eq('id', jadwalId)
+        .maybeSingle();
+
+      if (latestJadwal) {
+        setJadwal(latestJadwal);
+      }
+    } catch (err: any) {
+      console.warn('Gagal refresh beranda ujian:', err);
+      Alert.alert('Gagal Memperbarui', err.message || 'Terjadi gangguan koneksi saat memperbarui status.');
+    } finally {
+      setIsRefreshingBeranda(false);
+    }
+  };
 
   const handleStartExam = () => {
     if (isBlocked || sesi?.status === 'diblokir') {
-      Alert.alert('Kamu Terblokir', 'Kamu terblokir, silahkan hubungi pengawas.');
+      Alert.alert(
+        'Kamu Terblokir',
+        'Kamu terblokir, silahkan hubungi pengawas ruang untuk membuka akses ujian.',
+        [
+          { text: 'Periksa Status', onPress: handleRefreshBeranda },
+          { text: 'Tutup', style: 'cancel' }
+        ]
+      );
       return;
     }
     setCurrentStep('soal');
@@ -92,31 +338,87 @@ export default function CbtUjian() {
   };
 
   // Helper Pencatatan Pelanggaran Otomatis ke Supabase
-  const recordViolation = async (jenis: string, durasi: number = 0) => {
-    if (!sesiRef.current?.id) return;
+  // Helper Pencatatan Pelanggaran Otomatis ke Supabase
+  const recordViolation = async (
+    jenis: string,
+    durasi: number = 0,
+    keterangan: string = '',
+    angles: { yaw?: number; pitch?: number } = {},
+    forceBlock: boolean = false
+  ) => {
+    if (!sesiRef.current?.id || isBlockedRef.current) return;
     try {
+      const newTotal = (sesiRef.current.total_pelanggaran || 0) + 1;
+      sesiRef.current = { ...sesiRef.current, total_pelanggaran: newTotal };
+      setSesi((prev: any) => (prev ? { ...prev, total_pelanggaran: newTotal } : prev));
+
       await supabase.from('cbt_log_pelanggaran').insert({
         sesi_id: sesiRef.current.id,
         jenis_pelanggaran: jenis,
         durasi_detik: durasi,
+        sudut_yaw: angles.yaw || 0,
+        sudut_pitch: angles.pitch || 0,
+        keterangan: keterangan || `Pelanggaran terdeteksi (${jenis})`,
         timestamp: new Date().toISOString()
       });
 
-      const newTotal = (sesiRef.current.total_pelanggaran || 0) + 1;
-      setSesi((prev: any) => (prev ? { ...prev, total_pelanggaran: newTotal } : prev));
-      await supabase
-        .from('cbt_sesi_siswa')
-        .update({ total_pelanggaran: newTotal })
-        .eq('id', sesiRef.current.id);
+      // Jika forceBlock aktif (misal pengulangan buka notifikasi/keluar) ATAU total pelanggaran >= 3
+      const isBlokirMenengok = settingsUjianRef.current ? settingsUjianRef.current.blokir_menengok !== false : true;
+      const shouldBlock = forceBlock || (isBlokirMenengok && newTotal >= 3);
+
+      if (shouldBlock) {
+        sesiRef.current = { ...sesiRef.current, status: 'diblokir', total_pelanggaran: newTotal };
+        setSesi((prev: any) => (prev ? { ...prev, status: 'diblokir', total_pelanggaran: newTotal } : prev));
+
+        await supabase
+          .from('cbt_sesi_siswa')
+          .update({ total_pelanggaran: newTotal, status: 'diblokir' })
+          .eq('id', sesiRef.current.id);
+
+        setIsBlocked(true);
+        isBlockedRef.current = true;
+
+        if (jadwalId) {
+          try {
+            const cmdChan = supabase.channel(`cbt_exam_cmd_${jadwalId}`);
+            cmdChan.send({
+              type: 'broadcast',
+              event: 'student_block_status',
+              payload: {
+                sesiId: sesiRef.current.id,
+                siswaId: siswa?.id,
+                status: 'diblokir',
+                reason: keterangan || 'Akses ujian diblokir oleh sistem keamanan CBT',
+              },
+            }).catch(() => {});
+          } catch (_e) {}
+        }
+
+        Alert.alert(
+          'Kamu Terblokir',
+          'Kamu terblokir, silahkan hubungi pengawas.',
+          [{ text: 'Tutup', style: 'destructive' }],
+          { cancelable: false }
+        );
+      } else {
+        await supabase
+          .from('cbt_sesi_siswa')
+          .update({ total_pelanggaran: newTotal })
+          .eq('id', sesiRef.current.id);
+      }
     } catch (e) {
       console.error('Gagal mencatat log pelanggaran:', e);
     }
   };
 
+  // Ref penghitung pelanggaran status bar / notifikasi
+  const statusBarViolationCountRef = useRef(0);
+  const lastBlurTimeRef = useRef<number | null>(null);
+
   // 1. Detektor Tombol Hardware / Software Back di Android
   useEffect(() => {
     const backAction = () => {
-      recordViolation('tombol_kembali', 0);
+      recordViolation('tombol_kembali', 0, 'Siswa menekan tombol Kembali');
       setShowViolationWarning(
         'PERINGATAN: Anda menekan tombol KEMBALI! Ujian sedang berlangsung. Keluar dari lembar ujian dilarang dan kejadian ini telah dicatat oleh sistem pengawas!'
       );
@@ -126,25 +428,77 @@ export default function CbtUjian() {
     return () => backHandler.remove();
   }, []);
 
-  // 2. Detektor Tombol Home / Overview (Recent Apps) / Minimize / Split Screen
+  // 2. Detektor Status Bar / Notifikasi (Blur Event pada Android) & Meninggalkan Aplikasi (AppState Change)
+  // Mekanisme: Peringatan keras pada pelanggaran ke-1, dan LANGSUNG DIBLOKIR jika diulangi (ke-2)!
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState.match(/inactive|background/)) {
-        // Siswa keluar dari aplikasi (tekan Home, Recent Apps, atau buka aplikasi lain)
-        leaveTimeRef.current = Date.now();
-        recordViolation('keluar_aplikasi', 0);
-      } else if (nextAppState === 'active' && leaveTimeRef.current) {
-        // Siswa kembali ke aplikasi
-        const awaySeconds = Math.max(1, Math.round((Date.now() - leaveTimeRef.current) / 1000));
-        leaveTimeRef.current = null;
-        setShowViolationWarning(
-          `PERINGATAN PELANGGARAN!\n\nAnda terdeteksi meninggalkan layar ujian selama ${awaySeconds} detik (menekan tombol Home / berpindah aplikasi / membuka split screen).\n\nPelanggaran ini telah dicatat dan pengawas ruang menerima notifikasi secara langsung!`
+    if (currentStep !== 'soal' || isBlocked) return;
+
+    // Sembunyikan bilah status bar saat pengerjaan soal (Immersive Mode)
+    StatusBar.setHidden(true, 'slide');
+
+    const handleWindowBlurOrLeave = (source: 'status_bar' | 'keluar_aplikasi') => {
+      if (isBlockedRef.current || currentStep !== 'soal') return;
+
+      const now = Date.now();
+      // Debounce 1.5s agar tidak dobel eksekusi jika blur dan change terpanggil bersamaan
+      if (lastBlurTimeRef.current && now - lastBlurTimeRef.current < 1500) return;
+      lastBlurTimeRef.current = now;
+
+      statusBarViolationCountRef.current += 1;
+      const violationNumber = statusBarViolationCountRef.current;
+
+      if (violationNumber === 1) {
+        // PERINGATAN KE-1: Belum diblokir, diperingatkan keras dan dicatat ke log
+        recordViolation(
+          source === 'status_bar' ? 'buka_notifikasi_status_bar' : 'keluar_aplikasi',
+          0,
+          source === 'status_bar'
+            ? 'Peringatan 1: Siswa terdeteksi membuka panel notifikasi / status bar ponsel'
+            : 'Peringatan 1: Siswa terdeteksi meninggalkan aplikasi ujian',
+          {},
+          false
         );
+
+        setShowViolationWarning(
+          source === 'status_bar'
+            ? 'PERINGATAN KERAS (1/2)!\n\nAnda terdeteksi membuka panel notifikasi / bilah status bar ponsel!\n\nDilarang membuka notifikasi, membalas pesan, atau menurunkan bilah status bar selama ujian berlangsung.\n\nPelanggaran ini telah dicatat ke pengawas. JIKA DIULANGI SEKALI LAGI, AKUN UJIAN ANDA AKAN LANGSUNG DIBLOKIR!'
+            : 'PERINGATAN KERAS (1/2)!\n\nAnda terdeteksi meninggalkan layar ujian (menekan tombol Home / berganti aplikasi / split screen)!\n\nPelanggaran ini telah dicatat ke pengawas. JIKA DIULANGI SEKALI LAGI, AKUN UJIAN ANDA AKAN LANGSUNG DIBLOKIR!'
+        );
+      } else {
+        // PELANGGARAN KE-2 (DIULANGI): LANGSUNG BLOKIR OTOMATIS!
+        recordViolation(
+          source === 'status_bar' ? 'buka_notifikasi_status_bar' : 'keluar_aplikasi',
+          0,
+          source === 'status_bar'
+            ? 'Siswa mengulangi membuka panel status bar / notifikasi ponsel (Akses Ujian Diblokir)'
+            : 'Siswa mengulangi meninggalkan aplikasi ujian (Akses Ujian Diblokir)',
+          {},
+          true // Force Block seketika!
+        );
+      }
+    };
+
+    // Listener Blur (Terpanggil saat bilah status bar / drawer notifikasi HP ditarik turun di Android)
+    const blurSubscription = AppState.addEventListener('blur', () => {
+      handleWindowBlurOrLeave('status_bar');
+    });
+
+    // Listener Change (Terpanggil saat aplikasi diminimize, buka app lain, atau inactive di iOS)
+    const changeSubscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState.match(/inactive|background/)) {
+        leaveTimeRef.current = Date.now();
+        handleWindowBlurOrLeave('keluar_aplikasi');
+      } else if (nextAppState === 'active' && leaveTimeRef.current) {
+        leaveTimeRef.current = null;
       }
     });
 
-    return () => subscription.remove();
-  }, []);
+    return () => {
+      StatusBar.setHidden(false, 'slide');
+      blurSubscription.remove();
+      changeSubscription.remove();
+    };
+  }, [currentStep, isBlocked]);
 
   // Init Data
   useEffect(() => {
@@ -161,8 +515,30 @@ export default function CbtUjian() {
     }
   }, [permission]);
 
-  // Broadcast Snapshot Kamera Mobile ke Ruang Pengawas secara Realtime
-  // PENTING: Tunggu status SUBSCRIBED sebelum mulai capture agar frame tidak hilang
+  // Jeda warm-up mount kamera depan AI proctor saat masuk ke 'soal'
+  useEffect(() => {
+    if (currentStep === 'soal' && permission?.granted) {
+      setProctorCameraReady(true);
+      // Fallback maksimal 1.5 detik jika event onCameraReady lambat terpanggil di Android
+      const fallbackTimer = setTimeout(() => {
+        isCameraNativeReadyRef.current = true;
+        setIsCameraNativeReady(true);
+      }, 1500);
+
+      return () => {
+        clearTimeout(fallbackTimer);
+        setProctorCameraReady(false);
+        isCameraNativeReadyRef.current = false;
+        setIsCameraNativeReady(false);
+      };
+    } else {
+      setProctorCameraReady(false);
+      isCameraNativeReadyRef.current = false;
+      setIsCameraNativeReady(false);
+    }
+  }, [currentStep, permission?.granted]);
+
+  // Broadcast Snapshot Kamera Mobile ke Ruang Pengawas secara Realtime & Deteksi Anomali
   useEffect(() => {
     if (currentStep !== 'soal' || isBlocked || !jadwalId || !siswa?.id || !permission?.granted) return;
 
@@ -172,21 +548,33 @@ export default function CbtUjian() {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let isCapturing = false;
 
+    // Reset akumulator saat pertama kali masuk ke lembar soal ujian
+    accumulatedAnomalyMsRef.current = 0;
+    nextViolationThresholdRef.current = 2500;
+
     channel.subscribe(async (status: string) => {
       if (status !== 'SUBSCRIBED') return;
 
       const captureAndSend = async () => {
-        if (isCapturing || !cameraRef.current) return;
+        if (isCapturing || !cameraRef.current || isBlockedRef.current) return;
         try {
           isCapturing = true;
-          const photo = await cameraRef.current.takePictureAsync({
-            quality: 0.2,
-            base64: false, // Don't ask for base64 here since we'll manipulate it anyway
-            skipProcessing: true,
-          });
+          let photo = null;
+          try {
+            photo = await cameraRef.current.takePictureAsync({
+              quality: 0.2,
+              shutterSound: false,
+              skipProcessing: true,
+            });
+          } catch (_e) {
+            photo = await cameraRef.current.takePictureAsync({
+              quality: 0.2,
+              shutterSound: false,
+            });
+          }
 
           if (photo?.uri) {
-            // Downscale aggressively to match web app (160x120) so it doesn't drop from Supabase WebSocket limits
+            // Downscale aggressively ke lebar 160px (sama persis dengan Web-App) agar aman pada WebSocket
             const manipResult = await ImageManipulator.manipulateAsync(
               photo.uri,
               [{ resize: { width: 160 } }],
@@ -194,36 +582,83 @@ export default function CbtUjian() {
             );
 
             if (manipResult.base64) {
+              // 1. Analisis Pose & Deteksi Wajah AI di Sisi Klien Mobile
+              const analysis = analyzeMobileFrame(manipResult.base64);
+              if (faceStatusRef.current !== analysis.faceStatus) {
+                faceStatusRef.current = analysis.faceStatus;
+                setCurrentFaceStatus(analysis.faceStatus);
+              }
+
+              // 2. Broadcast Snapshot & Status Wajah ke Ruang Pengawas (Web App & Mobile App)
               channel.send({
                 type: 'broadcast',
                 event: 'student_video_feed',
                 payload: {
                   siswaId: siswa.id,
-                  sesiId: sesi?.id,
+                  sesiId: sesiRef.current?.id,
                   image: `data:image/jpeg;base64,${manipResult.base64}`,
-                  faceStatus: 'normal',
+                  faceStatus: analysis.faceStatus,
+                  isOpen: true,
+                  sisaDetik: sisaDetikRef.current,
                   timestamp: Date.now(),
                 },
               });
+
+              // 3. Sistem Pelanggaran AKUMULATIF (Ketat)
+              // Setiap interval 3000ms terdeteksi anomali -> tambahkan ke akumulator
+              if (analysis.faceStatus !== 'normal') {
+                accumulatedAnomalyMsRef.current += 3000;
+
+                if (accumulatedAnomalyMsRef.current >= nextViolationThresholdRef.current) {
+                  nextViolationThresholdRef.current += 2500;
+                  const labelPelanggaran =
+                    analysis.faceStatus === 'look_left_right'
+                      ? 'Menengok Kiri/Kanan'
+                      : analysis.faceStatus === 'tilt_up_down'
+                      ? 'Menunduk/Menengadah'
+                      : analysis.faceStatus === 'multiple_faces'
+                      ? 'Terdeteksi Lebih dari 1 Orang'
+                      : 'Wajah Tidak Terdeteksi';
+
+                  recordViolation(
+                    analysis.faceStatus,
+                    2.5,
+                    `Anomali pengawasan kamera: ${labelPelanggaran} (Yaw: ${analysis.yaw}°, Pitch: ${analysis.pitch}°)`,
+                    { yaw: analysis.yaw, pitch: analysis.pitch }
+                  );
+                }
+              }
+              // Catatan: Jika normal, akumulator TIDAK direset — hitungan akumulatif terus berjalan
             }
           }
         } catch (_err) {
-          // Safe ignore — kamera belum siap atau izin dicabut
+          console.warn('[CBT Proctor Camera] Error capture/send:', _err);
         } finally {
           isCapturing = false;
         }
       };
 
-      // Kirim frame pertama setelah 1.5s (beri waktu kamera warm-up), lalu setiap 3.5s
-      setTimeout(captureAndSend, 1500);
-      intervalId = setInterval(captureAndSend, 3500);
+      // Frame pertama setelah jeda 2.0s, lalu setiap 3.0s
+      setTimeout(captureAndSend, 2000);
+      intervalId = setInterval(captureAndSend, 3000);
     });
 
     return () => {
       if (intervalId) clearInterval(intervalId);
+      try {
+        channel.send({
+          type: 'broadcast',
+          event: 'student_presence',
+          payload: {
+            siswaId: siswa?.id,
+            isOpen: false,
+            timestamp: Date.now(),
+          },
+        });
+      } catch (_e) {}
       supabase.removeChannel(channel);
     };
-  }, [currentStep, isBlocked, jadwalId, siswa?.id, sesi?.id, permission?.granted]);
+  }, [currentStep, isBlocked, jadwalId, siswa?.id, permission?.granted]);
 
   const initExamSession = async () => {
     try {
@@ -286,11 +721,28 @@ export default function CbtUjian() {
       // 1. Ambil Jadwal beserta Bank Soal & Tingkat Kelasnya
       const { data: jadwalData, error: jErr } = await supabase
         .from('cbt_jadwal_ujian')
-        .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama), cbt_bank_soal(id, tingkat_kelas, skema_konversi)')
+        .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_jadwal_ujian_pengawas_guru_id_fkey(nama), cbt_bank_soal(id, tingkat_kelas, skema_konversi, acak_soal, acak_opsi)')
         .eq('id', jadwalId)
         .single();
       if (jErr || !jadwalData) throw new Error('Jadwal ujian tidak ditemukan.');
       setJadwal(jadwalData);
+
+      // Ambil Pengaturan Ujian Global
+      const { data: setRes } = await supabase
+        .from('cbt_pengaturan_ujian')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const loadedSettings = setRes || {
+        tampilkan_kamera: true,
+        tampilkan_tombol_selesai_menit: 15,
+        blokir_menengok: true,
+        blokir_keluar_browser: true,
+      };
+      setSettingsUjian(loadedSettings);
+      settingsUjianRef.current = loadedSettings;
 
       // 2. Pencocokan Bank Soal Berdasarkan Tingkat Kelas Siswa Secara Ketat
       let targetBank: any = null;
@@ -307,9 +759,9 @@ export default function CbtUjian() {
       if (!targetBank && jadwalData.mapel_id && tingkatSiswa) {
         const { data: matchedBank } = await supabase
           .from('cbt_bank_soal')
-          .select('id, tingkat_kelas, skema_konversi')
+          .select('id, tingkat_kelas, skema_konversi, acak_soal, acak_opsi')
           .eq('mapel_id', jadwalData.mapel_id)
-          .eq('tingkat_kelas', tingkatSiswa)
+          .or(`tingkat_kelas.eq.${tingkatSiswa},tingkat_kelas.eq.Semua`)
           .order('id', { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -326,6 +778,7 @@ export default function CbtUjian() {
       }
 
       const targetBankId = targetBank.id;
+      bankSoalIdRef.current = targetBankId;
 
       const { data: soalData, error: sErr } = await supabase
         .from('cbt_soal')
@@ -335,7 +788,27 @@ export default function CbtUjian() {
       if (sErr || !soalData || soalData.length === 0) {
         throw new Error('Bank soal belum memiliki butir pertanyaan.');
       }
-      setSoalList(soalData);
+
+      // Tentukan status acak soal dan acak opsi dari pengaturan bank soal / jadwal
+      let isAcakSoal = false;
+      if (targetBank && targetBank.acak_soal !== null && targetBank.acak_soal !== undefined) {
+        isAcakSoal = Boolean(targetBank.acak_soal);
+      } else if (jadwalData && jadwalData.acak_soal !== null && jadwalData.acak_soal !== undefined) {
+        isAcakSoal = Boolean(jadwalData.acak_soal);
+      }
+
+      let isAcakOpsi = false;
+      if (targetBank && targetBank.acak_opsi !== null && targetBank.acak_opsi !== undefined) {
+        isAcakOpsi = Boolean(targetBank.acak_opsi);
+      } else if (jadwalData && jadwalData.acak_opsi !== null && jadwalData.acak_opsi !== undefined) {
+        isAcakOpsi = Boolean(jadwalData.acak_opsi);
+      }
+
+      isAcakSoalRef.current = isAcakSoal;
+      isAcakOpsiRef.current = isAcakOpsi;
+
+      const processedSoals = processExamQuestions(soalData, isAcakSoal, isAcakOpsi, parsedSiswa.id, jadwalId);
+      setSoalList(processedSoals);
 
       // 3. Ambil atau Buat Sesi Siswa
       let { data: existingSesi } = await supabase
@@ -347,7 +820,39 @@ export default function CbtUjian() {
 
       let activeSesi = existingSesi;
 
+      // Validasi Tanggal & Waktu Pelaksanaan Ujian (jika sesi baru)
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
       if (!activeSesi) {
+        if (jadwalData.tanggal_ujian && jadwalData.tanggal_ujian !== todayStr) {
+          Alert.alert(
+            'Bukan Waktu Ujian',
+            `Ujian ini dijadwalkan pada tanggal ${jadwalData.tanggal_ujian}. Hari ini bukan tanggal pelaksanaan ujian tersebut.`,
+            [{ text: 'Kembali', onPress: () => router.replace('/cbt-jadwal-siswa' as any) }]
+          );
+          return;
+        }
+
+        if (jadwalData.jam_mulai && nowTimeStr < jadwalData.jam_mulai.substring(0, 5)) {
+          Alert.alert(
+            'Ujian Belum Dimulai',
+            `Ujian ini baru dapat diakses pada pukul ${jadwalData.jam_mulai.substring(0, 5)} WIB.`,
+            [{ text: 'Kembali', onPress: () => router.replace('/cbt-jadwal-siswa' as any) }]
+          );
+          return;
+        }
+
+        if (jadwalData.jam_selesai && nowTimeStr > jadwalData.jam_selesai.substring(0, 5)) {
+          Alert.alert(
+            'Waktu Ujian Berakhir',
+            `Waktu pelaksanaan ujian ini telah berakhir pada pukul ${jadwalData.jam_selesai.substring(0, 5)} WIB.`,
+            [{ text: 'Kembali', onPress: () => router.replace('/cbt-jadwal-siswa' as any) }]
+          );
+          return;
+        }
+
         // Buat sesi baru
         const totalDetik = (jadwalData.durasi_menit || 60) * 60;
         const { data: newSesi, error: createErr } = await supabase
@@ -374,6 +879,7 @@ export default function CbtUjian() {
         }
         if (activeSesi.status === 'diblokir') {
           setIsBlocked(true);
+          isBlockedRef.current = true;
         }
         if (activeSesi.status === 'dijeda') {
           setIsPaused(true);
@@ -418,14 +924,209 @@ export default function CbtUjian() {
 
       setJawabanMap(loadedAnswers);
 
-      // Realtime subscription untuk monitor kontrol pengawas
-      setupRealtimeSubscription(activeSesi.id);
+      const isResuming = activeSesi.status === 'mengerjakan' || activeSesi.status === 'dijeda';
+      isResumingRef.current = isResuming;
+
+      // Siswa HARUS selalu melewati tahap scan kartu terlebih dahulu untuk verifikasi identitas
+      setCurrentStep('scan');
     } catch (err: any) {
       console.error('Error initExamSession:', err);
       Alert.alert('Gagal Memulai Ujian', err.message || 'Terjadi kesalahan sistem.');
       router.replace('/cbt-jadwal-siswa' as any);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Dedicated Realtime Subscription untuk Sesi Siswa dengan pembersihan yang aman
+  useEffect(() => {
+    if (!sesi?.id) return;
+    const sesiId = sesi.id;
+    const channelName = `sesi_exam_${sesiId}_${Date.now()}`;
+
+    // Bersihkan channel lama yang mungkin masih tertinggal di registry Supabase
+    try {
+      const staleChannels = supabase.getChannels().filter((c) => c.topic.includes(`sesi_exam_${sesiId}`));
+      staleChannels.forEach((c) => {
+        supabase.removeChannel(c);
+      });
+    } catch (_e) {}
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'cbt_sesi_siswa',
+          filter: `id=eq.${sesiId}`
+        },
+        (payload) => {
+          const newStatus = payload.new?.status;
+          const newSisaDetik = payload.new?.sisa_detik;
+
+          if (payload.new) {
+            setSesi((prev: any) => ({ ...prev, ...payload.new }));
+          }
+
+          if (newStatus === 'dijeda') {
+            setIsPaused(true);
+          } else if (newStatus === 'mengerjakan') {
+            setIsPaused(false);
+            setIsBlocked(false);
+            isBlockedRef.current = false;
+          } else if (newStatus === 'diblokir') {
+            setIsBlocked(true);
+            isBlockedRef.current = true;
+          }
+
+          if (newSisaDetik && Math.abs(newSisaDetik - sisaDetikRef.current) > 60) {
+            setSisaDetik(newSisaDetik);
+            Alert.alert('Info Pengawas', 'Waktu ujian Anda telah disesuaikan oleh pengawas.');
+          }
+        }
+      )
+      .subscribe();
+
+    // Broadcast Listener untuk respon instan dari pengawas (0ms latency)
+    let examCmdChannel: any = null;
+    if (jadwalId) {
+      examCmdChannel = supabase
+        .channel(`cbt_exam_cmd_mob_${jadwalId}_${Date.now()}`)
+        .on('broadcast', { event: 'student_block_status' }, ({ payload }: any) => {
+          if (payload?.sesiId === sesiId || payload?.siswaId === siswa?.id) {
+            if (payload.status === 'diblokir') {
+              setIsBlocked(true);
+              isBlockedRef.current = true;
+              setSesi((prev: any) => ({ ...prev, status: 'diblokir' }));
+            } else if (payload.status === 'mengerjakan') {
+              setIsBlocked(false);
+              isBlockedRef.current = false;
+              setIsPaused(false);
+              setSesi((prev: any) => ({ ...prev, status: 'mengerjakan' }));
+            }
+          }
+        })
+        .subscribe();
+    }
+
+    // Polling sinkronisasi status setiap 2.5 detik
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data: latestSesi } = await supabase
+          .from('cbt_sesi_siswa')
+          .select('id, status, total_pelanggaran, sisa_detik')
+          .eq('id', sesiId)
+          .maybeSingle();
+
+        if (latestSesi) {
+          if (latestSesi.status === 'diblokir') {
+            setIsBlocked(true);
+            isBlockedRef.current = true;
+            setSesi((prev: any) => ({ ...prev, ...latestSesi }));
+          } else if (latestSesi.status === 'mengerjakan' && isBlockedRef.current) {
+            setIsBlocked(false);
+            isBlockedRef.current = false;
+            setIsPaused(false);
+            setSesi((prev: any) => ({ ...prev, ...latestSesi }));
+          } else if (latestSesi.status === 'dijeda' && !isPaused) {
+            setIsPaused(true);
+            setSesi((prev: any) => ({ ...prev, ...latestSesi }));
+          }
+        }
+      } catch (_e) {}
+    }, 2500);
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+        if (examCmdChannel) supabase.removeChannel(examCmdChannel);
+        clearInterval(pollInterval);
+      } catch (_e) {}
+    };
+  }, [sesi?.id, jadwalId, siswa?.id]);
+
+  // Handler Pemindaian & Verifikasi Kartu Siswa
+  const handleBarcodeScanned = ({ data }: { data: string }) => {
+    if (isVerifyingCard || isCardVerified) return;
+    setIsVerifyingCard(true);
+
+    try {
+      const rawData = String(data || '').trim();
+      let extractedId = '';
+
+      // 1. Coba dekripsi menggunakan AES SECRET_KEY (format Kartu Pelajar resmi SMP IT HM)
+      try {
+        const bytes = CryptoJS.AES.decrypt(rawData, SECRET_KEY);
+        const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+        if (decrypted && decrypted !== 'NO-DATA') {
+          extractedId = decrypted.trim();
+        }
+      } catch (_e) {}
+
+      // 2. Coba parse format JSON jika kartu menyimpan objek data
+      if (!extractedId) {
+        try {
+          const parsed = JSON.parse(rawData);
+          extractedId = String(parsed.nipd || parsed.nisn || parsed.id || '').trim();
+        } catch (_e) {}
+      }
+
+      // 3. Fallback jika QR berisi teks NIPD/NISN mentah
+      if (!extractedId) {
+        extractedId = rawData;
+      }
+
+      // Cocokkan terhadap data siswa yang sedang login
+      const currentNipd = String(siswa?.nipd || '').trim();
+      const currentNisn = String(siswa?.nisn || '').trim();
+      const currentId = String(siswa?.id || '').trim();
+
+      const isOwner = Boolean(
+        (currentNipd && extractedId === currentNipd) ||
+        (currentNisn && extractedId === currentNisn) ||
+        (currentId && extractedId === currentId)
+      );
+
+      if (isOwner) {
+        setIsCardVerified(true);
+        Alert.alert(
+          'Identitas Terverifikasi!',
+          `Kartu Pelajar atas nama ${siswa?.nama || 'Anda'} terverifikasi sah. Silakan melanjutkan ke lembar ujian.`,
+          [
+            {
+              text: 'Lanjutkan',
+              onPress: () => {
+                setIsVerifyingCard(false);
+                if (isResumingRef.current) {
+                  setCurrentStep('soal');
+                  if (sesi?.id) {
+                    startTimer(sesi.id);
+                  }
+                } else {
+                  setCurrentStep('beranda');
+                }
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert(
+          'Verifikasi Gagal!',
+          `Kartu yang dipindai BUKAN milik akun Anda (${siswa?.nama || 'Siswa'}).\n\nAnda tidak dapat mengerjakan soal ujian ini dengan kartu milik orang lain.`,
+          [
+            {
+              text: 'Pindai Ulang',
+              onPress: () => setIsVerifyingCard(false)
+            }
+          ]
+        );
+      }
+    } catch (err: any) {
+      Alert.alert('Gagal Memindai', 'Format kartu tidak valid atau tidak terbaca.', [
+        { text: 'Coba Lagi', onPress: () => setIsVerifyingCard(false) }
+      ]);
     }
   };
 
@@ -452,43 +1153,6 @@ export default function CbtUjian() {
         return updated;
       });
     }, 1000);
-  };
-
-  const setupRealtimeSubscription = (sesiId: string) => {
-    const channel = supabase
-      .channel(`sesi_exam_${sesiId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'cbt_sesi_siswa',
-          filter: `id=eq.${sesiId}`
-        },
-        (payload) => {
-          const newStatus = payload.new?.status;
-          const newSisaDetik = payload.new?.sisa_detik;
-
-          if (newStatus === 'dijeda') {
-            setIsPaused(true);
-          } else if (newStatus === 'mengerjakan') {
-            setIsPaused(false);
-          } else if (newStatus === 'diblokir') {
-            Alert.alert('Perhatian', 'Akses ujian Anda telah diblokir oleh pengawas.');
-            router.replace('/cbt-jadwal-siswa' as any);
-          }
-
-          if (newSisaDetik && Math.abs(newSisaDetik - sisaDetikRef.current) > 60) {
-            setSisaDetik(newSisaDetik);
-            Alert.alert('Info Pengawas', 'Waktu ujian Anda telah disesuaikan oleh pengawas.');
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
   };
 
   // Handler Ganti Jawaban
@@ -546,12 +1210,33 @@ export default function CbtUjian() {
   // Submit Ujian
   const handleAutoSubmit = () => {
     Alert.alert('Waktu Habis!', 'Waktu pengerjaan ujian telah berakhir. Lembar jawaban Anda otomatis dikumpulkan.', [
-      { text: 'OK', onPress: () => finalizeSubmission() }
+      { text: 'OK', onPress: () => finalizeSubmission(true) }
     ]);
   };
 
-  const finalizeSubmission = async () => {
+  const finalizeSubmission = async (isAuto = false) => {
     if (!sesi || isSubmitting) return;
+
+    // Larang mengumpulkan jika masih ada butir soal yang belum dikerjakan
+    if (!isAuto && stats.unanswered > 0) {
+      setShowConfirmModal(false);
+      Alert.alert(
+        'Soal Belum Lengkap!',
+        `Masih ada ${stats.unanswered} dari ${stats.total} butir soal yang belum Anda kerjakan. Anda wajib menjawab seluruh butir soal sebelum mengumpulkan ujian.`
+      );
+      return;
+    }
+
+    // Larang mengumpulkan jika masih ada soal yang terceklis ragu-ragu
+    if (!isAuto && stats.ragu > 0) {
+      setShowConfirmModal(false);
+      Alert.alert(
+        'Tidak Dapat Mengumpulkan!',
+        `Anda masih memiliki ${stats.ragu} butir soal yang ditandai ragu-ragu. Harap periksa dan hilangkan tanda centang ragu-ragu terlebih dahulu sebelum mengumpulkan ujian.`
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -566,6 +1251,7 @@ export default function CbtUjian() {
       let totalBobotIsian = 0;
       let countIsian = 0;
 
+      let totalSkorEsai = 0;
       let totalBobotEsai = 0;
       let countEsai = 0;
 
@@ -611,11 +1297,22 @@ export default function CbtUjian() {
         } else if (soal.jenis_soal === 'esai') {
           countEsai++;
           totalBobotEsai += bobot;
-          // Esai dinilai oleh guru pada web app
+          const evalRes = await evaluateEssayWithAI({
+            questionText: soal.pertanyaan,
+            rubricText: soal.rubrik_esai || '',
+            studentAnswer: userAns,
+            maxScore: bobot,
+          });
+          totalSkorEsai += evalRes.score;
+
           await supabase.from('cbt_jawaban_siswa').upsert({
             sesi_id: sesi.id,
             soal_id: soal.id,
             jawaban_siswa: userAns,
+            skor_ai: evalRes.score,
+            feedback_ai: evalRes.feedback,
+            skor_final_guru: evalRes.score,
+            status_koreksi: 'otomatis_ai',
             updated_at: new Date().toISOString()
           }, { onConflict: 'sesi_id,soal_id' });
         }
@@ -632,7 +1329,7 @@ export default function CbtUjian() {
         maxBobotIsian: totalBobotIsian,
         countIsian: countIsian,
 
-        skorEsai: 0,
+        skorEsai: totalSkorEsai,
         maxBobotEsai: totalBobotEsai,
         countEsai: countEsai,
 
@@ -716,6 +1413,113 @@ export default function CbtUjian() {
   }
 
   // =========================================================================
+  // HALAMAN TERBLOKIR: JIKA DIBLOKIR LANGSUNG TAMPILKAN LAYAR TERBLOKIR
+  // =========================================================================
+  if (isBlocked || sesi?.status === 'diblokir') {
+    return (
+      <View style={styles.stepContainerDark}>
+        <View style={styles.stepHeaderCenter}>
+          <View style={[styles.logoCircle, { backgroundColor: '#dc2626' }]}>
+            <Text style={styles.logoCircleText}>HM</Text>
+          </View>
+          <Text style={styles.stepScanTitle}>Ruang Ujian CBT Siswa</Text>
+          <Text style={styles.stepScanSubtitle}>SMP IT Hidayatul Mubtadi-ien</Text>
+        </View>
+
+        <ScrollView
+          style={{ flex: 1, width: '100%' }}
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 20 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingBeranda}
+              onRefresh={handleRefreshBeranda}
+              colors={['#ef4444']}
+              tintColor="#ef4444"
+            />
+          }
+        >
+          <View style={{
+            width: '100%',
+            maxWidth: 360,
+            flexDirection: 'column',
+            alignItems: 'center',
+            paddingVertical: 28,
+            paddingHorizontal: 20,
+            backgroundColor: '#0f172a',
+            borderColor: '#ef4444',
+            borderWidth: 1.5,
+            borderRadius: 24,
+          }}>
+            <ShieldAlert size={56} color="#ef4444" style={{ marginBottom: 12 }} />
+            <Text style={{ fontSize: 22, fontWeight: '900', color: '#fff', textAlign: 'center', marginBottom: 8 }}>
+              Kamu Terblokir
+            </Text>
+            <Text style={{ fontSize: 14, color: '#fca5a5', textAlign: 'center', lineHeight: 20, marginBottom: 20 }}>
+              Kamu terblokir, silahkan hubungi pengawas.
+            </Text>
+
+            <View style={{ width: '100%', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 14, padding: 14, marginBottom: 16, gap: 6, borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1 }}>
+              <Text style={{ fontSize: 13, color: '#e2e8f0' }}>
+                Peserta: <Text style={{ fontWeight: 'bold', color: '#fff' }}>{siswa?.nama || 'Siswa'}</Text>
+              </Text>
+              <Text style={{ fontSize: 12, color: '#94a3b8' }}>
+                Kelas: {siswa?.kelas || '-'} • Mapel: {jadwal?.data_mapel?.nama_mapel || jadwal?.nama_ujian || 'Ujian'}
+              </Text>
+              <Text style={{ fontSize: 12, color: '#f87171', fontWeight: 'bold' }}>
+                Total Pelanggaran: {sesi?.total_pelanggaran || 0} Pelanggaran
+              </Text>
+            </View>
+
+            {/* Tombol Cek Pembukaan Blokir */}
+            <TouchableOpacity
+              style={{
+                width: '100%',
+                backgroundColor: '#dc2626',
+                paddingVertical: 13,
+                paddingHorizontal: 16,
+                borderRadius: 14,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                marginBottom: 14,
+                elevation: 3,
+                shadowColor: '#dc2626',
+                shadowOpacity: 0.4,
+                shadowRadius: 8
+              }}
+              onPress={handleRefreshBeranda}
+              disabled={isRefreshingBeranda}
+              activeOpacity={0.8}
+            >
+              {isRefreshingBeranda ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <RefreshCw size={16} color="#fff" />
+              )}
+              <Text style={{ fontSize: 13, fontWeight: '800', color: '#fff' }}>
+                {isRefreshingBeranda ? 'Memeriksa Izin Pengawas...' : 'Periksa Pembukaan Blokir Sekarang'}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <ActivityIndicator size="small" color="#ef4444" />
+              <Text style={{ fontSize: 12, color: '#cbd5e1' }}>Tarik ke bawah atau tekan tombol untuk refresh</Text>
+            </View>
+
+            <TouchableOpacity
+              style={{ backgroundColor: 'rgba(255,255,255,0.12)', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)' }}
+              onPress={() => router.back()}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>Kembali ke Jadwal</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // =========================================================================
   // STEP 1: SCAN KARTU & POP-UP PERINGATAN KAMERA
   // =========================================================================
   if (currentStep === 'scan') {
@@ -733,7 +1537,14 @@ export default function CbtUjian() {
         {/* Scan Frame Area */}
         <View style={styles.scanBox}>
           {permission?.granted ? (
-            <CameraView style={StyleSheet.absoluteFill} facing="front" />
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing={scanFacing}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr', 'code128', 'ean13', 'ean8', 'code39'],
+              }}
+              onBarcodeScanned={isVerifyingCard || isCardVerified ? undefined : handleBarcodeScanned}
+            />
           ) : (
             <View style={styles.scanFallback}>
               <QrCode size={80} color="#38bdf8" />
@@ -746,7 +1557,30 @@ export default function CbtUjian() {
             <View style={[styles.corner, styles.cornerBR]} />
           </View>
           <View style={styles.laserBeam} />
-          <Text style={styles.scanHintText}>Posisikan Kartu Ujian atau Wajah Anda pada Area Kamera</Text>
+          <Text style={styles.scanHintText}>
+            {isVerifyingCard
+              ? 'Memverifikasi keabsahan kartu...'
+              : 'Arahkan QR Code Kartu Pelajar Anda ke dalam bingkai'}
+          </Text>
+        </View>
+
+        {/* Info Siswa Yang Sedang Login */}
+        <View style={styles.scanStudentBadge}>
+          <Text style={styles.scanStudentLabel}>AKUN SISWA AKTIF</Text>
+          <Text style={styles.scanStudentName}>{siswa?.nama || 'Siswa'}</Text>
+          <Text style={styles.scanStudentMeta}>
+            NISN: {siswa?.nisn || '-'} • NIPD: {siswa?.nipd || '-'} • Kelas: {siswa?.kelas || '-'}
+          </Text>
+        </View>
+
+        {/* Indikator Wajib Kamera Belakang */}
+        <View style={styles.scanControlsRow}>
+          <View style={[styles.flipCamBtn, { backgroundColor: 'rgba(133, 194, 38, 0.15)', borderWidth: 1, borderColor: '#85c226' }]}>
+            <Camera size={16} color="#85c226" />
+            <Text style={[styles.flipCamBtnText, { color: '#daffcc', fontWeight: 'bold' }]}>
+              Kamera Belakang Aktif (Scan Kartu)
+            </Text>
+          </View>
         </View>
 
         {/* Modal Petunjuk Posisi Kamera */}
@@ -763,10 +1597,10 @@ export default function CbtUjian() {
               </View>
               <Text style={styles.cameraGuideTitle}>Petunjuk Posisi Kamera</Text>
               <Text style={styles.cameraGuideQuote}>
-                "Cari posisi yang nyaman dengan wajah menghadap kamera"
+                "Posisikan QR Code Kartu Pelajar di depan kamera hingga terbaca"
               </Text>
               <Text style={styles.cameraGuideNote}>
-                Pastikan pencahayaan cukup dan wajah Anda terlihat jelas selama ujian berlangsung.
+                Pastikan pencahayaan cukup dan kartu tidak buram. Sistem akan memverifikasi kesesuaian kartu dengan akun yang login.
               </Text>
               <TouchableOpacity
                 style={styles.cameraGuideBtn}
@@ -778,17 +1612,16 @@ export default function CbtUjian() {
           </View>
         </Modal>
 
-        {/* Bottom Action */}
+        {/* Bottom Action / Status Box */}
         <View style={styles.scanBottomAction}>
-          <TouchableOpacity
-            style={styles.primaryActionBtn}
-            onPress={() => setCurrentStep('beranda')}
-          >
-            <ShieldCheck size={20} color="#fff" />
-            <Text style={styles.primaryActionBtnText}>Verifikasi & Lanjut ke Beranda Ujian</Text>
-          </TouchableOpacity>
+          <View style={styles.scanNoticeCard}>
+            <ShieldAlert size={18} color="#f59e0b" />
+            <Text style={styles.scanNoticeText}>
+              Wajib memindai Kartu Pelajar milik Anda sendiri. Sistem akan menolak jika kartu tidak cocok dengan akun siswa yang login.
+            </Text>
+          </View>
           <Text style={styles.scanSystemFooter}>
-            Sistem Pengawasan Otomatis Edge AI CBT Version 2.0
+            Sistem Verifikasi Kartu Siswa & Edge AI CBT Version 2.0
           </Text>
         </View>
       </View>
@@ -807,23 +1640,72 @@ export default function CbtUjian() {
               <Text style={styles.berandaTitle}>Beranda Ujian CBT</Text>
               <Text style={styles.berandaSubtitle}>Konfirmasi data kepesertaan sebelum mulai</Text>
             </View>
-            <View style={styles.badgeJenis}>
-              <Text style={styles.badgeJenisText}>{jadwal?.jenis_ujian || 'Ujian'}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* Tombol Refresh Header Beranda */}
+              <TouchableOpacity
+                style={styles.berandaRefreshBtn}
+                onPress={handleRefreshBeranda}
+                disabled={isRefreshingBeranda}
+                activeOpacity={0.7}
+              >
+                {isRefreshingBeranda ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <RefreshCw size={13} color="#fff" />
+                )}
+                <Text style={styles.berandaRefreshBtnText}>
+                  {isRefreshingBeranda ? 'Memuat...' : 'Refresh'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={styles.badgeJenis}>
+                <Text style={styles.badgeJenisText}>{jadwal?.jenis_ujian || 'Ujian'}</Text>
+              </View>
             </View>
           </View>
         </LinearGradient>
 
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.berandaContent}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={[styles.berandaContent, { paddingBottom: 40 + Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingBeranda}
+              onRefresh={handleRefreshBeranda}
+              colors={['#3740A1']}
+              tintColor="#3740A1"
+            />
+          }
+        >
           {/* Status Terblokir Banner */}
           {(isBlocked || sesi?.status === 'diblokir') && (
             <View style={styles.blockedCard}>
-              <AlertCircle size={30} color="#dc2626" />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.blockedCardTitle}>Akses Ujian Terblokir</Text>
-                <Text style={styles.blockedCardSub}>
-                  Kamu terblokir, silahkan hubungi pengawas ruang untuk membuka kembali akses ujian Anda.
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <AlertCircle size={30} color="#dc2626" />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.blockedCardTitle}>Akses Ujian Terblokir</Text>
+                  <Text style={styles.blockedCardSub}>
+                    Kamu terblokir, silahkan hubungi pengawas ruang untuk membuka kembali akses ujian Anda.
+                  </Text>
+                </View>
               </View>
+
+              {/* Tombol Periksa Status Pembukaan Blokir di dalam Banner */}
+              <TouchableOpacity
+                style={styles.blockedRefreshBtn}
+                onPress={handleRefreshBeranda}
+                disabled={isRefreshingBeranda}
+                activeOpacity={0.8}
+              >
+                {isRefreshingBeranda ? (
+                  <ActivityIndicator size="small" color="#dc2626" />
+                ) : (
+                  <RefreshCw size={14} color="#dc2626" />
+                )}
+                <Text style={styles.blockedRefreshBtnText}>
+                  {isRefreshingBeranda ? 'Memeriksa Status Pengawas...' : 'Periksa Pembukaan Blokir Sekarang'}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 
@@ -890,16 +1772,37 @@ export default function CbtUjian() {
         </ScrollView>
 
         {/* Tombol Mulai Ujian */}
-        <View style={styles.berandaFooter}>
+        <View style={[styles.berandaFooter, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) + 14 }]}>
           <TouchableOpacity
-            style={[styles.startExamBtn, (isBlocked || sesi?.status === 'diblokir') && styles.startExamBtnDisabled]}
-            disabled={isBlocked || sesi?.status === 'diblokir'}
-            onPress={handleStartExam}
+            style={[
+              styles.startExamBtn,
+              (isBlocked || sesi?.status === 'diblokir') && styles.startExamBtnBlocked
+            ]}
+            onPress={() => {
+              if (isBlocked || sesi?.status === 'diblokir') {
+                handleRefreshBeranda();
+              } else {
+                handleStartExam();
+              }
+            }}
           >
-            <Play size={20} color="#fff" />
-            <Text style={styles.startExamBtnText}>
-              {(isBlocked || sesi?.status === 'diblokir') ? 'Ujian Terblokir' : 'Mulai Mengerjakan Ujian Sekarang'}
-            </Text>
+            {isBlocked || sesi?.status === 'diblokir' ? (
+              <>
+                {isRefreshingBeranda ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <RefreshCw size={18} color="#fff" />
+                )}
+                <Text style={styles.startExamBtnText}>
+                  {isRefreshingBeranda ? 'Memeriksa Izin Pengawas...' : 'Ujian Terblokir • Tap untuk Cek Status'}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Play size={20} color="#fff" />
+                <Text style={styles.startExamBtnText}>Mulai Mengerjakan Ujian Sekarang</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -935,33 +1838,62 @@ export default function CbtUjian() {
 
       {/* Sticky Header */}
       <View style={styles.topBar}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.topBarMapel} numberOfLines={1}>
-            {jadwal?.data_mapel?.nama_mapel || jadwal?.nama_ujian || 'Ujian CBT'}
-          </Text>
-          <Text style={styles.topBarSiswa}>
-            {siswa?.nama || 'Siswa'} ({siswa?.kelas || '-'})
-          </Text>
+        {/* Baris Utama: Nama Mapel & Identitas Siswa */}
+        <View style={styles.topBarMainRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.topBarMapel} numberOfLines={1}>
+              {jadwal?.data_mapel?.nama_mapel || jadwal?.nama_ujian || 'Ujian CBT'}
+            </Text>
+            <Text style={styles.topBarSiswa}>
+              {siswa?.nama || 'Siswa'} ({siswa?.kelas || '-'})
+            </Text>
+          </View>
         </View>
 
-        {/* Timer Badge */}
-        <View style={[styles.timerBox, sisaDetik < 300 && styles.timerBoxUrgent]}>
-          <Clock size={16} color={sisaDetik < 300 ? '#dc2626' : '#1e293b'} />
-          <Text style={[styles.timerText, sisaDetik < 300 && styles.timerTextUrgent]}>
-            {formatTime(sisaDetik)}
-          </Text>
-        </View>
+        {/* Baris Bawah Header: Waktu Ujian, Tombol Refresh, & Tombol Palette Soal */}
+        <View style={styles.topBarSubRow}>
+          {/* Timer Badge */}
+          <View style={[styles.timerBox, sisaDetik < 300 && styles.timerBoxUrgent]}>
+            <Clock size={15} color={sisaDetik < 300 ? '#dc2626' : '#1e293b'} />
+            <Text style={[styles.timerText, sisaDetik < 300 && styles.timerTextUrgent]}>
+              {formatTime(sisaDetik)}
+            </Text>
+          </View>
 
-        {/* Palette Drawer Trigger */}
-        <TouchableOpacity style={styles.drawerBtn} onPress={() => setShowDrawer(true)}>
-          <LayoutGrid size={18} color="#3740A1" />
-          <Text style={styles.drawerBtnText}>{currentIndex + 1}/{soalList.length}</Text>
-        </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {/* Tombol Refresh Soal Dinamis */}
+            <TouchableOpacity
+              style={styles.refreshSoalBtn}
+              onPress={handleRefreshSoal}
+              disabled={isRefreshingSoal}
+              activeOpacity={0.7}
+            >
+              {isRefreshingSoal ? (
+                <ActivityIndicator size={12} color="#3740A1" />
+              ) : (
+                <RefreshCw size={13} color="#3740A1" />
+              )}
+              <Text style={styles.refreshSoalBtnText}>
+                {isRefreshingSoal ? 'Memuat...' : 'Refresh'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Palette Drawer Trigger */}
+            <TouchableOpacity style={styles.drawerBtn} onPress={() => setShowDrawer(true)}>
+              <LayoutGrid size={15} color="#3740A1" />
+              <Text style={styles.drawerBtnText}>Nomor: {currentIndex + 1}/{soalList.length}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
 
-      {/* Floating Front Camera Proctoring View */}
-      {permission?.granted && (
-        <View style={[styles.cameraContainer, isCameraMinimized && styles.cameraMinimized]}>
+      {/* Floating Front Camera Proctoring View (Di Bawah, di Atas Tombol Navigasi) */}
+      {permission?.granted && settingsUjian?.tampilkan_kamera !== false && (
+        <View style={[
+          styles.cameraContainer,
+          { bottom: Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) + 72 },
+          isCameraMinimized && styles.cameraMinimized
+        ]}>
           {/* CameraView selalu di-mount agar cameraRef.current tidak null saat broadcast */}
           {/* Saat minimized: sembunyikan via opacity+absolute agar takePictureAsync tetap bisa berjalan */}
           <View style={[
@@ -976,15 +1908,59 @@ export default function CbtUjian() {
               pointerEvents: 'none',
             }
           ]}>
-            <CameraView
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              facing="front"
-            />
-            <View style={styles.cameraBadge}>
-              <View style={styles.cameraDot} />
-              <Text style={styles.cameraBadgeText}>AI Proctor Aktif</Text>
+            {proctorCameraReady ? (
+              <CameraView
+                key="ai-proctor-front-camera"
+                ref={cameraRef}
+                style={StyleSheet.absoluteFill}
+                facing="front"
+                flash="off"
+                enableTorch={false}
+                animateShutter={false}
+                mute={true}
+                onCameraReady={() => {
+                  isCameraNativeReadyRef.current = true;
+                  setIsCameraNativeReady(true);
+                }}
+              />
+            ) : null}
+
+            {/* Spinner loading saat kamera depan sedang warming-up */}
+            {!isCameraNativeReady && (
+              <View style={styles.cameraLoadingOverlay}>
+                <ActivityIndicator size="small" color="#22c55e" />
+              </View>
+            )}
+
+            {/* Tulisan AI Proctor / Status Pelanggaran di bagian ATAS video */}
+            <View style={[
+              styles.cameraBadge,
+              currentFaceStatus !== 'normal' && { backgroundColor: 'rgba(220, 38, 38, 0.85)' }
+            ]}>
+              <View style={[
+                styles.cameraDot,
+                currentFaceStatus !== 'normal'
+                  ? { backgroundColor: '#ef4444' }
+                  : !isCameraNativeReady
+                  ? { backgroundColor: '#eab308' }
+                  : { backgroundColor: '#22c55e' }
+              ]} />
+              <Text style={styles.cameraBadgeText}>
+                {currentFaceStatus === 'look_left_right'
+                  ? 'Menengok!'
+                  : currentFaceStatus === 'tilt_up_down'
+                  ? 'Kepala Miring!'
+                  : currentFaceStatus === 'no_face'
+                  ? 'Wajah Hilang!'
+                  : currentFaceStatus === 'multiple_faces'
+                  ? 'Multi Wajah!'
+                  : isCameraNativeReady
+                  ? 'AI Proctor Aktif'
+                  : 'Memuat Proctor...'}
+              </Text>
             </View>
+
+            {/* Tombol minimize sekarang di POJOK KANAN BAWAH video */}
             <TouchableOpacity
               style={styles.camMinimizeBtn}
               onPress={() => setIsCameraMinimized(true)}
@@ -999,8 +1975,11 @@ export default function CbtUjian() {
               style={styles.cameraMinimizedBadge}
               onPress={() => setIsCameraMinimized(false)}
             >
-              <View style={styles.cameraDot} />
-              <Camera size={14} color="#16a34a" />
+              <View style={[
+                styles.cameraDot,
+                currentFaceStatus !== 'normal' && { backgroundColor: '#ef4444' }
+              ]} />
+              <Camera size={14} color={currentFaceStatus !== 'normal' ? '#dc2626' : '#16a34a'} />
               <Maximize2 size={12} color="#475569" style={{ marginLeft: 4 }} />
             </TouchableOpacity>
           )}
@@ -1009,7 +1988,17 @@ export default function CbtUjian() {
 
       {/* Question Card Content */}
       {currentSoal ? (
-        <ScrollView style={styles.questionScroll} contentContainerStyle={styles.questionContent}>
+        <ScrollView
+          style={styles.questionScroll}
+          contentContainerStyle={[styles.questionContent, { paddingBottom: 130 + Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshingSoal}
+              onRefresh={handleRefreshSoal}
+              colors={['#3740A1']}
+            />
+          }
+        >
           {/* Question Meta Header */}
           <View style={styles.questionMetaHeader}>
             <View style={styles.questionNumBadge}>
@@ -1027,35 +2016,40 @@ export default function CbtUjian() {
           <Text style={styles.pertanyaanText}>{currentSoal.pertanyaan}</Text>
 
           {/* Jawaban Pilihan Ganda (PG) */}
-          {currentSoal.jenis_soal === 'pg' && (
-            <View style={styles.opsiContainer}>
-              {['A', 'B', 'C', 'D'].map((key) => {
-                let opsiVal = '';
-                if (typeof currentSoal.opsi_jawaban === 'object' && currentSoal.opsi_jawaban !== null) {
-                  opsiVal = currentSoal.opsi_jawaban[key] || currentSoal.opsi_jawaban[key.toLowerCase()] || '';
-                }
-                const isSelected = currentAnswer?.jawaban === key;
+          {currentSoal.jenis_soal === 'pg' && (() => {
+            const rawOptions = parseOpsiJawaban(currentSoal.opsi_jawaban);
+            const optionsToRender = rawOptions.length > 0 
+              ? rawOptions 
+              : ['A', 'B', 'C', 'D'].map(k => ({ id: k, text: '' }));
 
-                return (
-                  <TouchableOpacity
-                    key={key}
-                    activeOpacity={0.7}
-                    style={[styles.opsiCard, isSelected && styles.opsiCardSelected]}
-                    onPress={() => handleAnswerChange(key)}
-                  >
-                    <View style={[styles.opsiRadio, isSelected && styles.opsiRadioSelected]}>
-                      <Text style={[styles.opsiRadioText, isSelected && styles.opsiRadioTextSelected]}>
-                        {key}
+            return (
+              <View style={styles.opsiContainer}>
+                {optionsToRender.map((op, idx) => {
+                  const key = op.id;
+                  const displayLabel = String.fromCharCode(65 + idx);
+                  const isSelected = currentAnswer?.jawaban === key;
+
+                  return (
+                    <TouchableOpacity
+                      key={key || idx}
+                      activeOpacity={0.7}
+                      style={[styles.opsiCard, isSelected && styles.opsiCardSelected]}
+                      onPress={() => handleAnswerChange(key)}
+                    >
+                      <View style={[styles.opsiRadio, isSelected && styles.opsiRadioSelected]}>
+                        <Text style={[styles.opsiRadioText, isSelected && styles.opsiRadioTextSelected]}>
+                          {displayLabel}
+                        </Text>
+                      </View>
+                      <Text style={[styles.opsiContentText, isSelected && styles.opsiContentTextSelected]}>
+                        {op.text || `Pilihan ${displayLabel}`}
                       </Text>
-                    </View>
-                    <Text style={[styles.opsiContentText, isSelected && styles.opsiContentTextSelected]}>
-                      {opsiVal || `Pilihan ${key}`}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            );
+          })()}
 
           {/* Jawaban Isian Singkat */}
           {currentSoal.jenis_soal === 'isian' && (
@@ -1088,18 +2082,28 @@ export default function CbtUjian() {
             </View>
           )}
         </ScrollView>
-      ) : null}
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <FileQuestion size={48} color="#94a3b8" />
+          <Text style={{ marginTop: 12, fontSize: 16, color: '#475569', fontWeight: 'bold' }}>Soal tidak tersedia</Text>
+          <Text style={{ marginTop: 4, fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
+            Data soal gagal dimuat atau belum diatur untuk jadwal ujian ini.
+          </Text>
+        </View>
+      )}
 
       {/* Bottom Action Bar */}
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) + 12 }]}>
         {/* Tombol Sebelumnya */}
         <TouchableOpacity
           style={[styles.navBtn, currentIndex === 0 && styles.navBtnDisabled]}
           disabled={currentIndex === 0}
           onPress={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
         >
-          <ChevronLeft size={20} color={currentIndex === 0 ? '#94a3b8' : '#3740A1'} />
-          <Text style={[styles.navBtnText, currentIndex === 0 && styles.navBtnTextDisabled]}>Sebelumnya</Text>
+          <ChevronLeft size={18} color={currentIndex === 0 ? '#94a3b8' : '#3740A1'} />
+          <Text style={[styles.navBtnText, currentIndex === 0 && styles.navBtnTextDisabled]} numberOfLines={1}>
+            Sebelumnya
+          </Text>
         </TouchableOpacity>
 
         {/* Tombol Ragu-Ragu */}
@@ -1108,11 +2112,11 @@ export default function CbtUjian() {
           onPress={handleToggleRagu}
         >
           {currentAnswer?.is_ragu ? (
-            <CheckSquare size={18} color="#d97706" />
+            <CheckSquare size={16} color="#d97706" />
           ) : (
-            <Square size={18} color="#64748b" />
+            <Square size={16} color="#64748b" />
           )}
-          <Text style={[styles.raguBtnText, currentAnswer?.is_ragu && styles.raguBtnTextActive]}>
+          <Text style={[styles.raguBtnText, currentAnswer?.is_ragu && styles.raguBtnTextActive]} numberOfLines={1}>
             Ragu-Ragu
           </Text>
         </TouchableOpacity>
@@ -1123,16 +2127,26 @@ export default function CbtUjian() {
             style={styles.navBtnPrimary}
             onPress={() => setCurrentIndex((prev) => Math.min(soalList.length - 1, prev + 1))}
           >
-            <Text style={styles.navBtnPrimaryText}>Berikutnya</Text>
-            <ChevronRight size={20} color="#fff" />
+            <Text style={styles.navBtnPrimaryText} numberOfLines={1}>Berikutnya</Text>
+            <ChevronRight size={18} color="#fff" />
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
             style={styles.navBtnSubmit}
-            onPress={() => setShowConfirmModal(true)}
+            onPress={() => {
+              if (stats.ragu > 0) {
+                Alert.alert(
+                  'Masih Ada Soal Ragu-Ragu!',
+                  `Anda masih memiliki ${stats.ragu} butir soal yang ditandai ragu-ragu. Harap periksa dan hilangkan tanda centang ragu-ragu sebelum mengumpulkan ujian.`,
+                  [{ text: 'Periksa Soal', style: 'default' }]
+                );
+                return;
+              }
+              setShowConfirmModal(true);
+            }}
           >
-            <Send size={16} color="#fff" />
-            <Text style={styles.navBtnPrimaryText}>Kumpulkan</Text>
+            <Send size={15} color="#fff" />
+            <Text style={styles.navBtnPrimaryText} numberOfLines={1}>Kumpulkan</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -1145,7 +2159,12 @@ export default function CbtUjian() {
         onRequestClose={() => setShowDrawer(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.drawerSheet}>
+          <View
+            style={[
+              styles.drawerSheet,
+              { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20) + 16 }
+            ]}
+          >
             {/* Sheet Header */}
             <View style={styles.drawerHeader}>
               <Text style={styles.drawerTitle}>Daftar Butir Soal</Text>
@@ -1215,14 +2234,23 @@ export default function CbtUjian() {
 
             {/* Drawer Submit Button */}
             <TouchableOpacity
-              style={styles.drawerSubmitBtn}
+              style={[styles.drawerSubmitBtn, stats.ragu > 0 && { backgroundColor: '#f59e0b' }]}
               onPress={() => {
+                if (stats.ragu > 0) {
+                  Alert.alert(
+                    'Masih Ada Soal Ragu-Ragu!',
+                    `Anda masih memiliki ${stats.ragu} butir soal yang ditandai ragu-ragu. Harap periksa dan hilangkan tanda centang ragu-ragu sebelum mengumpulkan ujian.`
+                  );
+                  return;
+                }
                 setShowDrawer(false);
                 setShowConfirmModal(true);
               }}
             >
               <CheckCircle size={18} color="#fff" />
-              <Text style={styles.drawerSubmitBtnText}>Selesai & Kumpulkan Ujian</Text>
+              <Text style={styles.drawerSubmitBtnText}>
+                {stats.ragu > 0 ? `Ada ${stats.ragu} Soal Ragu-Ragu` : 'Selesai & Kumpulkan Ujian'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1262,10 +2290,30 @@ export default function CbtUjian() {
               {stats.ragu > 0 && (
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Masih Ragu-ragu:</Text>
-                  <Text style={[styles.summaryVal, { color: '#d97706' }]}>{stats.ragu} butir</Text>
+                  <Text style={[styles.summaryVal, { color: '#d97706', fontWeight: '800' }]}>{stats.ragu} butir</Text>
                 </View>
               )}
             </View>
+
+            {/* Peringatan Kritis Jika Masih Ada Soal Belum Dikerjakan */}
+            {stats.unanswered > 0 && (
+              <View style={[styles.raguAlertBox, { backgroundColor: '#fef2f2', borderColor: '#fca5a5' }]}>
+                <AlertCircle size={18} color="#dc2626" />
+                <Text style={styles.raguAlertText}>
+                  Ujian TIDAK DAPAT dikumpulkan karena masih ada {stats.unanswered} butir soal yang belum dikerjakan. Harap selesaikan seluruh butir soal terlebih dahulu.
+                </Text>
+              </View>
+            )}
+
+            {/* Peringatan Kritis Jika Masih Ada Ragu-Ragu */}
+            {stats.ragu > 0 && (
+              <View style={styles.raguAlertBox}>
+                <AlertCircle size={18} color="#dc2626" />
+                <Text style={styles.raguAlertText}>
+                  Ujian TIDAK DAPAT dikumpulkan karena masih ada {stats.ragu} butir soal berstatus ragu-ragu. Harap periksa dan hilangkan centang ragu-ragu terlebih dahulu.
+                </Text>
+              </View>
+            )}
 
             {/* Buttons */}
             <View style={styles.confirmBtnRow}>
@@ -1277,14 +2325,23 @@ export default function CbtUjian() {
                 <Text style={styles.confirmBtnCancelText}>Periksa Lagi</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.confirmBtnSubmit}
-                onPress={finalizeSubmission}
-                disabled={isSubmitting}
+                style={[
+                  styles.confirmBtnSubmit,
+                  (stats.ragu > 0 || stats.unanswered > 0) && styles.confirmBtnSubmitDisabled
+                ]}
+                onPress={() => finalizeSubmission(false)}
+                disabled={stats.ragu > 0 || stats.unanswered > 0 || isSubmitting}
               >
                 {isSubmitting ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.confirmBtnSubmitText}>Ya, Kumpulkan</Text>
+                  <Text style={styles.confirmBtnSubmitText}>
+                    {stats.unanswered > 0
+                      ? `Terkunci (${stats.unanswered} Belum)`
+                      : stats.ragu > 0
+                      ? 'Terkunci (Ada Ragu)'
+                      : 'Ya, Kumpulkan'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -1307,10 +2364,11 @@ export default function CbtUjian() {
             </Text>
             <Text style={[styles.confirmSub, { marginTop: 10 }]}>{showViolationWarning}</Text>
             <TouchableOpacity
-              style={[styles.confirmBtnSubmit, { backgroundColor: '#dc2626', marginTop: 20, width: '100%' }]}
+              style={styles.warningActionBtn}
               onPress={() => setShowViolationWarning(null)}
+              activeOpacity={0.8}
             >
-              <Text style={styles.confirmBtnSubmitText}>Saya Mengerti & Lanjutkan Ujian</Text>
+              <Text style={styles.warningActionBtnText}>Saya Mengerti & Lanjutkan Ujian</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1368,15 +2426,26 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     backgroundColor: '#fff',
     paddingTop: Platform.OS === 'ios' ? 52 : 44,
-    paddingBottom: 12,
+    paddingBottom: 10,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
-    gap: 8,
+  },
+  topBarMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  topBarSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
   },
   topBarMapel: {
     fontSize: 15,
@@ -1410,6 +2479,22 @@ const styles = StyleSheet.create({
   timerTextUrgent: {
     color: '#dc2626',
   },
+  refreshSoalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  refreshSoalBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#3740A1',
+  },
   drawerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1426,24 +2511,30 @@ const styles = StyleSheet.create({
   },
   cameraContainer: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 108 : 96,
     right: 14,
     zIndex: 100,
   },
   cameraFrame: {
-    width: 100,
-    height: 125,
-    borderRadius: 12,
-    overflow: 'hidden',
+    width: 104,
+    height: 130,
+    borderRadius: 14,
     borderWidth: 2,
     borderColor: '#22c55e',
-    backgroundColor: '#000',
+    backgroundColor: '#000000',
+    position: 'relative',
+  },
+  cameraLoadingOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
   },
   cameraBadge: {
     position: 'absolute',
-    bottom: 4,
-    left: 4,
-    right: 4,
+    top: 5,
+    left: 5,
+    right: 5,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.65)',
@@ -1465,15 +2556,13 @@ const styles = StyleSheet.create({
   },
   camMinimizeBtn: {
     position: 'absolute',
-    top: 4,
-    right: 4,
+    bottom: 5,
+    right: 5,
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
     borderRadius: 10,
     padding: 3,
   },
-  cameraMinimized: {
-    top: Platform.OS === 'ios' ? 108 : 96,
-  },
+  cameraMinimized: {},
   cameraMinimizedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1627,20 +2716,22 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     gap: 8,
   },
   navBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderRadius: 10,
     backgroundColor: '#f1f5f9',
     gap: 4,
   },
@@ -1648,7 +2739,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   navBtnText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#3740A1',
   },
@@ -1656,15 +2747,17 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
   },
   raguBtn: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderRadius: 10,
     backgroundColor: '#f8fafc',
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    gap: 6,
+    gap: 5,
   },
   raguBtnActive: {
     backgroundColor: '#fef3c7',
@@ -1679,25 +2772,29 @@ const styles = StyleSheet.create({
     color: '#d97706',
   },
   navBtnPrimary: {
+    flex: 1.15,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderRadius: 10,
     backgroundColor: '#3740A1',
     gap: 4,
   },
   navBtnSubmit: {
+    flex: 1.15,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    justifyContent: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 4,
+    borderRadius: 10,
     backgroundColor: '#16a34a',
-    gap: 6,
+    gap: 4,
   },
   navBtnPrimaryText: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
     color: '#fff',
   },
@@ -1791,6 +2888,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     marginTop: 16,
+    minHeight: 48,
     gap: 8,
   },
   drawerSubmitBtnText: {
@@ -1879,6 +2977,45 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#fff',
+  },
+  raguAlertBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#fca5a5',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 14,
+    gap: 8,
+  },
+  raguAlertText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#b91c1c',
+    lineHeight: 16,
+  },
+  confirmBtnSubmitDisabled: {
+    backgroundColor: '#94a3b8',
+    opacity: 0.7,
+  },
+  warningActionBtn: {
+    width: '100%',
+    backgroundColor: '#dc2626',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+    minHeight: 48,
+  },
+  warningActionBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
   },
 
   // STEP 1 & 2 STYLES
@@ -2020,29 +3157,88 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 13,
   },
+  scanStudentBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 320,
+    marginTop: 10,
+  },
+  scanStudentLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#38bdf8',
+    letterSpacing: 1,
+  },
+  scanStudentName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  scanStudentMeta: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  scanControlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    width: '100%',
+    marginTop: 6,
+  },
+  flipCamBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(56, 189, 248, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+  },
+  flipCamBtnText: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   scanBottomAction: {
     width: '100%',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    paddingHorizontal: 10,
   },
-  primaryActionBtn: {
-    width: '100%',
-    backgroundColor: '#3740A1',
-    paddingVertical: 14,
-    borderRadius: 16,
+  scanNoticeCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    gap: 10,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderRadius: 14,
+    padding: 12,
+    width: '100%',
+    maxWidth: 360,
   },
-  primaryActionBtnText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '800',
+  scanNoticeText: {
+    flex: 1,
+    fontSize: 11,
+    color: '#fde68a',
+    lineHeight: 16,
+    fontWeight: '500',
   },
   scanSystemFooter: {
     fontSize: 10,
     color: '#64748b',
+    marginTop: 4,
   },
   stepContainerLight: {
     flex: 1,
@@ -2089,11 +3285,11 @@ const styles = StyleSheet.create({
   },
   blockedCard: {
     backgroundColor: '#fef2f2',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1.5,
     borderColor: '#fca5a5',
-    padding: 14,
-    flexDirection: 'row',
+    padding: 16,
+    flexDirection: 'column',
     alignItems: 'center',
     gap: 12,
   },
@@ -2203,9 +3399,47 @@ const styles = StyleSheet.create({
   startExamBtnDisabled: {
     backgroundColor: '#94a3b8',
   },
+  startExamBtnBlocked: {
+    backgroundColor: '#dc2626',
+  },
   startExamBtnText: {
     color: '#fff',
     fontSize: 14,
+    fontWeight: '800',
+  },
+  berandaRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  berandaRefreshBtnText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  blockedRefreshBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#fee2e2',
+    borderWidth: 1,
+    borderColor: '#f87171',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginTop: 10,
+    width: '100%',
+  },
+  blockedRefreshBtnText: {
+    color: '#dc2626',
+    fontSize: 12,
     fontWeight: '800',
   },
   blockedOverlay: {

@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { supabase } from '../../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Picker } from '@react-native-picker/picker';
-import { ChevronLeft, Save, CheckSquare, Square } from 'lucide-react-native';
+import { ChevronLeft, Save, CheckCircle2 } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 export default function InputNilai() {
@@ -270,6 +271,9 @@ export default function InputNilai() {
     });
   }
 
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(insets.bottom, Platform.OS === 'android' ? 44 : 20);
+
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.container}>
       <View style={styles.header}>
@@ -280,9 +284,9 @@ export default function InputNilai() {
         <Text style={styles.headerSubtitle}>Masukkan nilai akademik siswa.</Text>
       </View>
 
-      <ScrollView style={styles.content} keyboardShouldPersistTaps="handled" stickyHeaderIndices={[1]}>
+      <ScrollView style={styles.content} keyboardShouldPersistTaps="handled">
         
-        {/* SECTION 1: FILTER (Tidak Sticky) */}
+        {/* SECTION 1: FILTER (Card Filter Tetap) */}
         <View style={styles.filterCard}>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <View style={{ flex: 1 }}>
@@ -326,126 +330,173 @@ export default function InputNilai() {
           </TouchableOpacity>
         </View>
 
-        {/* SECTION 2: TABLE CONTAINER (Sticky padding/margin trick to allow smooth scrolling) */}
-        <View />
-
-        {/* SECTION 3: THE ACTUAL TABLE */}
+        {/* SECTION 2: DAFTAR KARTU NILAI SISWA (Sesuai Desain Gambar) */}
         {dataNilai.length > 0 && (
-          <View style={styles.tableCardWrapper}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-              <View style={styles.tableBox}>
-                
-                {/* TABLE HEADER */}
-                <View style={styles.tableHeaderRow}>
-                  <Text style={[styles.thCell, { width: 40, textAlign: 'center' }]}>No</Text>
-                  <Text style={[styles.thCell, { width: 200 }]}>Nama Siswa</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>Tugas 1</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>Tugas 2</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>Tugas 3</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>Tugas 4</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>PTS</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>PAS</Text>
-                  <Text style={[styles.thCell, { width: 70, textAlign: 'center' }]}>Rapor</Text>
-                  <Text style={[styles.thCell, { width: 60, textAlign: 'center' }]}>Rank</Text>
-                  <Text style={[styles.thCell, { width: 300 }]}>TP Optimal (Hijau)</Text>
-                  <Text style={[styles.thCell, { width: 300 }]}>TP Peningkatan (Merah)</Text>
-                </View>
+          <View style={styles.cardListContainer}>
+            {dataNilai.map((item, idx) => {
+              const studentRank = ranksMap[item.nipd];
+              const avgVal = studentRank?.avg;
+              const avgDisplay = avgVal && avgVal > 0 ? (avgVal % 1 === 0 ? avgVal.toFixed(0) : avgVal.toFixed(1)) : '0';
+              const rankDisplay = avgVal && avgVal > 0 ? String(studentRank?.rank || '0') : '0';
 
-                {/* TABLE BODY */}
-                {dataNilai.map((item, idx) => (
-                  <View key={item.id_siswa} style={styles.tableRow}>
-                    <Text style={[styles.tdCell, { width: 40, textAlign: 'center', alignSelf: 'flex-start' }]}>{idx + 1}</Text>
-                    
-                    <View style={[styles.tdCell, { width: 200, alignSelf: 'flex-start' }]}>
-                      <Text style={styles.studentName}>{item.nama_lengkap}</Text>
-                      <Text style={styles.studentSub}>{item.nisn} / {item.nipd}</Text>
+              return (
+                <View key={item.id_siswa || item.nipd} style={styles.studentCard}>
+                  {/* Baris Atas: Nama Siswa & NISN/NIPD (Kiri) | Rata-rata & Rank (Kanan) */}
+                  <View style={styles.cardHeaderRow}>
+                    <View style={styles.studentInfoCol}>
+                      <Text style={styles.studentNameTitle} numberOfLines={2}>
+                        {idx + 1}. {item.nama_lengkap}
+                      </Text>
+                      <Text style={styles.studentNisnNipd}>
+                        {item.nisn ? item.nisn : '-'} / {item.nipd ? item.nipd : '-'}
+                      </Text>
                     </View>
 
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_tugas_1} onChangeText={t => handleInputChange(idx, 'nilai_tugas_1', t)} 
-                      />
-                    </View>
+                    <View style={styles.statBadgesRow}>
+                      {/* Box Rata-rata */}
+                      <View style={styles.statBoxCol}>
+                        <Text style={styles.statLabel}>Rata-rata</Text>
+                        <View style={styles.avgBox}>
+                          <Text style={styles.avgText}>{avgDisplay}</Text>
+                        </View>
+                      </View>
 
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_tugas_2} onChangeText={t => handleInputChange(idx, 'nilai_tugas_2', t)} 
-                      />
+                      {/* Box Rank */}
+                      <View style={styles.statBoxCol}>
+                        <Text style={styles.statLabel}>Rank</Text>
+                        <View style={styles.rankBox}>
+                          <Text style={styles.rankText}>{rankDisplay}</Text>
+                        </View>
+                      </View>
                     </View>
-
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_tugas_3} onChangeText={t => handleInputChange(idx, 'nilai_tugas_3', t)} 
-                      />
-                    </View>
-
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_tugas_4} onChangeText={t => handleInputChange(idx, 'nilai_tugas_4', t)} 
-                      />
-                    </View>
-
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_pts} onChangeText={t => handleInputChange(idx, 'nilai_pts', t)} 
-                      />
-                    </View>
-
-                    <View style={[styles.tdCell, { width: 70, alignSelf: 'flex-start' }]}>
-                      <TextInput 
-                        style={styles.scoreInput} keyboardType="numeric" 
-                        value={item.nilai_pas} onChangeText={t => handleInputChange(idx, 'nilai_pas', t)} 
-                      />
-                    </View>
-
-                    <View style={[styles.tdCell, { width: 70, alignItems: 'center', alignSelf: 'flex-start', paddingTop: 6 }]}>
-                      <Text style={styles.raporText}>{ranksMap[item.nipd]?.avg?.toFixed(1) || '-'}</Text>
-                    </View>
-
-                    <View style={[styles.tdCell, { width: 60, alignItems: 'center', alignSelf: 'flex-start', paddingTop: 6 }]}>
-                      <Text style={styles.rankText}>{ranksMap[item.nipd]?.rank || '-'}</Text>
-                    </View>
-
-                    {/* CAPAIAN OPTIMAL */}
-                    <View style={[styles.tdCell, { width: 300 }]}>
-                      {dataTP.length === 0 ? <Text style={styles.emptyTP}>Belum ada TP</Text> : dataTP.map(tp => (
-                        <TouchableOpacity key={tp.id} style={styles.tpCheckboxRow} onPress={() => handleCheckboxChange(idx, 'capaian_optimal', tp.id)}>
-                          {item.capaian_optimal?.includes(tp.id) ? <CheckSquare color="#10b981" size={18} /> : <Square color="#d1d5db" size={18} />}
-                          <Text style={styles.tpText}>{tp.tujuan_pembelajaran}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
-                    {/* CAPAIAN PENINGKATAN */}
-                    <View style={[styles.tdCell, { width: 300 }]}>
-                      {dataTP.length === 0 ? <Text style={styles.emptyTP}>Belum ada TP</Text> : dataTP.map(tp => (
-                        <TouchableOpacity key={tp.id} style={styles.tpCheckboxRow} onPress={() => handleCheckboxChange(idx, 'capaian_peningkatan', tp.id)}>
-                          {item.capaian_peningkatan?.includes(tp.id) ? <CheckSquare color="#ef4444" size={18} /> : <Square color="#d1d5db" size={18} />}
-                          <Text style={styles.tpText}>{tp.tujuan_pembelajaran}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-
                   </View>
-                ))}
 
-              </View>
-            </ScrollView>
+                  {/* Baris Nilai: 6 Kolom Sejajar (Tugas 1, Tugas 2, Tugas 3, Tugas 4, UTS, UAS) */}
+                  <View style={styles.scoresRow}>
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>Tugas 1</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_tugas_1}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_tugas_1', t)}
+                      />
+                    </View>
+
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>Tugas 2</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_tugas_2}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_tugas_2', t)}
+                      />
+                    </View>
+
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>Tugas 3</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_tugas_3}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_tugas_3', t)}
+                      />
+                    </View>
+
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>Tugas 4</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_tugas_4}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_tugas_4', t)}
+                      />
+                    </View>
+
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>UTS</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_pts}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_pts', t)}
+                      />
+                    </View>
+
+                    <View style={styles.scoreCol}>
+                      <Text style={styles.scoreLabel}>UAS</Text>
+                      <TextInput
+                        style={styles.scoreInputField}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9CA3AF"
+                        value={item.nilai_pas}
+                        onChangeText={(t) => handleInputChange(idx, 'nilai_pas', t)}
+                      />
+                    </View>
+                  </View>
+
+                  {/* Tujuan Pembelajaran yang tercapai */}
+                  <Text style={styles.tpSectionTitle}>Tujuan Pembelajaran yang tercapai</Text>
+                  
+                  <View style={styles.tpContainerBox}>
+                    {dataTP.length === 0 ? (
+                      <Text style={styles.emptyTPText}>Belum ada data Tujuan Pembelajaran untuk kelas dan mapel ini</Text>
+                    ) : (
+                      dataTP.map((tp) => {
+                        const isChecked = item.capaian_optimal?.includes(tp.id);
+                        return (
+                          <TouchableOpacity
+                            key={tp.id}
+                            style={styles.tpItemRow}
+                            onPress={() => handleCheckboxChange(idx, 'capaian_optimal', tp.id)}
+                            activeOpacity={0.7}
+                          >
+                            {isChecked ? (
+                              <CheckCircle2 size={18} color="#2563EB" />
+                            ) : (
+                              <View style={styles.uncheckedCircle} />
+                            )}
+                            <Text style={[styles.tpItemText, isChecked && styles.tpItemTextChecked]}>
+                              {tp.tujuan_pembelajaran}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })
+                    )}
+                  </View>
+                </View>
+              );
+            })}
           </View>
         )}
-        <View style={{ height: 100 }} />
+
+        {/* Spacer di bawah agar konten terbawah tidak tertutup tombol simpan */}
+        <View style={{ height: 130 + bottomPadding }} />
       </ScrollView>
 
-      {/* Floating Save Button */}
+      {/* Floating Save Button - Diangkat ke atas agar tidak tertutup navigasi bawaan Android */}
       {dataNilai.length > 0 && (
-        <View style={styles.floatingAction}>
-          <TouchableOpacity style={styles.btnSaveFull} onPress={handleSimpan} disabled={isSaving}>
-            {isSaving ? <ActivityIndicator color="#fff" /> : <><Save color="#fff" size={20} /><Text style={styles.btnSaveFullText}>Simpan Semua Nilai</Text></>}
+        <View style={[styles.floatingAction, { bottom: bottomPadding + 14 }]}>
+          <TouchableOpacity style={styles.btnSaveFull} onPress={handleSimpan} disabled={isSaving} activeOpacity={0.85}>
+            {isSaving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Save color="#fff" size={20} />
+                <Text style={styles.btnSaveFullText}>Simpan Semua Nilai</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       )}
@@ -455,38 +506,196 @@ export default function InputNilai() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f3f4f6' },
-  header: { backgroundColor: '#2a2c87', paddingTop: 50, paddingBottom: 20, paddingHorizontal: 20 },
+  header: { backgroundColor: '#1E257F', paddingTop: 50, paddingBottom: 20, paddingHorizontal: 20 },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   backBtn: { marginRight: 16 },
   headerTitle: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
-  headerSubtitle: { color: '#e0e7ff', fontSize: 13 },
+  headerSubtitle: { color: '#ECEEFF', fontSize: 13 },
   
   content: { flex: 1, padding: 16 },
-  filterCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, marginBottom: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
-  filterLabel: { fontSize: 12, fontWeight: 'bold', color: '#6b7280', marginBottom: 4 },
-  pickerWrapper: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 12, marginBottom: 12, overflow: 'hidden' },
-  btnFetch: { backgroundColor: '#2a2c87', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
+  filterCard: { backgroundColor: '#fff', padding: 16, borderRadius: 18, marginBottom: 16, borderWidth: 1, borderColor: '#E2E8F0', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 4, elevation: 2 },
+  filterLabel: { fontSize: 12, fontWeight: 'bold', color: '#6C757D', marginBottom: 4 },
+  pickerWrapper: { backgroundColor: '#F8F9FA', borderWidth: 1, borderColor: '#E2E8F0', borderRadius: 12, marginBottom: 12, overflow: 'hidden' },
+  btnFetch: { backgroundColor: '#1E257F', paddingVertical: 14, borderRadius: 12, alignItems: 'center', marginTop: 8 },
   btnFetchText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
 
-  tableCardWrapper: { backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 },
-  tableBox: { minWidth: 1000 },
-  tableHeaderRow: { flexDirection: 'row', backgroundColor: '#eef2ff', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#c7d2fe' },
-  thCell: { fontSize: 13, fontWeight: 'bold', color: '#1e3a8a', paddingHorizontal: 8 },
-  tableRow: { flexDirection: 'row', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
-  tdCell: { paddingHorizontal: 8, justifyContent: 'center' },
-  
-  studentName: { fontSize: 14, fontWeight: 'bold', color: '#1f2937' },
-  studentSub: { fontSize: 11, color: '#6b7280', marginTop: 2 },
-  
-  scoreInput: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 8, fontSize: 13, fontWeight: 'bold', color: '#1f2937', textAlign: 'center', width: '100%' },
-  raporText: { fontSize: 16, fontWeight: 'bold', color: '#2a2c87' },
-  rankText: { fontSize: 16, fontWeight: 'bold', color: '#10b981' },
-
-  tpCheckboxRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8, gap: 8 },
-  tpText: { flex: 1, fontSize: 12, color: '#4b5563', lineHeight: 18 },
-  emptyTP: { fontSize: 12, color: '#9ca3af', fontStyle: 'italic' },
-
-  floatingAction: { position: 'absolute', bottom: 20, left: 20, right: 20 },
-  btnSaveFull: { backgroundColor: '#2a2c87', paddingVertical: 16, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
-  btnSaveFullText: { color: '#fff', fontSize: 16, fontWeight: 'bold' }
+  cardListContainer: { gap: 16 },
+  studentCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  cardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  studentInfoCol: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  studentNameTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1A1818',
+    letterSpacing: -0.3,
+  },
+  studentNisnNipd: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#6C757D',
+    marginTop: 2,
+  },
+  statBadgesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statBoxCol: {
+    alignItems: 'center',
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1A1818',
+    marginBottom: 3,
+  },
+  avgBox: {
+    borderWidth: 1.5,
+    borderColor: '#00B4D8',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    paddingVertical: 3,
+    paddingHorizontal: 12,
+    minWidth: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avgText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#00B4D8',
+  },
+  rankBox: {
+    borderWidth: 1.5,
+    borderColor: '#2EC4B6',
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    paddingVertical: 3,
+    paddingHorizontal: 12,
+    minWidth: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rankText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#2EC4B6',
+  },
+  scoresRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 5,
+    marginTop: 14,
+  },
+  scoreCol: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  scoreLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1A1818',
+    marginBottom: 4,
+  },
+  scoreInputField: {
+    width: '100%',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1A1818',
+    textAlign: 'center',
+  },
+  tpSectionTitle: {
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#1A1818',
+    marginTop: 14,
+    marginBottom: 8,
+  },
+  tpContainerBox: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    backgroundColor: '#F8F9FA',
+    padding: 12,
+  },
+  emptyTPText: {
+    fontSize: 12,
+    color: '#ADB5BD',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 6,
+  },
+  tpItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    gap: 8,
+  },
+  uncheckedCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#ADB5BD',
+    backgroundColor: '#ffffff',
+  },
+  tpItemText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#6C757D',
+    lineHeight: 18,
+  },
+  tpItemTextChecked: {
+    color: '#1A1818',
+    fontWeight: '500',
+  },
+  floatingAction: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+  },
+  btnSaveFull: {
+    backgroundColor: '#1E257F',
+    paddingVertical: 15,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#1E257F',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  btnSaveFullText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
 });

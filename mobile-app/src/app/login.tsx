@@ -9,6 +9,8 @@ import CryptoJS from 'crypto-js';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
+import * as Animatable from 'react-native-animatable';
+import { X, SwitchCamera, QrCode } from 'lucide-react-native';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -19,6 +21,7 @@ export default function LoginScreen() {
   
   // Camera & Scanner State
   const [isScanning, setIsScanning] = useState(false);
+  const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [permission, requestPermission] = useCameraPermissions();
 
   const SECRET_KEY = process.env.EXPO_PUBLIC_KARTU_SISWA_SECRET || "KARTU_SISWA_SECRET";
@@ -211,17 +214,91 @@ export default function LoginScreen() {
       <View style={styles.scannerContainer}>
         <CameraView 
           style={StyleSheet.absoluteFill}
-          facing="back"
+          facing={facing}
           barcodeScannerSettings={{
             barcodeTypes: ['qr'],
           }}
           onBarcodeScanned={handleBarcodeScanned}
         />
+        
+        {/* Fullscreen Dark Mask Overlay with Viewfinder Hole */}
         <View style={styles.scannerOverlay}>
-          <Text style={styles.scannerText}>Arahkan kamera ke QR Code Kartu Pelajar</Text>
-          <TouchableOpacity style={styles.cancelScanButton} onPress={() => setIsScanning(false)}>
-            <Text style={styles.cancelScanText}>Batal</Text>
-          </TouchableOpacity>
+          {/* Top Bar Controls */}
+          <View style={styles.scannerTopBar}>
+            <TouchableOpacity 
+              style={styles.scannerIconBtn} 
+              onPress={() => setIsScanning(false)}
+              activeOpacity={0.7}
+            >
+              <X size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            <View style={styles.scannerTitleBox}>
+              <Text style={styles.scannerHeaderTitle}>Scan Kartu Pelajar</Text>
+              <Text style={styles.scannerHeaderSub}>SMP IT Hidayatul Mubtadi-ien</Text>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.scannerIconBtn} 
+              onPress={() => setFacing(prev => prev === 'back' ? 'front' : 'back')}
+              activeOpacity={0.7}
+            >
+              <SwitchCamera size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Mask Top */}
+          <View style={styles.maskTop} />
+
+          {/* Center Viewfinder Row */}
+          <View style={styles.maskCenterRow}>
+            <View style={styles.maskSide} />
+            
+            {/* Viewfinder Target Frame */}
+            <View style={styles.viewfinderHole}>
+              {/* 4 Professional Corner Brackets */}
+              <View style={[styles.cornerBracket, styles.cornerTL]} />
+              <View style={[styles.cornerBracket, styles.cornerTR]} />
+              <View style={[styles.cornerBracket, styles.cornerBL]} />
+              <View style={[styles.cornerBracket, styles.cornerBR]} />
+
+              {/* Animated Laser Scanning Line */}
+              <Animatable.View 
+                animation={{
+                  0: { translateY: 0, opacity: 0.8 },
+                  0.5: { translateY: 240, opacity: 1 },
+                  1: { translateY: 0, opacity: 0.8 }
+                }}
+                iterationCount="infinite"
+                duration={2500}
+                easing="linear"
+                style={styles.scannerLaser}
+              />
+
+              {/* Center Target Watermark / Crosshair */}
+              <View style={styles.centerTarget}>
+                <QrCode size={40} color="rgba(255,255,255,0.2)" />
+              </View>
+            </View>
+
+            <View style={styles.maskSide} />
+          </View>
+
+          {/* Mask Bottom with Instructions & Cancel Button */}
+          <View style={styles.maskBottom}>
+            <View style={styles.scannerInstructionBox}>
+              <Text style={styles.scannerInstructionTitle}>Posisikan QR Code di dalam bingkai</Text>
+              <Text style={styles.scannerInstructionSub}>Kamera akan mendeteksi kartu secara otomatis</Text>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.cancelScanBtn} 
+              onPress={() => setIsScanning(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cancelScanBtnText}>Kembali ke Login Manual</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     );
@@ -458,37 +535,168 @@ const styles = StyleSheet.create({
   },
   scannerContainer: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: '#000000',
   },
   scannerOverlay: {
-    flex: 1,
-    backgroundColor: 'transparent',
-    flexDirection: 'column',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'space-between',
-    padding: 40,
+  },
+  scannerTopBar: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 36,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+  },
+  scannerIconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerTitleBox: {
     alignItems: 'center',
   },
-  scannerText: {
+  scannerHeaderTitle: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 40,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    padding: 10,
-    borderRadius: 8,
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
-  cancelScanButton: {
-    backgroundColor: '#E63946',
-    padding: 16,
-    borderRadius: 8,
+  scannerHeaderSub: {
+    color: '#84D43F',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  maskTop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+  },
+  maskCenterRow: {
+    flexDirection: 'row',
+    height: 250,
+  },
+  maskSide: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+  },
+  viewfinderHole: {
+    width: 250,
+    height: 250,
+    backgroundColor: 'transparent',
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 20,
+  },
+  centerTarget: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cornerBracket: {
+    position: 'absolute',
+    width: 36,
+    height: 36,
+    borderColor: '#84D43F',
+  },
+  cornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    borderTopLeftRadius: 16,
+  },
+  cornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 4,
+    borderRightWidth: 4,
+    borderTopRightRadius: 16,
+  },
+  cornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 4,
+    borderLeftWidth: 4,
+    borderBottomLeftRadius: 16,
+  },
+  cornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 4,
+    borderRightWidth: 4,
+    borderBottomRightRadius: 16,
+  },
+  scannerLaser: {
+    width: '100%',
+    height: 3,
+    backgroundColor: '#84D43F',
+    shadowColor: '#84D43F',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  maskBottom: {
+    flex: 1.4,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: Platform.OS === 'ios' ? 44 : 28,
+  },
+  scannerInstructionBox: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(30, 37, 127, 0.75)',
+    borderColor: 'rgba(132, 212, 63, 0.4)',
+    borderWidth: 1,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 24,
+  },
+  scannerInstructionTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  scannerInstructionSub: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 3,
+  },
+  cancelScanBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    borderRadius: 14,
     width: '100%',
     alignItems: 'center',
-    marginBottom: 20,
   },
-  cancelScanText: {
+  cancelScanBtnText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
