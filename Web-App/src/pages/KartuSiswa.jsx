@@ -258,11 +258,6 @@ export default function KartuSiswa() {
     );
   };
 
-  const toggleAllSiswa = (check) => {
-    if (check) setSelectedSiswaIds(allSiswa.map(s => s.id));
-    else setSelectedSiswaIds([]);
-  };
-
   const uniqueKelas = [...new Set(allSiswa.map(s => s.kelas).filter(Boolean))].sort();
 
   const filteredSiswa = allSiswa.filter(s => 
@@ -270,6 +265,16 @@ export default function KartuSiswa() {
     (s.nipd || '').toLowerCase().includes(searchQuery.toLowerCase())) &&
     (selectedKelas ? s.kelas === selectedKelas : true)
   );
+
+  const toggleAllSiswa = (check) => {
+    if (check) {
+      // Pilih hanya siswa yang saat ini sedang tampil pada filter
+      setSelectedSiswaIds(filteredSiswa.map(s => s.id));
+    } else {
+      // Kosongkan siswa yang ada pada filter yang sedang aktif
+      setSelectedSiswaIds(prev => prev.filter(id => !filteredSiswa.some(s => s.id === id)));
+    }
+  };
 
   const selectedStudents = allSiswa.filter(s => selectedSiswaIds.includes(s.id));
   const studentsPerPage = 5; // 5 students per A4 (front and back = 10 cards total)
@@ -334,6 +339,7 @@ export default function KartuSiswa() {
                      <tbody>
                      <tr><td className="w-[12mm] font-bold align-top">NIPD</td><td className="w-[2mm] align-top">:</td><td className="align-top font-bold" style={{ color: settings.warnaIdentitas }}>{siswa.nipd || '-'}</td></tr>
                      <tr><td className="font-bold align-top">NISN</td><td className="align-top">:</td><td className="align-top">{siswa.nisn || '-'}</td></tr>
+                      <tr><td className="font-bold align-top">Kelas</td><td className="align-top">:</td><td className="align-top font-bold">{siswa.kelas || '-'}</td></tr>
                      <tr><td className="font-bold align-top">TTL</td><td className="align-top">:</td><td className="align-top capitalize">{`${(siswa.tempat_lahir || '-').toLowerCase()}, ${formatDate(siswa.tanggal_lahir)}`}</td></tr>
                      <tr><td className="font-bold align-top">Alamat</td><td className="align-top">:</td><td className="align-top capitalize line-clamp-2">{addressDetails || '-'}</td></tr>
                      </tbody>
@@ -365,13 +371,11 @@ export default function KartuSiswa() {
                
                <div className="mt-auto flex flex-col items-center mb-2 shrink-0">
                   {settings.showFields.qrcode && (
-                    <div className="bg-white p-1.5 rounded-lg shadow-sm border border-gray-200 flex items-center justify-center w-[22mm] h-[22mm]">
-                      <QRCodeSVG value={encryptedNIPD} size={70} />
+                    <div className="bg-white p-1.5 rounded-xl shadow-sm border border-gray-200 flex items-center justify-center w-[36mm] h-[36mm]">
+                      <QRCodeSVG value={encryptedNIPD} size={125} />
                     </div>
                   )}
-                  <p className={`text-[6px] ${textColorSub} mt-1.5 text-center font-bold`}>Scan QR Presensi</p>
                </div>
-               <p className={`text-[5.5px] ${textColorMuted} italic mt-1 font-medium w-full text-center`}>** Berlaku selama menjadi siswa **</p>
             </div>
          )}
       </div>
@@ -415,6 +419,7 @@ export default function KartuSiswa() {
                         <tbody>
                         <tr><td className="w-[12mm] font-bold align-top">NIPD</td><td className="w-[2mm] align-top">:</td><td className="align-top font-bold" style={{ color: settings.warnaIdentitas }}>{siswa.nipd || '-'}</td></tr>
                         <tr><td className="font-bold align-top">NISN</td><td className="align-top">:</td><td className="align-top">{siswa.nisn || '-'}</td></tr>
+                         <tr><td className="font-bold align-top">Kelas</td><td className="align-top">:</td><td className="align-top font-bold">{siswa.kelas || '-'}</td></tr>
                         <tr><td className="font-bold align-top">TTL</td><td className="align-top">:</td><td className="align-top capitalize">{`${(siswa.tempat_lahir || '-').toLowerCase()}, ${formatDate(siswa.tanggal_lahir)}`}</td></tr>
                         <tr><td className="font-bold align-top">Alamat</td><td className="align-top">:</td><td className="align-top capitalize line-clamp-2">{addressDetails || '-'}</td></tr>
                         </tbody>
@@ -445,13 +450,12 @@ export default function KartuSiswa() {
                   </ul>
                   <p className={`text-[6px] italic mt-3 font-medium`} style={{ color: settings.warnaIdentitas }}>** Berlaku selama menjadi siswa **</p>
                </div>
-               <div className={`flex flex-col items-center justify-center shrink-0 border-l ${isDark ? 'border-gray-600' : 'border-gray-200'} pl-4 pr-2 min-w-[26mm]`}>
+               <div className={`flex flex-col items-center justify-center shrink-0 border-l ${isDark ? 'border-gray-600' : 'border-gray-200'} pl-3 pr-2 min-w-[38mm]`}>
                   {settings.showFields.qrcode && (
-                    <div className="bg-white p-1.5 rounded-lg shadow-sm border border-gray-200 flex items-center justify-center w-[22mm] h-[22mm]">
-                      <QRCodeSVG value={encryptedNIPD} size={70} />
+                    <div className="bg-white p-1.5 rounded-xl shadow-sm border border-gray-200 flex items-center justify-center w-[35mm] h-[35mm]">
+                      <QRCodeSVG value={encryptedNIPD} size={120} />
                     </div>
                   )}
-                  <p className={`text-[6px] ${textColorSub} mt-1.5 text-center font-bold`}>Scan QR Presensi</p>
                </div>
             </div>
          )}

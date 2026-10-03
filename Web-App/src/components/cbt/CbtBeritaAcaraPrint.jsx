@@ -78,15 +78,40 @@ export default function CbtBeritaAcaraPrint() {
         .maybeSingle();
       setSopData(sop);
 
-      // Hitung kehadiran dari cbt_peserta_ruang atau data_siswa
+      // Hitung kehadiran dari cbt_peserta_ruang (hanya siswa aktif) atau data_siswa
       let totalSiswaKelas = 0;
-      const { count: pesertaRuangCount } = await supabase
+      let { data: prData } = await supabase
         .from('cbt_peserta_ruang')
-        .select('id', { count: 'exact', head: true })
+        .select(`
+          id,
+          data_siswa:siswa_id(id, status_keaktifan, kelas)
+        `)
         .eq('jadwal_id', jadwalId);
 
-      if (pesertaRuangCount && pesertaRuangCount > 0) {
-        totalSiswaKelas = pesertaRuangCount;
+      if (!prData || prData.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+        if (latestPR && latestPR.length > 0) {
+          const { data: fbData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select(`
+              id,
+              data_siswa:siswa_id(id, status_keaktifan, kelas)
+            `)
+            .eq('jadwal_id', latestPR[0].jadwal_id);
+          if (fbData && fbData.length > 0) prData = fbData;
+        }
+      }
+
+      const activePesertaCount = (prData || []).filter(
+        p => p.data_siswa && (p.data_siswa.status_keaktifan || '').trim().toLowerCase() === 'aktif' && p.data_siswa.kelas !== 'Calon Siswa'
+      ).length;
+
+      if (activePesertaCount > 0) {
+        totalSiswaKelas = activePesertaCount;
       } else if (jRes.data?.data_kelas?.nama_kelas) {
         const { count } = await supabase
           .from('data_siswa')

@@ -19,7 +19,6 @@ import {
 import { useLocalSearchParams, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Camera as VisionCamera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -166,8 +165,7 @@ export default function CbtUjian() {
   const { jadwalId } = useLocalSearchParams<{ jadwalId: string }>();
 
   // Permissions & Cam
-  const [permission, requestPermission] = useCameraPermissions();         // expo-camera: AI Proctor (takePictureAsync)
-  const { hasPermission: hasScanPermission, requestPermission: requestScanPermission } = useCameraPermission(); // vision-camera: QR Scan
+  const [permission, requestPermission] = useCameraPermissions();
   const [isCameraMinimized, setIsCameraMinimized] = useState(false);
   const [proctorCameraReady, setProctorCameraReady] = useState(false);
   const [isCameraNativeReady, setIsCameraNativeReady] = useState(false);
@@ -185,20 +183,8 @@ export default function CbtUjian() {
   // States
   const [currentStep, setCurrentStep] = useState<'scan' | 'beranda' | 'soal'>('scan');
   const [scanFacing, setScanFacing] = useState<'back' | 'front'>('back');
-  const scanDevice = useCameraDevice(scanFacing); // vision-camera device untuk QR scan kartu
   const isVerifyingCardRef = useRef(false);
   const handleBarcodeScannedRef = useRef<(data: string) => void>(() => {});
-  const cardObjectOutput = useObjectOutput({
-    types: ['qr', 'code-128', 'ean-13', 'ean-8', 'code-39'],
-    onObjectsScanned: (objects) => {
-      for (const obj of objects) {
-        if (isScannedCode(obj) && obj.value) {
-          handleBarcodeScannedRef.current(obj.value);
-          break;
-        }
-      }
-    }
-  });
   const [isVerifyingCard, setIsVerifyingCard] = useState(false);
   const [isCardVerified, setIsCardVerified] = useState(false);
   const isResumingRef = useRef(false);
@@ -524,15 +510,12 @@ export default function CbtUjian() {
     };
   }, [jadwalId]);
 
-  // Request camera permission (vision-camera untuk scan QR + expo-camera untuk proktor)
+  // Request camera permission
   useEffect(() => {
-    if (!hasScanPermission) {
-      requestScanPermission();
-    }
     if (!permission?.granted) {
       requestPermission();
     }
-  }, [permission, hasScanPermission]);
+  }, [permission?.granted]);
 
   // Jeda warm-up mount kamera depan AI proctor saat masuk ke 'soal'
   useEffect(() => {
@@ -700,10 +683,11 @@ export default function CbtUjian() {
         .maybeSingle();
 
       // Validasi status keaktifan siswa (Hanya siswa Aktif yang boleh mengakses ujian CBT)
-      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+      const isAktif = (dbSiswa?.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+      if (!dbSiswa || !isAktif) {
         Alert.alert(
           'Akses Ujian Ditolak',
-          `Akun siswa Anda berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang dapat mengikuti ujian CBT.`,
+          `Akun siswa Anda berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Sesuai ketentuan, hanya siswa berstatus "Aktif" yang dapat mengikuti ujian CBT.`,
           [{ text: 'Kembali', onPress: () => router.back() }]
         );
         return;
@@ -895,6 +879,19 @@ export default function CbtUjian() {
           Alert.alert('Info', 'Anda telah menyelesaikan ujian ini.');
           router.replace('/cbt-jadwal-siswa' as any);
           return;
+        }
+        if (activeSesi.status === 'belum_mulai') {
+          const totalDetik = activeSesi.sisa_detik || (jadwalData.durasi_menit || 60) * 60;
+          await supabase
+            .from('cbt_sesi_siswa')
+            .update({
+              status: 'mengerjakan',
+              waktu_mulai: activeSesi.waktu_mulai || new Date().toISOString(),
+              sisa_detik: totalDetik,
+            })
+            .eq('id', activeSesi.id);
+          activeSesi.status = 'mengerjakan';
+          activeSesi.sisa_detik = totalDetik;
         }
         if (activeSesi.status === 'diblokir') {
           setIsBlocked(true);
@@ -1567,12 +1564,20 @@ export default function CbtUjian() {
 
         {/* Scan Frame Area */}
         <View style={styles.scanBox}>
-        {hasScanPermission && scanDevice ? (
-            <VisionCamera
+        {permission?.granted ? (
+            <CameraView
               style={StyleSheet.absoluteFill}
-              device={scanDevice}
-              isActive={currentStep === 'scan' && !isVerifyingCard && !isCardVerified}
-              outputs={[cardObjectOutput]}
+              facing={scanFacing}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr', 'code128', 'ean13', 'ean8', 'code39'],
+              }}
+              onBarcodeScanned={
+                isVerifyingCard || isCardVerified
+                  ? undefined
+                  : ({ data }) => {
+                      if (data) handleBarcodeScanned(data);
+                    }
+              }
             />
           ) : (
             <View style={styles.scanFallback}>

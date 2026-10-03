@@ -41,7 +41,7 @@ export const initNotificationChannel = async (): Promise<void> => {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 300, 200, 300],
         lightColor: '#2a2c87',
-        sound: 'default',
+        sound: null,
         enableVibrate: true,
         enableLights: true,
       });
@@ -53,7 +53,7 @@ export const initNotificationChannel = async (): Promise<void> => {
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#85c226',
-        sound: 'default',
+        sound: null,
         enableVibrate: true,
         enableLights: true,
       });

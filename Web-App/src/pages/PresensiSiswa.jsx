@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { 
-  Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, Edit3, 
-  XCircle, FileText, PieChart, Filter, Settings, AlertTriangle, 
-  ChevronLeft, ChevronRight, Printer, Send, Eye, X, ShieldAlert, 
-  Info, CalendarDays, ArrowUpDown, Download, Check, Sparkles, RefreshCw 
+import {
+  Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, Edit3,
+  XCircle, FileText, PieChart, Filter, Settings, AlertTriangle,
+  ChevronLeft, ChevronRight, Printer, Send, Eye, X, ShieldAlert,
+  Info, CalendarDays, ArrowUpDown, Download, Check, Sparkles, RefreshCw, SwitchCamera, Camera
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Html5QrcodeScanner, Html5QrcodeSupportedFormats, Html5Qrcode } from 'html5-qrcode';
@@ -36,7 +36,7 @@ export default function PresensiSiswa() {
             setTipeHari(active.id.toString());
             setJamMasuk((active.jam_masuk || '07:00').substring(0, 5));
             const isJumat = getOperationalDayIndex() === 5;
-            setJamPulang(isJumat ? '10:40' : (active.jam_pulang || '13:00').substring(0, 5));
+            setJamPulang(isJumat ? '10:00' : (active.jam_pulang || '13:00').substring(0, 5));
           }
         }
       } catch (err) {
@@ -205,16 +205,16 @@ export default function PresensiSiswa() {
       fetchPeringatanData();
     }
   }, [
-    currentTab, 
-    rekapFilterMode, 
-    rekapTanggal, 
-    rekapWeekOffset, 
-    rekapBulan, 
-    rekapTahun, 
-    peringatanFilterMode, 
-    peringatanWeekOffset, 
-    peringatanBulan, 
-    peringatanTahun, 
+    currentTab,
+    rekapFilterMode,
+    rekapTanggal,
+    rekapWeekOffset,
+    rekapBulan,
+    rekapTahun,
+    peringatanFilterMode,
+    peringatanWeekOffset,
+    peringatanBulan,
+    peringatanTahun,
     peringatanFilterKategori
   ]);
 
@@ -244,13 +244,13 @@ export default function PresensiSiswa() {
       console.log("Fonnte: Mulai mengirim WA untuk", nama);
       const token = import.meta.env.VITE_FONNTE_TOKEN;
       console.log("Fonnte Token loaded:", token ? "YES" : "NO");
-      
+
       if (!token) return; // Jika belum disetting di .env, lewati saja
 
       // Bersihkan karakter selain angka (menghapus spasi, strip, tanda plus, dll)
       let noWa = (wa_ortu || '').toString().replace(/\D/g, '');
       console.log("Fonnte: Nomor raw dari DB:", wa_ortu, "-> Bersih:", noWa);
-      
+
       // (Opsional) Jika Fonnte butuh format 62, ubah awalan 0 menjadi 62
       if (noWa.startsWith('0')) {
         noWa = '62' + noWa.substring(1);
@@ -258,8 +258,8 @@ export default function PresensiSiswa() {
 
       console.log("Fonnte: Nomor final dikirim:", noWa);
       if (!noWa || noWa.length < 9) {
-         console.log("Fonnte: Batal kirim, nomor tidak valid");
-         return;
+        console.log("Fonnte: Batal kirim, nomor tidak valid");
+        return;
       }
 
       // Generate Random ID untuk variasi pesan agar tidak terdeteksi spam/pesan berulang
@@ -269,7 +269,7 @@ export default function PresensiSiswa() {
       const data = new URLSearchParams();
       data.append('target', noWa);
       data.append('message', pesan);
-      
+
       // Mengatur delay Fonnte antara 15 hingga 30 detik untuk menghindari blokir
       const randomDelay = Math.floor(Math.random() * (30 - 15 + 1)) + 15;
       data.append('delay', randomDelay.toString());
@@ -281,11 +281,11 @@ export default function PresensiSiswa() {
         },
         body: data
       })
-      .then(res => res.json())
-      .then(res => {
-         console.log("Fonnte Response:", res);
-      })
-      .catch(err => console.error('Fonnte fetch error:', err));
+        .then(res => res.json())
+        .then(res => {
+          console.log("Fonnte Response:", res);
+        })
+        .catch(err => console.error('Fonnte fetch error:', err));
     } catch (e) {
       console.error('Gagal menyiapkan kirim WA:', e);
     }
@@ -391,14 +391,14 @@ export default function PresensiSiswa() {
 
       // Ambil NIPD unik dari data rekap
       const uniqueNipds = [...new Set((data || []).map(d => d.nipd).filter(Boolean))];
-      
+
       let siswaMap = {};
       if (uniqueNipds.length > 0) {
         const { data: siswaData } = await supabase
           .from('data_siswa')
           .select('nipd, nama, kelas, wa_ortu')
           .in('nipd', uniqueNipds);
-          
+
         if (siswaData) {
           siswaData.forEach(s => {
             siswaMap[s.nipd] = { nama: s.nama, kelas: s.kelas, wa_ortu: s.wa_ortu };
@@ -413,12 +413,12 @@ export default function PresensiSiswa() {
 
       const finalData = (data || []).map(d => {
         let evalStatus = d.status || '';
-        
+
         // Logika Bolos: absen masuk ada tapi pulang tidak ada, dan sudah melewati jam pulang atau hari sebelumnya
         if (d.waktu_masuk && !d.waktu_pulang) {
           const isPastDate = d.tanggal < todayStr;
           const isPastJamPulang = currentMinutes > pulangMinutes;
-          
+
           if (isPastDate || (d.tanggal === todayStr && isPastJamPulang)) {
             evalStatus = 'Bolos';
           }
@@ -867,14 +867,14 @@ export default function PresensiSiswa() {
       if (error) throw error;
 
       Swal.fire('Berhasil!', `Presensi ${manualStatus} untuk ${payloadArray.length} siswa berhasil disimpan.`, 'success');
-      
+
       // Kirim Notifikasi WA ke masing-masing siswa yang dipilih secara background dengan JEDA (Anti-Spam)
       let currentDelayMs = 0;
       selectedSiswaList.forEach((siswa, index) => {
         // Tambahkan delay acak antara 15000ms hingga 30000ms untuk tiap pengiriman berikutnya
         const randomMs = Math.floor(Math.random() * (30000 - 15000 + 1)) + 15000;
         currentDelayMs += (index === 0 ? 0 : randomMs);
-        
+
         setTimeout(() => {
           sendWhatsAppNotification(siswa.nama, siswa.kelas, siswa.wa_ortu, manualStatus, jamSekarang);
           sendPushNotification(siswa.nipd, `Presensi ${manualStatus}`, `Ananda ${siswa.nama} telah dicatat dengan status: ${manualStatus}.`);
@@ -940,7 +940,13 @@ export default function PresensiSiswa() {
       }
     } catch (e) {
       console.error("Gagal mendeskripsi QR:", e);
-      Swal.fire('Tidak Valid', 'QR Code tidak dikenali atau bukan format resmi.', 'error');
+      Swal.fire({
+        icon: 'error',
+        title: 'Tidak Valid',
+        text: 'QR Code tidak dikenali atau bukan format resmi.',
+        timer: 2000,
+        showConfirmButton: false
+      });
 
       // Delay to avoid spam
       setTimeout(() => setIsProcessing(false), 3000);
@@ -957,7 +963,13 @@ export default function PresensiSiswa() {
 
       if (errSiswa) throw errSiswa;
       if (!dataSiswa) {
-        Swal.fire('Tidak Ditemukan', `Siswa dengan NIPD ${nipd} tidak ditemukan.`, 'warning');
+        Swal.fire({
+          icon: 'warning',
+          title: 'Tidak Ditemukan',
+          text: `Siswa dengan NIPD ${nipd} tidak ditemukan.`,
+          timer: 2000,
+          showConfirmButton: false
+        });
         setIsProcessing(false);
         return;
       }
@@ -1077,7 +1089,13 @@ export default function PresensiSiswa() {
     } catch (e) {
       console.error("Gagal mencatat presensi:", e);
       const errorMsg = e.message || (typeof e === 'string' ? e : JSON.stringify(e));
-      Swal.fire('Error', `Gagal memproses presensi: ${errorMsg}`, 'error');
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: `Gagal memproses presensi: ${errorMsg}`,
+        timer: 2000,
+        showConfirmButton: false
+      });
     } finally {
       // Beri delay sedikit sebelum bisa scan lagi untuk menghindari spam
       setTimeout(() => {
@@ -1264,8 +1282,8 @@ export default function PresensiSiswa() {
                 />
               </div>
 
-              <Link 
-                to="/master-jam-presensi" 
+              <Link
+                to="/master-jam-presensi"
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition whitespace-nowrap shadow-sm"
                 title="Kelola Master Jam Presensi Global"
               >
@@ -1427,33 +1445,29 @@ export default function PresensiSiswa() {
               <div className="flex bg-gray-100 p-1.5 rounded-2xl w-full md:w-auto overflow-x-auto">
                 <button
                   onClick={() => setRekapFilterMode('harian')}
-                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-                    rekapFilterMode === 'harian' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${rekapFilterMode === 'harian' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <Calendar size={14} /> Harian
                 </button>
                 <button
                   onClick={() => setRekapFilterMode('mingguan')}
-                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-                    rekapFilterMode === 'mingguan' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${rekapFilterMode === 'mingguan' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <CalendarDays size={14} /> Mingguan
                 </button>
                 <button
                   onClick={() => setRekapFilterMode('bulanan')}
-                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-                    rekapFilterMode === 'bulanan' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${rekapFilterMode === 'bulanan' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <PieChart size={14} /> Bulanan
                 </button>
                 <button
                   onClick={() => setRekapFilterMode('semester')}
-                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${
-                    rekapFilterMode === 'semester' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
-                  }`}
+                  className={`flex-1 md:flex-initial px-4 py-2 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 whitespace-nowrap ${rekapFilterMode === 'semester' ? 'bg-white text-primary shadow-sm font-black' : 'text-gray-600 hover:text-gray-900'
+                    }`}
                 >
                   <FileText size={14} /> Semester
                 </button>
@@ -1592,8 +1606,8 @@ export default function PresensiSiswa() {
                   className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary outline-none text-xs bg-gray-50"
                 />
                 {rekapSearch && (
-                  <button 
-                    onClick={() => setRekapSearch('')} 
+                  <button
+                    onClick={() => setRekapSearch('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                   >
                     <X size={14} />
@@ -1689,12 +1703,11 @@ export default function PresensiSiswa() {
                         <td className="px-6 py-4 font-mono text-primary font-bold">{log.waktu_masuk || '-'}</td>
                         <td className="px-6 py-4 font-mono text-red-500 font-bold">{log.waktu_pulang || '-'}</td>
                         <td className="px-6 py-4">
-                          <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase ${
-                            log.status.includes('Terlambat') ? 'bg-yellow-100 text-yellow-700' :
-                            (log.status.includes('Bolos') || log.status === 'Alfa') ? 'bg-red-100 text-red-700' :
-                            (log.status.includes('Izin') || log.status.includes('Sakit') || log.status.includes('Dispensasi')) ? 'bg-orange-100 text-orange-700' :
-                            'bg-green-100 text-green-700'
-                          }`}>
+                          <span className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase ${log.status.includes('Terlambat') ? 'bg-yellow-100 text-yellow-700' :
+                              (log.status.includes('Bolos') || log.status === 'Alfa') ? 'bg-red-100 text-red-700' :
+                                (log.status.includes('Izin') || log.status.includes('Sakit') || log.status.includes('Dispensasi')) ? 'bg-orange-100 text-orange-700' :
+                                  'bg-green-100 text-green-700'
+                            }`}>
                             {log.status}
                           </span>
                         </td>
@@ -1922,8 +1935,8 @@ export default function PresensiSiswa() {
                   className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-primary outline-none text-xs bg-gray-50"
                 />
                 {peringatanSearch && (
-                  <button 
-                    onClick={() => setPeringatanSearch('')} 
+                  <button
+                    onClick={() => setPeringatanSearch('')}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                   >
                     <X size={14} />
@@ -2100,8 +2113,8 @@ export default function PresensiSiswa() {
                   NIPD: {selectedViolator.nipd} {selectedViolator.wa_ortu && `• WA: ${selectedViolator.wa_ortu}`}
                 </p>
               </div>
-              <button 
-                onClick={() => setSelectedViolator(null)} 
+              <button
+                onClick={() => setSelectedViolator(null)}
                 className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-full transition"
               >
                 <X size={20} />
@@ -2148,11 +2161,10 @@ export default function PresensiSiswa() {
                           <td className="px-4 py-3 font-mono text-primary font-bold">{v.waktu_masuk || '-'}</td>
                           <td className="px-4 py-3 font-mono text-red-500 font-bold">{v.waktu_pulang || '-'}</td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              v.status === 'Terlambat' ? 'bg-yellow-100 text-yellow-800' :
-                              v.status === 'Bolos' ? 'bg-red-100 text-red-800' :
-                              'bg-rose-100 text-rose-800'
-                            }`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${v.status === 'Terlambat' ? 'bg-yellow-100 text-yellow-800' :
+                                v.status === 'Bolos' ? 'bg-red-100 text-red-800' :
+                                  'bg-rose-100 text-rose-800'
+                              }`}>
                               {v.status}
                             </span>
                           </td>
@@ -2341,13 +2353,17 @@ export default function PresensiSiswa() {
   );
 }
 
-// Sub-component for QR Scanner
+// Sub-component for QR Scanner with Camera Switching
 function QrScanner({ onScan, isProcessing }) {
   const qrCodeId = useRef(`qr-reader-${Date.now()}-${Math.floor(Math.random() * 1000)}`);
-  const html5QrCode = useRef(null);
   const onScanRef = useRef(onScan);
   const isProcessingRef = useRef(isProcessing);
-  const startPromiseRef = useRef(null);
+
+  const [cameraFacing, setCameraFacing] = useState('environment'); // 'environment' (belakang) | 'user' (depan)
+  const [cameraList, setCameraList] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [scannerError, setScannerError] = useState('');
 
   // Selalu update referensi agar tidak terjadi "stale closure"
   useEffect(() => {
@@ -2355,65 +2371,182 @@ function QrScanner({ onScan, isProcessing }) {
     isProcessingRef.current = isProcessing;
   }, [onScan, isProcessing]);
 
+  // Ambil daftar kamera yang tersedia di perangkat
   useEffect(() => {
-    // Gunakan variabel lokal agar cleanup function merujuk pada instance yang tepat
-    // (Mencegah bug kamera bocor akibat React Strict Mode yang memanggil ulang useEffect)
-    const scannerInstance = new Html5Qrcode(qrCodeId.current);
+    let isMounted = true;
+    Html5Qrcode.getCameras().then(devices => {
+      if (isMounted && devices && devices.length > 0) {
+        setCameraList(devices);
+      }
+    }).catch(err => {
+      console.warn("Could not list cameras:", err);
+    });
+    return () => { isMounted = false; };
+  }, []);
 
-    const config = {
-      fps: 10,
-      qrbox: { width: 250, height: 250 },
-      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+  useEffect(() => {
+    let isMounted = true;
+    let scannerInstance = null;
+    setIsSwitching(true);
+    setScannerError('');
+
+    const startScanner = async () => {
+      try {
+        const el = document.getElementById(qrCodeId.current);
+        if (!el) return;
+        el.innerHTML = '';
+
+        scannerInstance = new Html5Qrcode(qrCodeId.current);
+
+        const config = {
+          fps: 10,
+          qrbox: (viewfinderWidth, viewfinderHeight) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const edgeSize = Math.floor(minEdge * 0.72);
+            return { width: Math.max(edgeSize, 220), height: Math.max(edgeSize, 220) };
+          },
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+        };
+
+        let cameraTarget;
+        if (selectedCameraId) {
+          cameraTarget = { deviceId: { exact: selectedCameraId } };
+        } else {
+          cameraTarget = { facingMode: cameraFacing };
+        }
+
+        const handleSuccess = (decodedText) => {
+          if (!isProcessingRef.current && onScanRef.current) {
+            onScanRef.current(decodedText);
+          }
+        };
+
+        try {
+          await scannerInstance.start(cameraTarget, config, handleSuccess, () => {});
+        } catch (firstErr) {
+          console.warn("Camera start with target failed, trying fallback:", firstErr);
+          // Fallback jika facingMode spesifik ditolak (misal desktop webcam)
+          try {
+            await scannerInstance.start({ facingMode: "user" }, config, handleSuccess, () => {});
+          } catch (secondErr) {
+            console.error("All camera starts failed:", secondErr);
+            if (isMounted) {
+              setScannerError('Gagal mengakses kamera. Pastikan izin kamera telah diberikan di browser.');
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error init scanner:", err);
+        if (isMounted) setScannerError('Terjadi kendala saat membuka kamera.');
+      } finally {
+        if (isMounted) setIsSwitching(false);
+      }
     };
 
-    // Mulai kamera dan simpan promisenya
-    const startPromise = scannerInstance.start(
-      { facingMode: "environment" },
-      config,
-      (decodedText) => {
-        if (!isProcessingRef.current) {
-          onScanRef.current(decodedText);
-        }
-      },
-      (errorMessage) => {
-        // Abaikan error parse saat tidak mendeteksi QR code
-      }
-    );
-
-    startPromise.catch(err => {
-      console.warn("Kamera dibatalkan atau gagal dimulai:", err);
-    });
+    const timer = setTimeout(startScanner, 120);
 
     return () => {
-      // Fungsi untuk menghentikan kamera dengan aman untuk instance spesifik ini
-      const stopAndClear = () => {
+      isMounted = false;
+      clearTimeout(timer);
+      if (scannerInstance) {
         try {
-          if (scannerInstance.isScanning || scannerInstance.getState() === 2 /* SCANNING */) {
+          if (scannerInstance.isScanning || scannerInstance.getState() === 2) {
             scannerInstance.stop().then(() => {
               scannerInstance.clear();
-            }).catch(console.error);
+            }).catch(() => {});
           } else {
             scannerInstance.clear();
           }
         } catch (e) {
-          console.error("Gagal saat mencoba stop kamera:", e);
+          console.warn("Cleanup scanner error:", e);
         }
-      };
-
-      // Jika start() masih berjalan saat unmount, tunggu sampai selesai lalu segera matikan
-      if (startPromise) {
-        startPromise
-          .then(() => stopAndClear())
-          .catch(() => stopAndClear());
-      } else {
-        stopAndClear();
       }
     };
-  }, []);
+  }, [cameraFacing, selectedCameraId]);
+
+  const handleSwitchCamera = () => {
+    if (isSwitching) return;
+    if (cameraList.length > 1) {
+      const currentIndex = cameraList.findIndex(c => c.id === selectedCameraId);
+      const nextIndex = (currentIndex + 1) % cameraList.length;
+      setSelectedCameraId(cameraList[nextIndex].id);
+    } else {
+      setSelectedCameraId('');
+      setCameraFacing(prev => prev === 'environment' ? 'user' : 'environment');
+    }
+  };
+
+  const getCameraLabel = () => {
+    if (selectedCameraId) {
+      const found = cameraList.find(c => c.id === selectedCameraId);
+      if (found) return found.label || `Kamera ${cameraList.indexOf(found) + 1}`;
+    }
+    return cameraFacing === 'environment' ? 'Kamera Belakang' : 'Kamera Depan';
+  };
 
   return (
-    <div id={qrCodeId.current} className="w-full min-h-[300px] bg-black rounded-xl overflow-hidden flex items-center justify-center relative z-0">
-      {/* Container video stream Html5Qrcode */}
+    <div className="relative w-full rounded-2xl overflow-hidden bg-black shadow-inner">
+      {/* Viewport Box */}
+      <div 
+        id={qrCodeId.current} 
+        className="w-full min-h-[320px] aspect-[4/3] bg-black flex items-center justify-center [&_video]:w-full [&_video]:h-full [&_video]:object-cover"
+      />
+
+      {/* Floating Header Controls */}
+      <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-10 pointer-events-none">
+        {/* Active Camera Badge */}
+        <div className="pointer-events-auto bg-black/60 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-md border border-white/10">
+          <Camera size={13} className="text-amber-400" />
+          <span className="truncate max-w-[140px] sm:max-w-[180px]">{getCameraLabel()}</span>
+        </div>
+
+        {/* Switch Camera Button */}
+        <button
+          type="button"
+          onClick={handleSwitchCamera}
+          disabled={isSwitching || isProcessing}
+          className="pointer-events-auto bg-white/95 hover:bg-white text-gray-800 active:scale-95 transition-all text-xs font-bold px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5 border border-gray-200 cursor-pointer disabled:opacity-50"
+          title="Beralih ke kamera lain"
+        >
+          <SwitchCamera size={15} className={`text-primary ${isSwitching ? 'animate-spin' : ''}`} />
+          <span>Beralih Kamera</span>
+        </button>
+      </div>
+
+      {/* Camera Dropdown if > 1 cameras available */}
+      {cameraList.length > 1 && (
+        <div className="absolute bottom-3 left-3 right-3 z-10">
+          <select
+            value={selectedCameraId}
+            onChange={(e) => setSelectedCameraId(e.target.value)}
+            className="w-full bg-black/75 backdrop-blur-md text-white text-xs font-semibold px-3 py-1.5 rounded-xl border border-white/20 outline-none cursor-pointer"
+          >
+            <option value="">Otomatis ({cameraFacing === 'environment' ? 'Kamera Belakang' : 'Kamera Depan'})</option>
+            {cameraList.map((cam, idx) => (
+              <option key={cam.id || idx} value={cam.id} className="bg-gray-900 text-white">
+                {cam.label || `Kamera ${idx + 1}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Error state */}
+      {scannerError && (
+        <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-6 text-center z-20">
+          <AlertCircle size={36} className="text-rose-500 mb-2" />
+          <p className="text-sm font-bold text-white mb-1">Akses Kamera Terkendala</p>
+          <p className="text-xs text-gray-400 mb-4 max-w-xs">{scannerError}</p>
+          <button
+            type="button"
+            onClick={handleSwitchCamera}
+            className="px-4 py-2 bg-primary hover:bg-blue-800 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-2"
+          >
+            <SwitchCamera size={14} />
+            Coba Beralih Kamera
+          </button>
+        </div>
+      )}
     </div>
   );
 }

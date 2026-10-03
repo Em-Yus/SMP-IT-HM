@@ -9,7 +9,7 @@ import {
   CreditCard, Wallet, Settings, Megaphone, CheckSquare,
   GraduationCap, ClipboardList, UserPlus,
   Building, Monitor, Activity, UserMinus, Target, Briefcase, School, Mail, DollarSign, Search,
-  CalendarDays, FileQuestion, Eye, BookOpenCheck, QrCode
+  CalendarDays, FileQuestion, Eye, BookOpenCheck, QrCode, PieChart
 } from 'lucide-react-native';
 
 const menuGroups = [
@@ -63,7 +63,9 @@ const menuGroups = [
       { name: 'Biaya Mutu', icon: Settings, route: '/biaya-mutu' },
       { name: 'Tagihan Siswa', icon: Wallet, route: '/tagihan-siswa' },
       { name: 'Rekap Bayar', icon: FileText, route: '/rekap' },
-      { name: 'Pemasukan', icon: DollarSign, route: '/pemasukan-lainnya' },
+      { name: 'Pemasukan Lainnya', icon: DollarSign, route: '/pemasukan-lainnya' },
+      { name: 'Pengeluaran', icon: CreditCard, route: '/pengeluaran' },
+      { name: 'Laporan Keuangan', icon: PieChart, route: '/rekap-keuangan' },
     ]
   },
   {
@@ -111,6 +113,10 @@ export default function MenuScreen() {
     '/cbt-sop': '/ujian/tata-tertib',
     '/cbt/jadwal': '/ujian/jadwal',
     '/cbt-jadwal': '/ujian/jadwal',
+    '/pengeluaran': '/pengeluaran',
+    '/input-pengeluaran': '/pengeluaran',
+    '/rekap-keuangan': '/rekap-keuangan',
+    '/laporan-keuangan': '/rekap-keuangan',
   };
 
   const fetchUser = async () => {
@@ -267,6 +273,17 @@ export default function MenuScreen() {
         mergedAkses.add('/master-jam-guru');
       }
 
+      const hasAnyFinance = roleNames.some((r: string) => {
+        const lower = (r || '').toLowerCase();
+        return lower.includes('kepala sekolah') || lower.includes('kepsek') || lower.includes('bendahara') || lower.includes('operator') || lower.includes('admin') || lower.includes('tu') || lower.includes('tata usaha');
+      }) || mergedAkses.has('/pemasukan-lainnya') || mergedAkses.has('/tagihan-siswa') || mergedAkses.has('/rekap') || mergedAkses.has('/biaya-mutu');
+
+      if (hasAnyFinance) {
+        mergedAkses.add('/pengeluaran');
+        mergedAkses.add('/rekap-keuangan');
+        mergedAkses.add('/laporan-keuangan');
+      }
+
       setAllowedRoutes(Array.from(mergedAkses));
     } catch (e) {
       console.error('Error in fetchHakAkses:', e);
@@ -285,6 +302,7 @@ export default function MenuScreen() {
       '/pendaftaran-spmb', '/verifikasi-ppdb', '/prestasi-siswa', '/ekstrakurikuler',
       '/kokurikuler', '/galeri-website', '/pengumuman', '/pengaturan-aplikasi',
       '/rekap-honor-guru', '/qr-presensi-guru', '/master-jam-guru',
+      '/pengeluaran', '/rekap-keuangan', '/laporan-keuangan', '/input-pengeluaran',
       '/ujian/jadwal', '/ujian/tata-tertib', '/ujian/soal', '/ujian/awasi', '/ujian/nilai'
     ];
 

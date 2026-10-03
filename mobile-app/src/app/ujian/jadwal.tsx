@@ -52,7 +52,8 @@ import {
   RotateCcw,
   FileCheck,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  UserCheck
 } from 'lucide-react-native';
 import { supabase } from '../../../services/supabaseClient';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
@@ -128,6 +129,7 @@ export default function UjianJadwal() {
   // Modal Pengaturan Ruang Peserta
   const [isRuangPesertaModalOpen, setIsRuangPesertaModalOpen] = useState(false);
   const [targetJadwalForRuang, setTargetJadwalForRuang] = useState<any>(null);
+  const [applyToAllJadwal, setApplyToAllJadwal] = useState(true);
   const [modeRuang, setModeRuang] = useState<'default' | 'acak' | 'custom'>('default');
   const [selectedActiveRuangIds, setSelectedActiveRuangIds] = useState<string[]>([]);
   const [siswaPesertaList, setSiswaPesertaList] = useState<any[]>([]);
@@ -137,6 +139,16 @@ export default function UjianJadwal() {
   const [savingRuangPeserta, setSavingRuangPeserta] = useState(false);
   const [searchSiswaRuang, setSearchSiswaRuang] = useState('');
   const [filterKelasRuang, setFilterKelasRuang] = useState('Semua');
+
+  // Pengaturan Pengawas Setiap Ruangan
+  const [guruList, setGuruList] = useState<any[]>([]);
+  const [isPengawasRuangModalOpen, setIsPengawasRuangModalOpen] = useState(false);
+  const [targetJadwalForPengawas, setTargetJadwalForPengawas] = useState<any>(null);
+  const [pengawasRuangList, setPengawasRuangList] = useState<any[]>([]);
+  const [loadingPengawasRuang, setLoadingPengawasRuang] = useState(false);
+  const [savingPengawasRuang, setSavingPengawasRuang] = useState(false);
+  const [globalPengawasId, setGlobalPengawasId] = useState('');
+  const [jadwalPengawasRuangMap, setJadwalPengawasRuangMap] = useState<Record<string, any[]>>({});
 
   // Modal Pengaturan Ujian CBT
   const [isPengaturanModalOpen, setIsPengaturanModalOpen] = useState(false);
@@ -251,13 +263,14 @@ export default function UjianJadwal() {
 
   const fetchMetadata = async () => {
     try {
-      const [kRes, mRes, rRes, bRes, sRes, pRes] = await Promise.all([
+      const [kRes, mRes, rRes, bRes, sRes, pRes, gRes] = await Promise.all([
         supabase.from('data_kelas').select('id, nama_kelas, ruang_id').order('nama_kelas'),
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
         supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
         supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id, jenis_ujian, pengawas_guru_id, pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)').order('judul'),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('pembelajaran').select('id, guru_id, kelas_id, mapel_id'),
+        supabase.from('data_guru').select('id, nama').order('nama'),
       ]);
 
       if (kRes.data) {
@@ -276,6 +289,7 @@ export default function UjianJadwal() {
       if (bRes.data) setBankSoalList(bRes.data);
       if (sRes.data) setActiveSop(sRes.data);
       if (pRes.data) setPembelajaranList(pRes.data);
+      if (gRes?.data) setGuruList(gRes.data);
     } catch (e) {
       console.error('Error fetchMetadata:', e);
     }
@@ -299,6 +313,26 @@ export default function UjianJadwal() {
 
       if (error) throw error;
       setJadwalList(data || []);
+
+      // Fetch room proctor mappings dari cbt_berita_acara
+      const { data: baData } = await supabase
+        .from('cbt_berita_acara')
+        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama), data_ruang(id, nama_ruang)');
+
+      const pMap: Record<string, any[]> = {};
+      (baData || []).forEach((item: any) => {
+        if (item.jadwal_id && item.pengawas_guru_id) {
+          const jId = String(item.jadwal_id);
+          if (!pMap[jId]) pMap[jId] = [];
+          pMap[jId].push({
+            ruang_id: item.ruang_id,
+            nama_ruang: item.data_ruang?.nama_ruang || `Ruang ${item.ruang_id}`,
+            guru_id: item.pengawas_guru_id,
+            guru_nama: item.data_guru?.nama || '-'
+          });
+        }
+      });
+      setJadwalPengawasRuangMap(pMap);
     } catch (err: any) {
       console.error('Error fetchJadwal:', err);
       Alert.alert('Gagal Memuat', err.message || 'Terjadi kesalahan sistem.');
@@ -639,8 +673,8 @@ export default function UjianJadwal() {
     }
   };
 
-  // Popup Handler: Tombol Hadir, Hadir Pengawas, Berita Acara -> Modal Pilih Ruangan
-  const handleOpenRuangModal = (jadwal: any, action: 'hadir' | 'hadir_pengawas' | 'berita_acara') => {
+  // Popup Handler: Tombol Awasi, Hadir, Hadir Pengawas, Berita Acara -> Modal Pilih Ruangan
+  const handleOpenRuangModal = (jadwal: any, action: 'awasi' | 'hadir' | 'hadir_pengawas' | 'berita_acara') => {
     setActiveJadwalItem(jadwal);
     setTargetRuangAction(action);
     if (ruangList.length > 0 && !selectedRuangId) {
@@ -659,7 +693,15 @@ export default function UjianJadwal() {
     const action = targetRuangAction;
     setIsRuangModalOpen(false);
 
-    if (action === 'hadir') {
+    if (action === 'awasi') {
+      router.push({
+        pathname: '/ujian/awasi' as any,
+        params: {
+          jadwalId: item.id,
+          ruangId: ruangId,
+        },
+      });
+    } else if (action === 'hadir') {
       handlePrintHadir(item, ruangId);
     } else if (action === 'hadir_pengawas') {
       handlePrintHadirPengawas(item, ruangId);
@@ -814,10 +856,26 @@ export default function UjianJadwal() {
       setPrintingId(jadwal.id);
       const selectedRuang = ruangList.find((r) => String(r.id) === String(ruangId)) || jadwal.data_ruang;
 
-      const [siswaRes, lembagaRes, panitiaRes, sopRes] = await Promise.all([
+      // 1. Siswa peserta ujian (prioritaskan cbt_peserta_ruang yang aktif)
+      let qSiswaPeserta = supabase
+        .from('cbt_peserta_ruang')
+        .select(`
+          siswa_id, ruang_id, nomor_meja,
+          data_siswa:siswa_id(id, nama_lengkap, nipd, nisn, kelas, status_keaktifan)
+        `)
+        .eq('jadwal_id', jadwal.id);
+
+      if (ruangId) {
+        qSiswaPeserta = qSiswaPeserta.eq('ruang_id', ruangId);
+      }
+
+      const [pRuangRes, fallbackSiswaRes, lembagaRes, panitiaRes, sopRes] = await Promise.all([
+        qSiswaPeserta,
         supabase
           .from('data_siswa')
-          .select('id, nama_lengkap, nipd, nisn, kelas')
+          .select('id, nama_lengkap, nipd, nisn, kelas, status_keaktifan')
+          .eq('status_keaktifan', 'Aktif')
+          .neq('kelas', 'Calon Siswa')
           .order('kelas', { ascending: true })
           .order('nama_lengkap', { ascending: true }),
         supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
@@ -825,7 +883,47 @@ export default function UjianJadwal() {
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
 
-      const siswaList = siswaRes.data || [];
+      let pRuangData = pRuangRes.data || [];
+      // Fallback jika jadwal ini belum ada alokasi khusus di cbt_peserta_ruang
+      if (pRuangData.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+
+        if (latestPR && latestPR.length > 0) {
+          let fbQuery = supabase
+            .from('cbt_peserta_ruang')
+            .select(`
+              siswa_id, ruang_id, nomor_meja,
+              data_siswa:siswa_id(id, nama_lengkap, nipd, nisn, kelas, status_keaktifan)
+            `)
+            .eq('jadwal_id', latestPR[0].jadwal_id);
+
+          if (ruangId) fbQuery = fbQuery.eq('ruang_id', ruangId);
+          const { data: fbData } = await fbQuery;
+          if (fbData && fbData.length > 0) pRuangData = fbData;
+        }
+      }
+
+      let siswaList: any[] = [];
+      if (pRuangData.length > 0) {
+        siswaList = pRuangData
+          .filter((p: any) => p.data_siswa && (p.data_siswa.status_keaktifan || '').trim().toLowerCase() === 'aktif' && p.data_siswa.kelas !== 'Calon Siswa')
+          .map((p: any) => ({
+            ...p.data_siswa,
+            nomor_meja: p.nomor_meja,
+          }));
+      } else {
+        siswaList = fallbackSiswaRes.data || [];
+        if (jadwal.kelas_id) {
+          const kObj = (kelasList || []).find((k: any) => Number(k.id) === Number(jadwal.kelas_id));
+          if (kObj?.nama_kelas) {
+            siswaList = siswaList.filter((s: any) => (s.kelas || '').trim() === kObj.nama_kelas.trim());
+          }
+        }
+      }
       const lembaga = lembagaRes.data || {};
       const sop = sopRes.data || activeSop || {};
       const panitia = panitiaRes.data || {};
@@ -1314,6 +1412,7 @@ export default function UjianJadwal() {
     }
     setTargetJadwalForRuang(target);
     setActiveJadwalItem(target);
+    setApplyToAllJadwal(true);
     setIsRuangPesertaModalOpen(true);
     setLoadingRuangPeserta(true);
 
@@ -1329,10 +1428,23 @@ export default function UjianJadwal() {
       const allSiswa = sData || [];
       setSiswaPesertaList(allSiswa);
 
-      const { data: existingAlloc } = await supabase
+      // Coba ambil alokasi untuk target spesifik terlebih dahulu
+      let { data: existingAlloc } = await supabase
         .from('cbt_peserta_ruang')
-        .select('siswa_id, ruang_id')
+        .select('siswa_id, ruang_id, jadwal_id')
         .eq('jadwal_id', target.id);
+
+      // Jika jadwal spesifik ini belum memiliki alokasi, cari dari alokasi yang sudah pernah diatur dari jadwal mana pun
+      if (!existingAlloc || existingAlloc.length === 0) {
+        const { data: anyAlloc } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('siswa_id, ruang_id, jadwal_id')
+          .order('id', { ascending: false });
+        if (anyAlloc && anyAlloc.length > 0) {
+          const fallbackJId = anyAlloc[0].jadwal_id;
+          existingAlloc = anyAlloc.filter((a: any) => a.jadwal_id === fallbackJId);
+        }
+      }
 
       const currentMode = (target.mode_ruang as 'default' | 'acak' | 'custom') || 'default';
       setModeRuang(currentMode);
@@ -1396,38 +1508,56 @@ export default function UjianJadwal() {
   };
 
   const handleSavePengaturanRuang = async () => {
-    if (!targetJadwalForRuang?.id) return;
+    if (!targetJadwalForRuang?.id && (!jadwalList || jadwalList.length === 0)) return;
     try {
       setSavingRuangPeserta(true);
+
+      const targetJadwalIds = applyToAllJadwal
+        ? (jadwalList || []).map((j: any) => j.id)
+        : [targetJadwalForRuang.id];
 
       await supabase
         .from('cbt_jadwal_ujian')
         .update({ mode_ruang: modeRuang })
-        .eq('id', targetJadwalForRuang.id);
+        .in('id', targetJadwalIds);
 
-      // Hapus alokasi lama untuk jadwal ini agar alokasi baru tersimpan bersih
+      // Hapus alokasi lama untuk jadwal-jadwal target
       await supabase
         .from('cbt_peserta_ruang')
         .delete()
-        .eq('jadwal_id', targetJadwalForRuang.id);
+        .in('jadwal_id', targetJadwalIds);
 
-      const payload = Object.entries(alokasiRuangMap)
-        .filter(([_, rId]) => Boolean(rId))
-        .map(([sId, rId], idx) => ({
-          jadwal_id: targetJadwalForRuang.id,
-          siswa_id: Number(sId),
-          ruang_id: Number(rId),
-          nomor_meja: idx + 1,
-        }));
+      const payload: any[] = [];
+      targetJadwalIds.forEach((jId: any) => {
+        Object.entries(alokasiRuangMap)
+          .filter(([_, rId]) => Boolean(rId))
+          .forEach(([sId, rId], idx) => {
+            payload.push({
+              jadwal_id: jId,
+              siswa_id: Number(sId),
+              ruang_id: Number(rId),
+              nomor_meja: idx + 1,
+            });
+          });
+      });
 
       if (payload.length > 0) {
-        const { error } = await supabase
-          .from('cbt_peserta_ruang')
-          .insert(payload);
-        if (error) throw error;
+        const batchSize = 500;
+        for (let i = 0; i < payload.length; i += batchSize) {
+          const batch = payload.slice(i, i + batchSize);
+          const { error } = await supabase
+            .from('cbt_peserta_ruang')
+            .insert(batch);
+          if (error) throw error;
+        }
       }
 
-      Alert.alert('Sukses', `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}!`);
+      Alert.alert(
+        'Sukses',
+        `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}${
+          targetJadwalIds.length > 1 ? ` untuk ${targetJadwalIds.length} jadwal pelaksanaan ujian` : ''
+        }!`
+      );
       setIsRuangPesertaModalOpen(false);
       fetchJadwal();
     } catch (err: any) {
@@ -1435,6 +1565,123 @@ export default function UjianJadwal() {
       Alert.alert('Gagal Menyimpan', err.message || 'Terjadi kesalahan saat menyimpan pengaturan ruang.');
     } finally {
       setSavingRuangPeserta(false);
+    }
+  };
+
+  // Handlers Pengaturan Pengawas Setiap Ruangan Mobile
+  const handleOpenPengawasRuangModal = async (jadwal: any) => {
+    if (!jadwal) return;
+    setTargetJadwalForPengawas(jadwal);
+    setIsPengawasRuangModalOpen(true);
+    setLoadingPengawasRuang(true);
+    setGlobalPengawasId('');
+
+    try {
+      let { data: pRuangData } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('ruang_id')
+        .eq('jadwal_id', jadwal.id);
+
+      if (!pRuangData || pRuangData.length === 0) {
+        const { data: fallbackPRuang } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('ruang_id');
+        if (fallbackPRuang && fallbackPRuang.length > 0) {
+          pRuangData = fallbackPRuang;
+        }
+      }
+
+      const pesertaPerRuang: Record<string, number> = {};
+      (pRuangData || []).forEach((p: any) => {
+        if (p.ruang_id) {
+          const rKey = String(p.ruang_id);
+          pesertaPerRuang[rKey] = (pesertaPerRuang[rKey] || 0) + 1;
+        }
+      });
+
+      const { data: existingBA } = await supabase
+        .from('cbt_berita_acara')
+        .select('ruang_id, pengawas_guru_id')
+        .eq('jadwal_id', jadwal.id);
+
+      const existingPengawasMap: Record<string, any> = {};
+      (existingBA || []).forEach((ba: any) => {
+        if (ba.ruang_id) {
+          existingPengawasMap[String(ba.ruang_id)] = ba.pengawas_guru_id;
+        }
+      });
+
+      const hasPesertaAllocation = Object.keys(pesertaPerRuang).length > 0;
+      const targetRuangList = hasPesertaAllocation
+        ? (ruangList || []).filter((r: any) => (pesertaPerRuang[String(r.id)] || 0) > 0 || existingPengawasMap[String(r.id)])
+        : (ruangList || []).filter((r: any) => !r.nama_ruang.toLowerCase().includes('kantor'));
+
+      const targetRooms = targetRuangList.length > 0 ? targetRuangList : (ruangList || []);
+      const rooms = targetRooms.map((r: any) => {
+        const rKey = String(r.id);
+        const pesertaCount = pesertaPerRuang[rKey] || 0;
+        const assignedGuruId = existingPengawasMap[rKey] || (existingBA?.length ? '' : (jadwal.pengawas_guru_id || ''));
+        return {
+          ruang_id: r.id,
+          nama_ruang: r.nama_ruang,
+          kode_ruang: r.kode_ruang || '',
+          jumlah_peserta: pesertaCount,
+          pengawas_guru_id: assignedGuruId ? String(assignedGuruId) : ''
+        };
+      });
+
+      rooms.sort((a, b) => {
+        return (a.nama_ruang || '').localeCompare(b.nama_ruang || '', undefined, { numeric: true });
+      });
+
+      setPengawasRuangList(rooms);
+    } catch (err: any) {
+      console.error('Error open pengawas ruang modal mobile:', err);
+      Alert.alert('Error', 'Gagal memuat data pengawas ruangan.');
+    } finally {
+      setLoadingPengawasRuang(false);
+    }
+  };
+
+  const handleSavePengawasRuang = async () => {
+    if (!targetJadwalForPengawas) return;
+    setSavingPengawasRuang(true);
+    try {
+      const upsertPayload = pengawasRuangList
+        .filter((item) => Boolean(item.pengawas_guru_id) || item.jumlah_peserta > 0)
+        .map((item) => ({
+          jadwal_id: targetJadwalForPengawas.id,
+          ruang_id: Number(item.ruang_id),
+          pengawas_guru_id: item.pengawas_guru_id ? Number(item.pengawas_guru_id) : null
+        }));
+
+      if (upsertPayload.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from('cbt_berita_acara')
+          .upsert(upsertPayload, { onConflict: 'jadwal_id, ruang_id' });
+        if (upsertErr) throw upsertErr;
+      }
+
+      const firstAssigned = pengawasRuangList.find((item) => Boolean(item.pengawas_guru_id));
+      if (firstAssigned) {
+        await supabase
+          .from('cbt_jadwal_ujian')
+          .update({ pengawas_guru_id: Number(firstAssigned.pengawas_guru_id) })
+          .eq('id', targetJadwalForPengawas.id);
+      }
+
+      Alert.alert(
+        'Berhasil Disimpan',
+        `Pengawas berhasil diatur untuk setiap ruangan pada sesi ujian "${targetJadwalForPengawas.nama_ujian}".`
+      );
+
+      setIsPengawasRuangModalOpen(false);
+      await fetchJadwal();
+    } catch (err: any) {
+      console.error('Error save pengawas ruang mobile:', err);
+      Alert.alert('Gagal Menyimpan', err.message || 'Terjadi kesalahan sistem.');
+    } finally {
+      setSavingPengawasRuang(false);
     }
   };
 
@@ -1446,8 +1693,9 @@ export default function UjianJadwal() {
     }
     // 2. Guru Mapel: hanya mata pelajaran yang diampunya saja (berdasarkan tabel pembelajaran)
     const isTaughtByMe = taughtMapelIds.includes(String(item.mapel_id)) || Number(item.guru_id) === Number(currentUser?.id);
-    // 3. Pengawas: hanya mata pelajaran yang diawasinya saja
-    const isSupervisedByMe = Number(item.pengawas_guru_id) === Number(currentUser?.id);
+    // 3. Pengawas: mata pelajaran yang diawasinya (di cbt_jadwal_ujian maupun di cbt_berita_acara)
+    const isSupervisedByMe = Number(item.pengawas_guru_id) === Number(currentUser?.id) ||
+      (jadwalPengawasRuangMap[String(item.id)] || []).some((rp: any) => Number(rp.guru_id) === Number(currentUser?.id));
 
     return isTaughtByMe || isSupervisedByMe;
   };
@@ -1760,8 +2008,23 @@ export default function UjianJadwal() {
                     </View>
                   </View>
 
-                  {/* Baris Tombol Utama: Soal, Awasi, Nilai */}
-                  {(showSoalBtn || showAwasiBtn || showNilaiBtn) && (
+                  {/* Info Pengawas */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4, marginBottom: 8, paddingHorizontal: 2 }}>
+                    <UserCheck size={13} color="#0f766e" />
+                    <Text style={{ fontSize: 11, color: '#334155', fontWeight: '600', flex: 1 }} numberOfLines={1}>
+                      Pengawas:{' '}
+                      {(() => {
+                        const rProctors = jadwalPengawasRuangMap[String(jadwal.id)];
+                        if (rProctors && rProctors.length > 0) {
+                          return rProctors.map(rp => `${rp.nama_ruang} (${rp.guru_nama})`).join(' • ');
+                        }
+                        return jadwal.pengawas?.nama || '-';
+                      })()}
+                    </Text>
+                  </View>
+
+                  {/* Baris Tombol Utama: Soal, Awasi, Pengawas Ruang */}
+                  {(showSoalBtn || showAwasiBtn || (canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum)) && (
                     <View style={styles.actionRow}>
                       {showSoalBtn && (
                         <TouchableOpacity
@@ -1776,80 +2039,38 @@ export default function UjianJadwal() {
                       {showAwasiBtn && (
                         <TouchableOpacity
                           style={[styles.actionBtn, { backgroundColor: '#dc2626' }]}
-                          onPress={() => router.push({
-                            pathname: '/ujian/awasi' as any,
-                            params: {
-                              jadwalId: jadwal.id,
-                              ruangId: 'semua',
-                            },
-                          })}
+                          onPress={() => handleOpenRuangModal(jadwal, 'awasi')}
                         >
                           <Eye size={14} color="#fff" />
                           <Text style={styles.actionBtnTextWhite}>Awasi</Text>
                         </TouchableOpacity>
                       )}
 
-                      {showNilaiBtn && (
+                      {(canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum) && (
                         <TouchableOpacity
-                          style={[styles.actionBtn, { backgroundColor: '#2a2c87' }]}
-                          onPress={() => handleOpenKelasModal(jadwal, 'nilai')}
+                          style={[styles.actionBtn, { backgroundColor: '#0d9488' }]}
+                          onPress={() => handleOpenPengawasRuangModal(jadwal)}
                         >
-                          <BookOpenCheck size={14} color="#fff" />
-                          <Text style={styles.actionBtnTextWhite}>Nilai</Text>
+                          <UserCheck size={14} color="#fff" />
+                          <Text style={styles.actionBtnTextWhite}>Pengawas</Text>
                         </TouchableOpacity>
                       )}
                     </View>
                   )}
 
-                  {/* Baris Tombol Dokumen: Hadir Peserta, Hadir Pengawas & Berita Acara */}
-                  {(showDocBtns || showHadirPengawasBtn) && (
+                  {/* Tombol Nilai */}
+                  {showNilaiBtn && (
                     <View style={[styles.actionRow, { marginTop: 6 }]}>
-                      {showDocBtns && (
-                        <TouchableOpacity
-                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
-                          disabled={isPrinting}
-                          onPress={() => handleOpenRuangModal(jadwal, 'hadir')}
-                        >
-                          {isPrinting ? (
-                            <ActivityIndicator size="small" color="#475569" />
-                          ) : (
-                            <Printer size={13} color="#475569" />
-                          )}
-                          <Text style={styles.docBtnText}>Hadir Peserta</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      {showHadirPengawasBtn && (
-                        <TouchableOpacity
-                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
-                          disabled={isPrinting}
-                          onPress={() => handleOpenRuangModal(jadwal, 'hadir_pengawas')}
-                        >
-                          {isPrinting ? (
-                            <ActivityIndicator size="small" color="#475569" />
-                          ) : (
-                            <Printer size={13} color="#475569" />
-                          )}
-                          <Text style={styles.docBtnText}>Hadir Pengawas</Text>
-                        </TouchableOpacity>
-                      )}
-
-                      {showDocBtns && (
-                        <TouchableOpacity
-                          style={[styles.docBtn, isPrinting && { opacity: 0.5 }]}
-                          disabled={isPrinting}
-                          onPress={() => handleOpenRuangModal(jadwal, 'berita_acara')}
-                        >
-                          {isPrinting ? (
-                            <ActivityIndicator size="small" color="#475569" />
-                          ) : (
-                            <FileText size={13} color="#475569" />
-                          )}
-                          <Text style={styles.docBtnText}>Berita Acara</Text>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity
+                        style={[styles.actionBtn, { backgroundColor: '#2a2c87', flex: 1 }]}
+                        onPress={() => handleOpenKelasModal(jadwal, 'nilai')}
+                      >
+                        <BookOpenCheck size={14} color="#fff" />
+                        <Text style={styles.actionBtnTextWhite}>Daftar Nilai</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
+
 
                   {/* Baris Tombol CRUD: Edit & Hapus (Khusus Operator & Panitia) */}
                   {showCrudBtns && (
@@ -2074,7 +2295,9 @@ export default function UjianJadwal() {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.popupTitle}>
-                  {targetRuangAction === 'hadir'
+                  {targetRuangAction === 'awasi'
+                    ? 'Pilih Ruang Pengawasan'
+                    : targetRuangAction === 'hadir'
                     ? 'Pilih Ruang - Hadir Peserta'
                     : targetRuangAction === 'hadir_pengawas'
                       ? 'Pilih Ruang - Hadir Pengawas'
@@ -2116,7 +2339,9 @@ export default function UjianJadwal() {
                 style={[styles.popupSubmitBtn, { backgroundColor: '#dc2626' }]}
                 onPress={handleConfirmRuangModal}
               >
-                <Text style={styles.popupSubmitBtnText}>Cetak Dokumen</Text>
+                <Text style={styles.popupSubmitBtnText}>
+                  {targetRuangAction === 'awasi' ? 'Mulai Awasi' : 'Cetak Dokumen'}
+                </Text>
                 <ChevronRight size={16} color="#fff" />
               </TouchableOpacity>
             </View>
@@ -2322,7 +2547,9 @@ export default function UjianJadwal() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.modalTitle}>Pengaturan Ruang Peserta</Text>
                   <Text style={{ fontSize: 11.5, color: '#64748b', marginTop: 1 }} numberOfLines={1}>
-                    {targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT'}
+                    {applyToAllJadwal
+                      ? `Semua Jadwal Ujian CBT (${jadwalList.length} Jadwal)`
+                      : (targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT')}
                   </Text>
                 </View>
               </View>
@@ -2689,6 +2916,30 @@ export default function UjianJadwal() {
               </ScrollView>
             )}
 
+            {/* Opsi Terapkan ke Semua Jadwal */}
+            <TouchableOpacity
+              onPress={() => setApplyToAllJadwal(!applyToAllJadwal)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: '#eff6ff',
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderTopWidth: 1,
+                borderTopColor: '#dbeafe',
+              }}
+            >
+              {applyToAllJadwal ? (
+                <CheckSquare size={18} color="#2563eb" />
+              ) : (
+                <Square size={18} color="#64748b" />
+              )}
+              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e40af', flex: 1 }}>
+                Terapkan ke Semua Jadwal CBT ({jadwalList.length} jadwal)
+              </Text>
+            </TouchableOpacity>
+
             {/* Modal Footer */}
             <View style={[
               styles.modalFooter,
@@ -2888,6 +3139,165 @@ export default function UjianJadwal() {
             onChange={handleTimeChange}
           />
         )}
+      </Modal>
+
+      {/* MODAL ATUR PENGAWAS SETIAP RUANGAN */}
+      <Modal
+        visible={isPengawasRuangModalOpen}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setIsPengawasRuangModalOpen(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, { maxHeight: '90%' }]}>
+            {/* Modal Header */}
+            <LinearGradient colors={['#0f766e', '#115e59']} style={styles.modalHeader}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <UserCheck size={20} color="#99f6e4" />
+                  <Text style={[styles.modalTitle, { color: '#fff' }]}>Atur Pengawas Ruangan</Text>
+                </View>
+                <Text style={{ fontSize: 12, fontWeight: '500', color: '#ccfbf1', marginTop: 2 }}>
+                  {targetJadwalForPengawas?.nama_ujian || targetJadwalForPengawas?.data_mapel?.nama_mapel || 'Sesi Ujian CBT'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsPengawasRuangModalOpen(false)} style={styles.modalCloseBtn}>
+                <X size={20} color="#fff" />
+              </TouchableOpacity>
+            </LinearGradient>
+
+            <ScrollView style={{ padding: 16 }} showsVerticalScrollIndicator={false}>
+              {/* Quick Bulk Assign Bar */}
+              <View style={{ backgroundColor: '#f0fdfa', padding: 12, borderRadius: 14, borderWidth: 1, borderColor: '#ccfbf1', marginBottom: 14 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#134e4a', marginBottom: 6 }}>
+                  Terapkan Satu Pengawas ke Semua Ruangan:
+                </Text>
+                <View style={[styles.pickerWrapper, { backgroundColor: '#fff', height: 44, justifyContent: 'center' }]}>
+                  <Picker
+                    selectedValue={globalPengawasId}
+                    onValueChange={(val) => setGlobalPengawasId(val)}
+                    style={styles.picker}
+                  >
+                    <Picker.Item label="-- Pilih Pengawas Serentak --" value="" />
+                    {guruList.map((g) => (
+                      <Picker.Item key={g.id} label={g.nama} value={String(g.id)} />
+                    ))}
+                  </Picker>
+                </View>
+                <TouchableOpacity
+                  style={{ backgroundColor: '#0d9488', paddingVertical: 8, borderRadius: 10, alignItems: 'center', marginTop: 8 }}
+                  onPress={() => {
+                    if (!globalPengawasId) {
+                      Alert.alert('Peringatan', 'Silakan pilih guru pengawas terlebih dahulu.');
+                      return;
+                    }
+                    setPengawasRuangList(prev => prev.map(p => ({
+                      ...p,
+                      pengawas_guru_id: String(globalPengawasId)
+                    })));
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Terapkan ke Semua Ruangan</Text>
+                </TouchableOpacity>
+              </View>
+
+              {loadingPengawasRuang ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color="#0d9488" />
+                  <Text style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>Memuat data ruangan...</Text>
+                </View>
+              ) : pengawasRuangList.length === 0 ? (
+                <View style={{ paddingVertical: 30, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: '#94a3b8' }}>Tidak ada ruangan tersedia.</Text>
+                </View>
+              ) : (
+                pengawasRuangList.map((room, idx) => {
+                  const isAssigned = Boolean(room.pengawas_guru_id);
+                  return (
+                    <View
+                      key={room.ruang_id}
+                      style={{
+                        backgroundColor: isAssigned ? '#fff' : '#f8fafc',
+                        padding: 12,
+                        borderRadius: 14,
+                        borderWidth: 1,
+                        borderColor: isAssigned ? '#5eead4' : '#e2e8f0',
+                        marginBottom: 10
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: isAssigned ? '#ccfbf1' : '#e2e8f0', justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 11, fontWeight: '800', color: isAssigned ? '#0f766e' : '#475569' }}>
+                              {idx + 1}
+                            </Text>
+                          </View>
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#1e293b' }}>
+                            {room.nama_ruang}
+                          </Text>
+                        </View>
+                        {room.jumlah_peserta > 0 ? (
+                          <View style={{ backgroundColor: '#ecfdf5', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: '#047857' }}>
+                              {room.jumlah_peserta} Siswa
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text style={{ fontSize: 10, color: '#94a3b8', fontStyle: 'italic' }}>Cadangan</Text>
+                        )}
+                      </View>
+
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#64748b', marginBottom: 4 }}>
+                        Guru Pengawas Ruang:
+                      </Text>
+                      <View style={[styles.pickerWrapper, { backgroundColor: isAssigned ? '#f0fdfa' : '#fff', height: 44, justifyContent: 'center' }]}>
+                        <Picker
+                          selectedValue={room.pengawas_guru_id || ''}
+                          onValueChange={(val) => {
+                            setPengawasRuangList(prev => prev.map(p =>
+                              p.ruang_id === room.ruang_id ? { ...p, pengawas_guru_id: val } : p
+                            ));
+                          }}
+                          style={styles.picker}
+                        >
+                          <Picker.Item label="-- Pilih Pengawas --" value="" />
+                          {guruList.map((g) => (
+                            <Picker.Item key={g.id} label={g.nama} value={String(g.id)} />
+                          ))}
+                        </Picker>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            {/* Modal Footer */}
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={styles.modalCancelBtn}
+                onPress={() => setIsPengawasRuangModalOpen(false)}
+                disabled={savingPengawasRuang}
+              >
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalSubmitBtn, { backgroundColor: '#0d9488' }, savingPengawasRuang && { opacity: 0.6 }]}
+                onPress={handleSavePengawasRuang}
+                disabled={savingPengawasRuang}
+              >
+                {savingPengawasRuang ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Check size={16} color="#fff" />
+                    <Text style={styles.modalSubmitText}>Simpan Pengawas</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
       </Modal>
     </View>
   );

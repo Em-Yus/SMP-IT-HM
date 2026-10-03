@@ -164,16 +164,46 @@ export default function CbtRuangPengawas() {
       });
 
       // Ambil data pengaturan ruang ujian (cbt_peserta_ruang)
-      const { data: pRuangData } = await supabase
+      let { data: pRuangData } = await supabase
         .from('cbt_peserta_ruang')
         .select(`
           id,
+          jadwal_id,
           siswa_id,
           ruang_id,
           nomor_meja,
           data_ruang(id, nama_ruang)
         `)
         .eq('jadwal_id', jadwalId);
+
+      // Fallback: Jika jadwal ini belum memiliki entri cbt_peserta_ruang tersendiri,
+      // gunakan alokasi ruang peserta terakhir yang sudah pernah disimpan di jadwal lain
+      if (!pRuangData || pRuangData.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+
+        if (latestPR && latestPR.length > 0) {
+          const fallbackJId = latestPR[0].jadwal_id;
+          const { data: fbData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select(`
+              id,
+              jadwal_id,
+              siswa_id,
+              ruang_id,
+              nomor_meja,
+              data_ruang(id, nama_ruang)
+            `)
+            .eq('jadwal_id', fallbackJId);
+
+          if (fbData && fbData.length > 0) {
+            pRuangData = fbData;
+          }
+        }
+      }
 
       const pRuangMap = new Map();
       (pRuangData || []).forEach((p) => {
@@ -184,7 +214,11 @@ export default function CbtRuangPengawas() {
         });
       });
 
+      const hasPesertaRuang = pRuangData && pRuangData.length > 0;
+
       // Ambil data siswa yang mengikuti ujian (berdasarkan kelas jadwal atau semua aktif)
+      // PENTING: Jika hasPesertaRuang adalah true, JANGAN batasi ke kelas jadwal tunggal,
+      // karena alokasi ruang ujian diatur lintas kelas (bisa berisi siswa kelas 7, 8, dan 9 sekaligus).
       let q = supabase
         .from('data_siswa')
         .select('id, nama, nisn, nipd, foto_url, kelas, status_keaktifan')
@@ -192,7 +226,7 @@ export default function CbtRuangPengawas() {
         .neq('kelas', 'Calon Siswa')
         .order('nama');
 
-      if (jData.data_kelas?.nama_kelas) {
+      if (!hasPesertaRuang && jData.data_kelas?.nama_kelas) {
         q = q.eq('kelas', jData.data_kelas.nama_kelas);
       }
 
@@ -235,7 +269,15 @@ export default function CbtRuangPengawas() {
       };
 
       const distinctRuangMap = new Map();
-      const mappedSiswa = (rawSiswa || []).map((s) => {
+
+      // Jika cbt_peserta_ruang memiliki data → jadikan source of truth mutlak (lepas dari kelas_id)
+      // Hanya siswa yang terdaftar di pengaturan ruang yang ditampilkan.
+      // Jika tidak ada → fallback ke logika kelas / heuristik.
+      const targetSiswaList = hasPesertaRuang
+        ? (rawSiswa || []).filter(s => pRuangMap.has(String(s.id)))
+        : (rawSiswa || []);
+
+      const mappedSiswa = targetSiswaList.map((s) => {
         const pAlloc = pRuangMap.get(String(s.id));
         let rId;
         let rNama;
@@ -291,11 +333,30 @@ export default function CbtRuangPengawas() {
       });
 
       // Bangun daftar tab ruangan aktif
-      const tabs = Array.from(distinctRuangMap.entries()).map(([id, nama]) => ({
-        id,
-        nama,
-      }));
+      // Jika ada pengaturan ruang → urutkan tab sesuai urutan ruang di cbt_peserta_ruang (bukan distinctRuangMap acak)
+      let tabs;
+      if (hasPesertaRuang) {
+        // Urutkan berdasarkan urutan kemunculan di pRuangData (sesuai pengaturan ruang di jadwal)
+        const orderedRuangMap = new Map();
+        pRuangData.forEach((p) => {
+          const key = String(p.ruang_id);
+          if (!orderedRuangMap.has(key)) {
+            orderedRuangMap.set(key, p.data_ruang?.nama_ruang || (rList || []).find(r => r.id === p.ruang_id)?.nama_ruang || `Ruang ${p.ruang_id}`);
+          }
+        });
+        tabs = Array.from(orderedRuangMap.entries()).map(([id, nama]) => ({ id, nama }));
+      } else {
+        tabs = Array.from(distinctRuangMap.entries()).map(([id, nama]) => ({ id, nama }));
+      }
       setActiveRuangTabs(tabs);
+      if ((!urlRuangId || urlRuangId === 'semua') && tabs.length > 0) {
+        setSelectedRuangId(tabs[0].id);
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('ruangId', tabs[0].id);
+          return next;
+        }, { replace: true });
+      }
 
       // 4. Ambil sesi pengerjaan siswa
       const { data: sesiData } = await supabase
@@ -338,10 +399,23 @@ export default function CbtRuangPengawas() {
     }
   };
 
-  // Daftar kelas unik dari sesi
+  // Daftar kelas unik dari sesi (jika ruangan dipilih, sesuaikan hanya kelas yang ada di ruangan tersebut)
   const distinctKelasList = React.useMemo(() => {
-    return Array.from(new Set(sesiList.map((s) => s.kelas).filter(Boolean))).sort();
-  }, [sesiList]);
+    const list = selectedRuangId && selectedRuangId !== 'semua'
+      ? sesiList.filter((s) => String(s.ruang_id) === String(selectedRuangId))
+      : sesiList;
+    return Array.from(new Set(list.map((s) => s.kelas).filter(Boolean))).sort();
+  }, [sesiList, selectedRuangId]);
+
+  // Reset filter kelas jika kelas terpilih tidak ada di ruangan yang baru dipilih
+  useEffect(() => {
+    if (selectedKelas !== 'semua' && distinctKelasList.length > 0 && !distinctKelasList.includes(selectedKelas)) {
+      setSelectedKelas('semua');
+      const p = {};
+      if (selectedRuangId !== 'semua') p.ruangId = selectedRuangId;
+      setSearchParams(p);
+    }
+  }, [distinctKelasList, selectedKelas, selectedRuangId]);
 
   // Filter sesi berdasarkan ruangan, kelas, dan pencarian nama/NISN
   const displayedSesiList = React.useMemo(() => {

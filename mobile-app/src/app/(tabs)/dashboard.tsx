@@ -327,8 +327,14 @@ export default function DashboardScreen() {
         rataRata: avgNilai
       });
 
-      // 5. Cek Ujian CBT Aktif Hari Ini & Terdaftar
+      // 5. Cek Ujian CBT Aktif Hari Ini & Terdaftar (Hanya jika siswa berstatus Aktif)
       try {
+        const isAktif = (user.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+        if (!isAktif) {
+          setActiveCbtExam(null);
+          return;
+        }
+
         let kelasId = user.kelas_id;
         let tingkatSiswa: string | null = null;
         if (user.kelas) {

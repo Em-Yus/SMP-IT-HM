@@ -206,6 +206,18 @@ export default function MainLayout() {
       return true;
     }
 
+    // Akses Keuangan: Bendahara, Kepala Sekolah, Operator, Admin
+    if (path === '/pengeluaran' || path === '/rekap-keuangan') {
+      const userSession = localStorage.getItem('user_guru');
+      const userObj = userSession ? JSON.parse(userSession) : null;
+      if (userObj?.role === 'admin') return true;
+      const isFinanceRole = userRoles.some(r => {
+        const lower = (r || '').toLowerCase();
+        return lower.includes('bendahara') || lower.includes('kepala sekolah') || lower.includes('kepsek') || lower.includes('operator') || lower.includes('admin');
+      });
+      if (isFinanceRole) return true;
+    }
+
     if (permissions.includes('*')) return true;
     return permissions.includes(path);
   };

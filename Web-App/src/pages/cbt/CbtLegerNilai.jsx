@@ -29,7 +29,7 @@ export default function CbtLegerNilai() {
   // Filter & Urutan
   const [selectedKelasTab, setSelectedKelasTab] = useState('all');
   const [filterRuang, setFilterRuang] = useState('');
-  const [filterStatus, setFilterStatus] = useState(''); // '' | 'lulus' | 'remedial' | 'susulan'
+  const [filterStatus, setFilterStatus] = useState(''); // '' | 'lulus' | 'belum_tuntas' | 'belum_mulai'
   const [sortBy, setSortBy] = useState('peringkat_asc'); // 'nipd_asc' | 'nipd_desc' | 'nama_asc' | 'nama_desc' | 'ruang_asc' | 'ruang_desc' | 'peringkat_asc' | 'peringkat_desc'
   const [toggleRanking, setToggleRanking] = useState(true);
 
@@ -103,39 +103,56 @@ export default function CbtLegerNilai() {
         .from('cbt_sesi_siswa')
         .select(`
           *,
-          data_siswa(id, nama, nisn, nipd, kelas)
+          data_siswa(id, nama, nisn, nipd, kelas, status_keaktifan)
         `)
         .eq('jadwal_id', jadwalId);
 
       if (sErr) throw sErr;
 
       // 4. Ambil alokasi ruangan siswa di cbt_peserta_ruang jika ada
-      const { data: prList } = await supabase
+      let { data: prList } = await supabase
         .from('cbt_peserta_ruang')
         .select('siswa_id, ruang_id, nomor_meja, data_ruang(nama_ruang)')
         .eq('jadwal_id', jadwalId);
 
+      if (!prList || prList.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+        if (latestPR && latestPR.length > 0) {
+          const { data: fbPR } = await supabase
+            .from('cbt_peserta_ruang')
+            .select('siswa_id, ruang_id, nomor_meja, data_ruang(nama_ruang)')
+            .eq('jadwal_id', latestPR[0].jadwal_id);
+          if (fbPR && fbPR.length > 0) prList = fbPR;
+        }
+      }
+
       const prMap = new Map();
       (prList || []).forEach(pr => prMap.set(Number(pr.siswa_id), pr));
 
-      // 5. Kumpulkan siswa: Masukkan semua yang sudah ikut ujian, ditambah siswa sekelas/alokasi
+      // 5. Kumpulkan siswa: Masukkan semua yang sudah ikut ujian, ditambah siswa sekelas/alokasi (Hanya yang Aktif)
       const studentMap = new Map();
 
-      // Prioritas 1: Masukkan semua siswa yang memiliki sesi nilai
+      // Prioritas 1: Masukkan semua siswa yang memiliki sesi nilai dan berstatus aktif
       (sList || []).forEach((s) => {
-        if (s.data_siswa) {
+        if (s.data_siswa && (s.data_siswa.status_keaktifan || '').trim().toLowerCase() === 'aktif' && s.data_siswa.kelas !== 'Calon Siswa') {
           studentMap.set(Number(s.siswa_id), s.data_siswa);
         }
       });
 
-      // Prioritas 2: Siswa dari kelas target atau alokasi ruang yang belum mulai ujian
+      // Prioritas 2: Siswa dari kelas target atau alokasi ruang yang belum mulai ujian (Hanya yang Aktif)
       if (jData.kelas_id) {
         const kObj = allKelas.find(k => Number(k.id) === Number(jData.kelas_id));
         const targetKelasNama = kObj?.nama_kelas;
         if (targetKelasNama) {
           const { data: siswaKls } = await supabase
             .from('data_siswa')
-            .select('id, nama, nisn, nipd, kelas')
+            .select('id, nama, nisn, nipd, kelas, status_keaktifan')
+            .eq('status_keaktifan', 'Aktif')
+            .neq('kelas', 'Calon Siswa')
             .eq('kelas', targetKelasNama)
             .order('nama');
           (siswaKls || []).forEach(sw => {
@@ -149,7 +166,9 @@ export default function CbtLegerNilai() {
         if (enrolledSiswaIds.length > 0) {
           const { data: enrolledStudents } = await supabase
             .from('data_siswa')
-            .select('id, nama, nisn, nipd, kelas')
+            .select('id, nama, nisn, nipd, kelas, status_keaktifan')
+            .eq('status_keaktifan', 'Aktif')
+            .neq('kelas', 'Calon Siswa')
             .in('id', enrolledSiswaIds)
             .order('nama');
           (enrolledStudents || []).forEach(sw => {
@@ -159,12 +178,14 @@ export default function CbtLegerNilai() {
           });
         }
       } else if (studentMap.size > 0) {
-        // Ambil juga teman sekelas dari siswa yang sudah mulai/selesai ujian
+        // Ambil juga teman sekelas dari siswa yang sudah mulai/selesai ujian (Hanya yang Aktif)
         const classesInSessions = Array.from(new Set(Array.from(studentMap.values()).map(s => s.kelas).filter(Boolean)));
         if (classesInSessions.length > 0) {
           const { data: classmates } = await supabase
             .from('data_siswa')
-            .select('id, nama, nisn, nipd, kelas')
+            .select('id, nama, nisn, nipd, kelas, status_keaktifan')
+            .eq('status_keaktifan', 'Aktif')
+            .neq('kelas', 'Calon Siswa')
             .in('kelas', classesInSessions)
             .order('nama');
           (classmates || []).forEach(sw => {
@@ -184,13 +205,13 @@ export default function CbtLegerNilai() {
         const nilai = s?.nilai_akhir !== null && s?.nilai_akhir !== undefined ? parseFloat(s.nilai_akhir) : 0;
         const statusSesi = s?.status || 'belum_mulai';
 
-        let statusKelulusan = 'susulan';
+        let statusKelulusan = 'belum_mulai';
         if (statusSesi === 'selesai') {
-          statusKelulusan = nilai >= KKM ? 'lulus' : 'remedial';
+          statusKelulusan = nilai >= KKM ? 'lulus' : 'belum_tuntas';
         } else if (statusSesi === 'mengerjakan' || statusSesi === 'dijeda') {
           statusKelulusan = 'mengerjakan';
         } else {
-          statusKelulusan = s?.is_susulan ? 'susulan' : 'belum_mulai';
+          statusKelulusan = 'belum_mulai';
         }
 
         const pr = prMap.get(Number(siswa.id));
@@ -219,8 +240,6 @@ export default function CbtLegerNilai() {
           ruang_id: ruangId,
           kelas_nama: kelasNama,
           kelas_id: kelasId,
-          is_remedial: s?.is_remedial || false,
-          is_susulan: s?.is_susulan || false,
         };
       });
 
@@ -259,80 +278,7 @@ export default function CbtLegerNilai() {
     }
   };
 
-  // Aksi Guru Mapel: Set Remedial
-  const handleSetRemedial = async (item) => {
-    const confirm = await Swal.fire({
-      title: 'Tugaskan Remedial?',
-      text: `Siswa ${item.data_siswa?.nama_lengkap} (Nilai: ${item.nilai_akhir}) akan diberikan akses pengerjaan remedial.`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonText: 'Ya, Berikan Remedial',
-      confirmButtonColor: '#f59e0b',
-    });
 
-    if (confirm.isConfirmed) {
-      try {
-        if (item.id && !item.id.toString().startsWith('draft_')) {
-          await supabase
-            .from('cbt_sesi_siswa')
-            .update({
-              is_remedial: true,
-              status: 'belum_mulai',
-              sisa_detik: (jadwal?.durasi_menit || 90) * 60,
-              catatan_pengawas: 'Sesi Ujian Remedial'
-            })
-            .eq('id', item.id);
-        }
-        Swal.fire('Berhasil', 'Siswa telah dijadwalkan untuk Remedial.', 'success');
-        fetchLegerData();
-      } catch (err) {
-        Swal.fire('Error', err.message, 'error');
-      }
-    }
-  };
-
-  // Aksi Guru Mapel: Set Susulan
-  const handleSetSusulan = async (item) => {
-    const confirm = await Swal.fire({
-      title: 'Jadwalkan Ujian Susulan?',
-      text: `Siswa ${item.data_siswa?.nama_lengkap} akan diaktifkan untuk mengikuti sesi ujian susulan.`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonText: 'Ya, Jadwalkan Susulan',
-      confirmButtonColor: '#2a2c87',
-    });
-
-    if (confirm.isConfirmed) {
-      try {
-        if (item.id && !item.id.toString().startsWith('draft_')) {
-          await supabase
-            .from('cbt_sesi_siswa')
-            .update({
-              is_susulan: true,
-              status: 'belum_mulai',
-              sisa_detik: (jadwal?.durasi_menit || 90) * 60,
-              catatan_pengawas: 'Sesi Ujian Susulan'
-            })
-            .eq('id', item.id);
-        } else {
-          await supabase
-            .from('cbt_sesi_siswa')
-            .insert([{
-              jadwal_id: jadwalId,
-              siswa_id: item.siswa_id,
-              status: 'belum_mulai',
-              is_susulan: true,
-              sisa_detik: (jadwal?.durasi_menit || 90) * 60,
-              catatan_pengawas: 'Sesi Ujian Susulan'
-            }]);
-        }
-        Swal.fire('Berhasil', 'Siswa telah dijadwalkan untuk Ujian Susulan.', 'success');
-        fetchLegerData();
-      } catch (err) {
-        Swal.fire('Error', err.message, 'error');
-      }
-    }
-  };
 
   // Modal Review Jawaban Siswa
   const openReviewModal = async (sesi) => {
@@ -493,8 +439,8 @@ export default function CbtLegerNilai() {
       // Filter Status
       if (filterStatus) {
         if (filterStatus === 'lulus' && item.status_kelulusan !== 'lulus') return false;
-        if (filterStatus === 'remedial' && item.status_kelulusan !== 'remedial') return false;
-        if (filterStatus === 'susulan' && item.status_kelulusan !== 'susulan') return false;
+        if (filterStatus === 'belum_tuntas' && item.status_kelulusan !== 'belum_tuntas') return false;
+        if (filterStatus === 'belum_mulai' && item.status_kelulusan !== 'belum_mulai') return false;
       }
       return true;
     })
@@ -603,15 +549,15 @@ export default function CbtLegerNilai() {
           </span>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm text-center">
-          <span className="text-xs font-bold text-amber-700 uppercase block">Perlu Remedial</span>
+          <span className="text-xs font-bold text-amber-700 uppercase block">Belum Tuntas (&lt;{KKM})</span>
           <span className="text-2xl font-black text-amber-600 mt-1 block">
-            {sesiList.filter((s) => s.status_kelulusan === 'remedial').length}
+            {sesiList.filter((s) => s.status_kelulusan === 'belum_tuntas').length}
           </span>
         </div>
         <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm text-center">
-          <span className="text-xs font-bold text-rose-700 uppercase block">Ujian Susulan</span>
-          <span className="text-2xl font-black text-rose-600 mt-1 block">
-            {sesiList.filter((s) => s.status_kelulusan === 'susulan').length}
+          <span className="text-xs font-bold text-slate-700 uppercase block">Belum Ujian</span>
+          <span className="text-2xl font-black text-slate-600 mt-1 block">
+            {sesiList.filter((s) => s.status_kelulusan === 'belum_mulai').length}
           </span>
         </div>
       </div>
@@ -644,8 +590,8 @@ export default function CbtLegerNilai() {
           >
             <option value="">Semua Status Kelulusan</option>
             <option value="lulus">Lulus (Nilai &gt;= {KKM})</option>
-            <option value="remedial">Remedial (Nilai &lt; {KKM})</option>
-            <option value="susulan">Susulan (Belum Selesai / 0)</option>
+            <option value="belum_tuntas">Belum Tuntas (Nilai &lt; {KKM})</option>
+            <option value="belum_mulai">Belum Mulai</option>
           </select>
 
           <label className="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer ml-2">
@@ -745,8 +691,6 @@ export default function CbtLegerNilai() {
               ) : (
                 filteredAndSortedSesi.map((s, idx) => {
                   const isLulus = s.status_kelulusan === 'lulus';
-                  const isRemedial = s.status_kelulusan === 'remedial';
-                  const isSusulan = s.status_kelulusan === 'susulan';
 
                   return (
                     <tr key={s.id} className="hover:bg-gray-50/80 transition">
@@ -778,13 +722,13 @@ export default function CbtLegerNilai() {
                           <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 font-black rounded-lg text-[10px] uppercase tracking-wider">
                             LULUS
                           </span>
-                        ) : isRemedial ? (
+                        ) : s.status === 'selesai' ? (
                           <span className="px-2.5 py-1 bg-amber-50 text-amber-700 font-black rounded-lg text-[10px] uppercase tracking-wider">
-                            REMEDIAL
+                            BELUM TUNTAS
                           </span>
                         ) : (
-                          <span className="px-2.5 py-1 bg-rose-50 text-rose-700 font-black rounded-lg text-[10px] uppercase tracking-wider">
-                            SUSULAN
+                          <span className="px-2.5 py-1 bg-slate-50 text-slate-600 font-black rounded-lg text-[10px] uppercase tracking-wider">
+                            BELUM UJIAN
                           </span>
                         )}
                       </td>
@@ -792,30 +736,6 @@ export default function CbtLegerNilai() {
                       {/* Kolom Aksi Guru Mapel */}
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          {/* Tombol Remedial jika nilai < KKM */}
-                          {isRemedial && (
-                            <button
-                              onClick={() => handleSetRemedial(s)}
-                              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center gap-1"
-                              title="Tugaskan Ujian Remedial"
-                            >
-                              <RotateCcw size={12} />
-                              <span>Remedial</span>
-                            </button>
-                          )}
-
-                          {/* Tombol Susulan jika Siswa Tidak Hadir / Nilai 0 */}
-                          {isSusulan && (
-                            <button
-                              onClick={() => handleSetSusulan(s)}
-                              className="px-2.5 py-1 bg-primary hover:bg-blue-900 text-white font-bold rounded-lg text-[11px] shadow-sm transition flex items-center gap-1"
-                              title="Jadwalkan Ujian Susulan"
-                            >
-                              <UserCheck size={12} />
-                              <span>Susulan</span>
-                            </button>
-                          )}
-
                           {/* Tombol Tinjau Koreksi AI */}
                           <button
                             onClick={() => openReviewModal(s)}

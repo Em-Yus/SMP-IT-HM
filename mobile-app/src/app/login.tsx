@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabaseClient';
 import { router } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import CryptoJS from 'crypto-js';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -23,8 +23,7 @@ export default function LoginScreen() {
   const [isScanning, setIsScanning] = useState(false);
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [scanned, setScanned] = useState(false);
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice(facing);
+  const [permission, requestPermission] = useCameraPermissions();
 
   const SECRET_KEY = process.env.EXPO_PUBLIC_KARTU_SISWA_SECRET || "KARTU_SISWA_SECRET";
 
@@ -51,6 +50,7 @@ export default function LoginScreen() {
           importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#FF231F7C',
+          sound: null,
         });
       }
 
@@ -131,22 +131,10 @@ export default function LoginScreen() {
     }
   };
 
-  const objectOutput = useObjectOutput({
-    types: ['qr'],
-    onObjectsScanned: (objects) => {
-      for (const obj of objects) {
-        if (isScannedCode(obj) && obj.value) {
-          handleBarcodeScanned(obj.value);
-          break;
-        }
-      }
-    }
-  });
-
   const toggleScanner = async () => {
-    if (!hasPermission) {
-      const granted = await requestPermission();
-      if (!granted) {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) {
         Alert.alert('Izin Ditolak', 'Aplikasi membutuhkan akses kamera untuk memindai QR Code.');
         return;
       }
@@ -230,14 +218,34 @@ export default function LoginScreen() {
   if (isScanning) {
     return (
       <View style={styles.scannerContainer}>
-        {device ? (
-          <Camera
-            style={StyleSheet.absoluteFill}
-            device={device}
-            isActive={isScanning}
-            outputs={[objectOutput]}
+        {permission?.granted ? (
+          <CameraView
+            key={`cam-${facing}`}
+            style={[StyleSheet.absoluteFill, { width: '100%', height: '100%' }]}
+            facing={facing}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr'],
+            }}
+            onBarcodeScanned={scanned ? undefined : ({ data }) => {
+              if (data) handleBarcodeScanned(data);
+            }}
           />
-        ) : null}
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center', zIndex: 5 }]}>
+            <ActivityIndicator size="large" color="#84D43F" />
+            <Text style={{ color: '#FFFFFF', marginTop: 12, fontSize: 14 }}>
+              {!permission ? 'Menyiapkan kamera...' : 'Izin kamera belum aktif'}
+            </Text>
+            {permission && !permission.granted && (
+              <TouchableOpacity
+                style={{ marginTop: 16, backgroundColor: '#84D43F', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 }}
+                onPress={requestPermission}
+              >
+                <Text style={{ color: '#000', fontWeight: 'bold' }}>Beri Izin Kamera</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
         
         {/* Fullscreen Dark Mask Overlay with Viewfinder Hole */}
         <View style={styles.scannerOverlay}>

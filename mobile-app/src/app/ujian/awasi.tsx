@@ -54,7 +54,7 @@ export default function UjianAwasi() {
   const [selectedJadwal, setSelectedJadwal] = useState<any>(null);
 
   // Ruangan yang aktif diawasi
-  const [currentRuangId, setCurrentRuangId] = useState<string>(ruangId || 'semua');
+  const [currentRuangId, setCurrentRuangId] = useState<string>(ruangId && ruangId !== 'semua' ? ruangId : '');
   const [ruangList, setRuangList] = useState<any[]>([]);
   const [availableRuangTabs, setAvailableRuangTabs] = useState<any[]>([]);
   const [isSwitchRuangModalOpen, setIsSwitchRuangModalOpen] = useState(false);
@@ -76,7 +76,7 @@ export default function UjianAwasi() {
   const [nowTs, setNowTs] = useState<number>(Date.now());
 
   useEffect(() => {
-    const t = setInterval(() => setNowTs(Date.now()), 1000);
+    const t = setInterval(() => setNowTs(Date.now()), 3000);
     return () => clearInterval(t);
   }, []);
 
@@ -183,7 +183,30 @@ export default function UjianAwasi() {
         }
       });
 
-      const pRuangData = pRuangRes.data || [];
+      let pRuangData = pRuangRes.data || [];
+
+      // Fallback: Jika jadwal ini belum memiliki entri cbt_peserta_ruang tersendiri,
+      // gunakan alokasi ruang peserta terakhir yang sudah pernah disimpan di jadwal lain
+      if (!pRuangData || pRuangData.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+
+        if (latestPR && latestPR.length > 0) {
+          const fallbackJId = latestPR[0].jadwal_id;
+          const { data: fbData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select('siswa_id, ruang_id, nomor_meja, data_ruang(nama_ruang)')
+            .eq('jadwal_id', fallbackJId);
+
+          if (fbData && fbData.length > 0) {
+            pRuangData = fbData;
+          }
+        }
+      }
+
       const pRuangMap: Record<string, { ruang_id: number; nomor_meja?: number; ruang_nama: string }> = {};
       pRuangData.forEach((p: any) => {
         pRuangMap[String(p.siswa_id)] = {
@@ -213,10 +236,18 @@ export default function UjianAwasi() {
         return { id: currentJadwal?.ruang_id || 1, nama_ruang: currentJadwal?.data_ruang?.nama_ruang || 'Ruang CBT' };
       };
 
-      // Tentukan alokasi ruangan setiap siswa
+      // Jika cbt_peserta_ruang memiliki data → jadikan source of truth mutlak (lepas dari kelas_id)
+      // Hanya siswa yang terdaftar di pengaturan ruang yang ditampilkan.
+      // Jika tidak ada → fallback ke logika kelas / heuristik.
+      const hasPesertaRuang = pRuangData && pRuangData.length > 0;
+      const targetSiswaList = hasPesertaRuang
+        ? allActiveSiswa.filter((sw: any) => !!pRuangMap[String(sw.id)])
+        : allActiveSiswa;
+
+      // distinctRuangMap dipakai sebagai fallback saat tidak ada pengaturan ruang
       const distinctRuangMap = new Map<string, { id: string; nama: string; count: number }>();
 
-      const mappedSiswa = allActiveSiswa.map((sw: any) => {
+      const mappedSiswa = targetSiswaList.map((sw: any) => {
         const pAlloc = pRuangMap[String(sw.id)];
         let finalRuangId: number | string = '';
         let finalRuangNama: string = '';
@@ -273,11 +304,34 @@ export default function UjianAwasi() {
         });
       });
 
-      const tabs = [
-        { id: 'semua', nama: 'Semua Ruangan', count: siswaWithNomorMeja.length },
-        ...Array.from(distinctRuangMap.values())
-      ];
+      // Bangun daftar tab ruangan aktif
+      // Jika ada pengaturan ruang → urutkan tab sesuai urutan ruang di cbt_peserta_ruang
+      let orderedRuangEntries: { id: string; nama: string; count: number }[];
+      if (hasPesertaRuang) {
+        // Urutan sesuai kemunculan ruang di pRuangData (sesuai pengaturan ruang di jadwal)
+        const orderedRuangMap = new Map<string, { id: string; nama: string; count: number }>();
+        pRuangData.forEach((p: any) => {
+          const key = String(p.ruang_id);
+          if (!orderedRuangMap.has(key)) {
+            const nama = p.data_ruang?.nama_ruang || ruangMap[String(p.ruang_id)] || `Ruang ${p.ruang_id}`;
+            const count = siswaWithNomorMeja.filter((sw: any) => String(sw.ruang_id) === key).length;
+            orderedRuangMap.set(key, { id: key, nama, count });
+          }
+        });
+        orderedRuangEntries = Array.from(orderedRuangMap.values());
+      } else {
+        orderedRuangEntries = Array.from(distinctRuangMap.values());
+      }
+
+      const tabs = orderedRuangEntries;
       setAvailableRuangTabs(tabs);
+
+      // Pastikan ruangan yang diawasi adalah ruangan spesifik (bukan 'semua' yang berat)
+      let effectiveRId = activeRId;
+      if ((!effectiveRId || effectiveRId === 'semua' || effectiveRId === 'all') && orderedRuangEntries.length > 0) {
+        effectiveRId = orderedRuangEntries[0].id;
+        setCurrentRuangId(effectiveRId);
+      }
 
       // Sesi siswa
       const sesiData = sesiRes.data || [];
@@ -286,10 +340,10 @@ export default function UjianAwasi() {
         sesiMap[s.siswa_id] = s;
       });
 
-      // Filter siswa sesuai ruang yang sedang diawasi
+      // Filter siswa hanya untuk ruangan yang sedang diawasi (ringan & cepat)
       let filteredSiswa = siswaWithNomorMeja;
-      if (activeRId && activeRId !== 'semua' && activeRId !== 'all') {
-        filteredSiswa = siswaWithNomorMeja.filter((s: any) => String(s.ruang_id) === String(activeRId));
+      if (effectiveRId && effectiveRId !== 'semua' && effectiveRId !== 'all') {
+        filteredSiswa = siswaWithNomorMeja.filter((s: any) => String(s.ruang_id) === String(effectiveRId));
       }
 
       // Gabungkan dengan data sesi pengerjaan
@@ -646,6 +700,13 @@ export default function UjianAwasi() {
     const classes = Array.from(new Set(sesiList.map((s) => s.kelas).filter(Boolean))).sort();
     return ['semua', ...classes];
   }, [sesiList]);
+
+  // Reset filter kelas jika kelas terpilih tidak ada di ruangan yang baru dipilih
+  React.useEffect(() => {
+    if (selectedKelas !== 'semua' && !availableKelasList.includes(selectedKelas)) {
+      setSelectedKelas('semua');
+    }
+  }, [availableKelasList, selectedKelas]);
 
   // Filter siswa pengerjaan sesuai ruangan, kelas aktif, dan pencarian nama/NISN
   const filteredSesiList = React.useMemo(() => {
@@ -1065,17 +1126,10 @@ export default function UjianAwasi() {
               {selectedJadwal?.nama_ujian || 'PSTS IPA Ganjil'}
             </Text>
 
-            {/* Nama Ruang - Dapat diklik untuk beralih ruangan */}
-            <TouchableOpacity
-              onPress={() => setIsSwitchRuangModalOpen(true)}
-              style={styles.ruangHeaderButton}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.headerSubText} numberOfLines={1}>
-                Ruang: {currentRuangNama}
-              </Text>
-              <ChevronDown size={14} color="#e2e8f0" style={{ marginLeft: 3 }} />
-            </TouchableOpacity>
+            {/* Nama Ruang - Otomatis terupdate dari filter yang aktif di halaman */}
+            <Text style={styles.headerSubText} numberOfLines={1}>
+              Ruang: {currentRuangNama}
+            </Text>
 
             <Text style={styles.headerSubText} numberOfLines={1}>
               Mata Ujian: {selectedJadwal?.data_mapel?.nama_mapel || 'Ilmu Pengetahuan Alam'}
@@ -1267,12 +1321,14 @@ export default function UjianAwasi() {
                       source={{ uri: liveFeed.image }}
                       style={styles.cardFullBg}
                       resizeMode="cover"
+                      fadeDuration={0}
                     />
                   ) : item.foto_url ? (
                     <Image
                       source={{ uri: item.foto_url }}
                       style={styles.cardFullBg}
                       resizeMode="cover"
+                      fadeDuration={0}
                     />
                   ) : (
                     <View style={styles.cardFullPlaceholder}>

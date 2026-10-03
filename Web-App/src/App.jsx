@@ -41,6 +41,8 @@ import TujuanPembelajaran from './pages/TujuanPembelajaran';
 import KelasMengaji from './pages/KelasMengaji';
 import InputBiayaPengembanganMutu from './pages/InputBiayaPengembanganMutu';
 import InputPemasukanLainnya from './pages/InputPemasukanLainnya';
+import Pengeluaran from './pages/Pengeluaran';
+import RekapKeuangan from './pages/RekapKeuangan';
 import ProfilGuru from './pages/ProfilGuru';
 import MasterJamGuru from './pages/MasterJamGuru';
 import CetakQrPresensiGuru from './pages/CetakQrPresensiGuru';
@@ -117,6 +119,8 @@ function App() {
           <Route path="/tagihan-siswa" element={<TagihanSiswa />} />
           <Route path="/rekap-bayar" element={<RekapBayar />} />
           <Route path="/pemasukan-lainnya" element={<InputPemasukanLainnya />} />
+          <Route path="/pengeluaran" element={<Pengeluaran />} />
+          <Route path="/rekap-keuangan" element={<RekapKeuangan />} />
           <Route path="/surat-kepsek" element={<UnderConstruction />} />
           <Route path="/surat-kesiswaan" element={<SuratKesiswaan />} />
           <Route path="/input-biaya-pengembangan-mutu" element={<InputBiayaPengembanganMutu />} />

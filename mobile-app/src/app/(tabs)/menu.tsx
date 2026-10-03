@@ -83,6 +83,12 @@ export default function SiswaMenuScreen() {
 
   const checkActiveExam = async (user: any) => {
     try {
+      const isAktif = (user?.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+      if (!isAktif) {
+        setActiveCbtExam(null);
+        return;
+      }
+
       let allocatedJadwalIds: number[] = [];
       if (user.id) {
         const { data: pRuangData } = await supabase

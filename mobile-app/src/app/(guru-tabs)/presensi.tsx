@@ -2,8 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Modal, TextInput, KeyboardAvoidingView, Platform, DeviceEventEmitter, ToastAndroid, Dimensions, Animated, Easing } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CheckCircle, Clock, LogOut, FileText, UserCheck, ChevronLeft, ChevronRight, Edit, X, AlertCircle, Calendar, QrCode, BookOpen, DollarSign, Camera as CameraIcon, Award, ShieldCheck, Sparkles } from 'lucide-react-native';
-import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
+import { CheckCircle, Clock, LogOut, FileText, UserCheck, ChevronLeft, ChevronRight, Edit, X, AlertCircle, Calendar, QrCode, BookOpen, DollarSign, Camera as CameraIcon, Award, ShieldCheck, Sparkles, SwitchCamera } from 'lucide-react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router } from 'expo-router';
 
 const { width } = Dimensions.get('window');
@@ -23,8 +23,8 @@ export default function PresensiGuruScreen() {
   });
 
   // CAMERA SCANNER STATE
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const [permission, requestPermission] = useCameraPermissions();
+  const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [scannerVisible, setScannerVisible] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -193,9 +193,9 @@ export default function PresensiGuruScreen() {
   // UNIVERSAL SCANNER HANDLER
   // ===============================
   const handleOpenScanner = async () => {
-    if (!hasPermission) {
-      const granted = await requestPermission();
-      if (!granted) {
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) {
         Alert.alert('Izin Ditolak', 'Aplikasi memerlukan izin kamera untuk memindai QR Code Presensi.');
         return;
       }
@@ -608,17 +608,7 @@ export default function PresensiGuruScreen() {
     }
   };
 
-  const objectOutput = useObjectOutput({
-    types: ['qr'],
-    onObjectsScanned: (objects) => {
-      for (const obj of objects) {
-        if (isScannedCode(obj) && obj.value) {
-          handleBarcodeScanned(obj.value);
-          break;
-        }
-      }
-    }
-  });
+
 
   // ===============================
   // REKAP OPERATOR
@@ -948,12 +938,17 @@ export default function PresensiGuruScreen() {
         onRequestClose={() => setScannerVisible(false)}
       >
         <View style={styles.cameraContainer}>
-          {device && (
-            <Camera
+          {permission?.granted && (
+            <CameraView
               style={StyleSheet.absoluteFill}
-              device={device}
-              isActive={scannerVisible}
-              outputs={[objectOutput]}
+              facing={facing}
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr'],
+              }}
+              onBarcodeScanned={scanned ? undefined : ({ data }) => {
+                if (data) handleBarcodeScanned(data);
+              }}
+              onMountError={(e) => console.warn('Camera Mount Error Guru:', e.message)}
             />
           )}
 
@@ -963,7 +958,17 @@ export default function PresensiGuruScreen() {
               <X color="#fff" size={24} />
             </TouchableOpacity>
             <Text style={styles.cameraHeaderTitle}>Scanner Presensi Guru</Text>
-            <View style={{ width: 40 }} />
+            <TouchableOpacity
+              onPress={() => {
+                setFacing(prev => (prev === 'back' ? 'front' : 'back'));
+                setScanned(false);
+                setIsProcessing(false);
+              }}
+              style={styles.closeCameraBtn}
+              activeOpacity={0.8}
+            >
+              <SwitchCamera color="#fff" size={20} />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.scannerCenter}>

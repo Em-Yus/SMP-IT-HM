@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, KeyboardAvoidingView, Platform, Modal, Animated } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
-import { Camera as VisionCamera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import CryptoJS from 'crypto-js';
 import { Wallet, ChevronLeft, QrCode, Search, User, X, CheckCircle, Plus, Trash2, Camera as CameraIcon, Calendar } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -19,8 +19,7 @@ export default function TagihanSiswa() {
   // Camera State
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [scanned, setScanned] = useState(false);
-  const { hasPermission, requestPermission } = useCameraPermission();
-  const device = useCameraDevice('back');
+  const [permission, requestPermission] = useCameraPermissions();
   const scannerAnim = useRef(new Animated.Value(0)).current;
 
   // Search State
@@ -116,17 +115,7 @@ export default function TagihanSiswa() {
     }
   };
 
-  const objectOutput = useObjectOutput({
-    types: ['qr'],
-    onObjectsScanned: (objects) => {
-      for (const obj of objects) {
-        if (isScannedCode(obj) && obj.value) {
-          handleBarcodeScanned(obj.value);
-          break;
-        }
-      }
-    }
-  });
+
 
   const processSelectSiswa = async (siswa: any) => {
     if (siswa.status_siswa?.toLowerCase() === 'cabang') {
@@ -299,9 +288,9 @@ export default function TagihanSiswa() {
   };
 
   const openCamera = async () => {
-    if (!hasPermission) {
-      const granted = await requestPermission();
-      if (!granted) return Alert.alert('Izin Ditolak', 'Dibutuhkan izin kamera untuk memindai kartu.');
+    if (!permission?.granted) {
+      const res = await requestPermission();
+      if (!res.granted) return Alert.alert('Izin Ditolak', 'Dibutuhkan izin kamera untuk memindai kartu.');
     }
     setIsCameraOpen(true);
   };
@@ -526,12 +515,16 @@ export default function TagihanSiswa() {
             <TouchableOpacity onPress={() => setIsCameraOpen(false)} style={styles.closeBtn}><X color="#fff" size={24} /></TouchableOpacity>
           </View>
           <View style={styles.cameraView}>
-            {device && (
-              <VisionCamera
+            {permission?.granted && (
+              <CameraView
                 style={StyleSheet.absoluteFill}
-                device={device}
-                isActive={isCameraOpen}
-                outputs={[objectOutput]}
+                facing="back"
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                }}
+                onBarcodeScanned={scanned ? undefined : ({ data }) => {
+                  if (data) handleBarcodeScanned(data);
+                }}
               />
             )}
             <View style={styles.scanMask}>

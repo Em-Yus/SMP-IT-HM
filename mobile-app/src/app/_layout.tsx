@@ -216,8 +216,8 @@ export default function RootLayout() {
 
     const performRouting = async () => {
       try {
-        const currentSegment = segments[0] || 'index';
-        const publicRoutes = ['login', 'index', 'pendaftaran', 'pendaftaran-guru'];
+        const currentSegment: string = (segments[0] as string) || 'index';
+        const publicRoutes: string[] = ['login', 'index', 'pendaftaran', 'pendaftaran-guru'];
         const isPublicRoute = publicRoutes.includes(currentSegment);
         
         const localUserSiswa = await AsyncStorage.getItem('user_siswa');
@@ -226,14 +226,18 @@ export default function RootLayout() {
         const hasSiswaSession = !!localUserSiswa;
         const hasGuruSession = !!localUserGuru;
 
-        if ((hasSiswaSession || hasGuruSession) && isPublicRoute) {
-          if (hasGuruSession) {
+        if (hasGuruSession) {
+          if (isPublicRoute) {
             router.replace('/(guru-tabs)/dashboard');
-          } else {
+          }
+        } else if (hasSiswaSession) {
+          if (isPublicRoute) {
             router.replace('/(tabs)/dashboard');
           }
-        } else if (!hasSiswaSession && !hasGuruSession && !isPublicRoute) {
-          router.replace('/login');
+        } else {
+          if (currentSegment === 'index' || !isPublicRoute) {
+            router.replace('/login');
+          }
         }
       } catch (e) {
         console.warn('Routing check error:', e);
@@ -314,8 +318,8 @@ export default function RootLayout() {
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      <Stack screenOptions={{ headerShown: false }}>
+    <View style={{ flex: 1, backgroundColor: '#ffffff' }}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#ffffff' } }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />

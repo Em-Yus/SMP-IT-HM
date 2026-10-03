@@ -1,4 +1,4 @@
-import { Home, FileSignature, Users, Briefcase, School, BookOpen, CalendarDays, Clock, Edit3, Award, Wallet, Receipt, FileText, Mail, LayoutDashboard, Image as ImageIcon, Megaphone, Trophy, UserMinus, UserCog, Building2, DoorOpen, ClipboardList, Target, Activity, Book, UserCheck, Puzzle, User, QrCode, DollarSign, FileCheck } from 'lucide-react';
+import { Home, FileSignature, Users, Briefcase, School, BookOpen, CalendarDays, Clock, Edit3, Award, Wallet, Receipt, FileText, Mail, LayoutDashboard, Image as ImageIcon, Megaphone, Trophy, UserMinus, UserCog, Building2, DoorOpen, ClipboardList, Target, Activity, Book, UserCheck, Puzzle, User, QrCode, DollarSign, FileCheck, CreditCard, PieChart } from 'lucide-react';
 
 export const menusConfig = [
   {
@@ -56,7 +56,9 @@ export const menusConfig = [
       { to: "/tagihan-siswa", icon: Wallet, label: "Tagihan Siswa" },
       { to: "/rekap-bayar", icon: Receipt, label: "Rekap Bayar" },
       { to: "/input-biaya-pengembangan-mutu", icon: Wallet, label: "Biaya Pengembangan Mutu" },
-      { to: "/pemasukan-lainnya", icon: Wallet, label: "Pemasukan Lainnya" }
+      { to: "/pemasukan-lainnya", icon: Wallet, label: "Pemasukan Lainnya" },
+      { to: "/pengeluaran", icon: CreditCard, label: "Pengeluaran" },
+      { to: "/rekap-keuangan", icon: PieChart, label: "Rekap Keuangan" }
     ]
   },
   {

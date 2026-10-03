@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert, TextInput, Platform, DeviceEventEmitter, ToastAndroid, Modal } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Camera, useCameraDevice, useCameraPermission, useObjectOutput, isScannedCode } from 'react-native-vision-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import CryptoJS from 'crypto-js';
 import * as Animatable from 'react-native-animatable';
 import { Clock, Search, QrCode, CheckCircle, AlertCircle, Calendar, FileText, ChevronLeft, ChevronRight, UserCheck, XCircle, PieChart, Filter, Settings, AlertTriangle, Send, Printer, CalendarDays, Eye, X, ShieldAlert, Award, SwitchCamera } from 'lucide-react-native';
@@ -15,13 +15,12 @@ import { getOperationalDate, getOperationalDayIndex, getLocalDate } from '../uti
 export default function PresensiSiswa() {
   const [currentTab, setCurrentTab] = useState<'scan' | 'manual' | 'rekap' | 'peringatan'>('scan');
   const [tanggal, setTanggal] = useState(getLocalDate());
-  
+
   // Camera & Scan
-  const { hasPermission, requestPermission } = useCameraPermission();
+  const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [facing, setFacing] = useState<'back' | 'front'>('back');
-  const device = useCameraDevice(facing);
   const [scanResult, setScanResult] = useState<{
     id?: number;
     type: 'success' | 'warning' | 'info' | 'error';
@@ -225,16 +224,16 @@ export default function PresensiSiswa() {
     else if (currentTab === 'rekap') fetchRekapData();
     else if (currentTab === 'peringatan') fetchPeringatanData();
   }, [
-    currentTab, 
-    tanggal, 
-    rekapFilterMode, 
-    rekapTanggal, 
-    rekapWeekOffset, 
-    rekapBulan, 
-    rekapTahun, 
-    peringatanFilterMode, 
-    peringatanWeekOffset, 
-    peringatanBulan, 
+    currentTab,
+    tanggal,
+    rekapFilterMode,
+    rekapTanggal,
+    rekapWeekOffset,
+    rekapBulan,
+    rekapTahun,
+    peringatanFilterMode,
+    peringatanWeekOffset,
+    peringatanBulan,
     peringatanTahun
   ]);
 
@@ -255,16 +254,16 @@ export default function PresensiSiswa() {
     });
     return () => listener.remove();
   }, [
-    currentTab, 
-    tanggal, 
-    rekapFilterMode, 
-    rekapTanggal, 
-    rekapWeekOffset, 
-    rekapBulan, 
-    rekapTahun, 
-    peringatanFilterMode, 
-    peringatanWeekOffset, 
-    peringatanBulan, 
+    currentTab,
+    tanggal,
+    rekapFilterMode,
+    rekapTanggal,
+    rekapWeekOffset,
+    rekapBulan,
+    rekapTahun,
+    peringatanFilterMode,
+    peringatanWeekOffset,
+    peringatanBulan,
     peringatanTahun
   ]);
 
@@ -284,36 +283,6 @@ export default function PresensiSiswa() {
     return { tahun_ajaran, semester };
   };
 
-  const sendWhatsAppNotification = async (nama: string, kelas: string, wa_ortu: string, status: string, waktu: string) => {
-    try {
-      if (!FONNTE_TOKEN) {
-        console.log("Fonnte Token tidak ada, skip WA.");
-        return;
-      }
-      let noWa = (wa_ortu || '').toString().replace(/\D/g, '');
-      if (noWa.startsWith('0')) noWa = '62' + noWa.substring(1);
-      if (!noWa || noWa.length < 9) return;
-
-      const uniqueId = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const pesan = `*NOTIFIKASI ABSENSI SMP IT HM*\n\nYth. Bapak/Ibu Wali Murid,\nMemberitahukan bahwa ananda:\n\nNama: *${nama}*\nKelas: *${kelas}*\nStatus: *${status}*\nWaktu: *${waktu}*\n\nTerima kasih.\n\n_Ref: ${uniqueId}_`;
-
-      const formData = new FormData();
-      formData.append('target', noWa);
-      formData.append('message', pesan);
-      const randomDelay = Math.floor(Math.random() * (30 - 15 + 1)) + 15;
-      formData.append('delay', randomDelay.toString());
-
-      fetch('https://api.fonnte.com/send', {
-        method: 'POST',
-        headers: { 
-          'Authorization': FONNTE_TOKEN
-        },
-        body: formData
-      }).then(res => res.text()).then(text => console.log('Fonnte Res:', text)).catch(err => console.error('Fonnte API error:', err));
-    } catch (e) {
-      console.error('Gagal WA:', e);
-    }
-  };
 
   const sendPushNotification = async (nipd: string, title: string, body: string) => {
     try {
@@ -340,10 +309,35 @@ export default function PresensiSiswa() {
   // SCAN LOGIC
   // ===============================
 
+  const toggleCameraFacing = () => {
+    setFacing(prev => (prev === 'back' ? 'front' : 'back'));
+    setScanned(false);
+    setIsProcessing(false);
+  };
+
+  const showScanResult = (result: {
+    type: 'success' | 'warning' | 'info' | 'error';
+    title: string;
+    nama?: string;
+    kelas?: string;
+    waktu?: string;
+    status?: string;
+    message: string;
+  }) => {
+    const scanId = Date.now();
+    setScanResult({ ...result, id: scanId });
+    setIsProcessing(false);
+    setTimeout(() => {
+      setScanResult(prev => (prev?.id === scanId ? null : prev));
+      setScanned(false);
+    }, 1000);
+  };
+
   const handleBarcodeScanned = async (data: string) => {
     if (scanned || isProcessing) return;
     setScanned(true);
     setIsProcessing(true);
+    console.log('📷 Barcode terdeteksi [' + facing + ']:', data);
 
     let nipd = '';
     try {
@@ -351,14 +345,11 @@ export default function PresensiSiswa() {
       nipd = bytes.toString(CryptoJS.enc.Utf8).trim();
       if (!nipd) throw new Error('Dekripsi kosong');
     } catch (e) {
-      setScanResult({
-        id: Date.now(),
+      showScanResult({
         type: 'error',
         title: 'QR TIDAK VALID',
         message: 'QR Code tidak dikenali atau bukan format resmi aplikasi.'
       });
-      setIsProcessing(false);
-      setTimeout(() => { setScanned(false); }, 2000);
       return;
     }
 
@@ -370,14 +361,11 @@ export default function PresensiSiswa() {
         .maybeSingle();
 
       if (errSiswa || !dataSiswa) {
-        setScanResult({
-          id: Date.now(),
+        showScanResult({
           type: 'error',
           title: 'SISWA TIDAK DITEMUKAN',
           message: `Siswa dengan NIPD ${nipd} tidak ada di database.`
         });
-        setIsProcessing(false);
-        setTimeout(() => { setScanned(false); }, 2000);
         return;
       }
 
@@ -413,7 +401,7 @@ export default function PresensiSiswa() {
           tahun_ajaran,
           semester
         };
-        
+
         if (!existingData) {
           const { error: errInsert } = await supabase.from('presensi_siswa').insert(payload);
           if (errInsert) throw errInsert;
@@ -422,8 +410,7 @@ export default function PresensiSiswa() {
           if (errUpdate) throw errUpdate;
         }
 
-        setScanResult({
-          id: Date.now(),
+        showScanResult({
           type: 'success',
           title: 'TAP MASUK BERHASIL',
           nama: dataSiswa.nama,
@@ -436,12 +423,10 @@ export default function PresensiSiswa() {
         if (Platform.OS === 'android') {
           ToastAndroid.show(`Tap Masuk: ${dataSiswa.nama}`, ToastAndroid.SHORT);
         }
-        sendWhatsAppNotification(dataSiswa.nama, dataSiswa.kelas, dataSiswa.wa_ortu, actStatus, currentTime);
         sendPushNotification(dataSiswa.nipd, 'Tap Masuk Berhasil', `Ananda ${dataSiswa.nama} telah melakukan tap masuk pada ${currentTime} dengan status: ${actStatus}.`);
       } else {
         if (existingData.status.includes('Izin') || existingData.status.includes('Sakit') || existingData.status.includes('Dispensasi')) {
-          setScanResult({
-            id: Date.now(),
+          showScanResult({
             type: 'info',
             title: 'SUDAH DIABSEN',
             nama: dataSiswa.nama,
@@ -449,14 +434,11 @@ export default function PresensiSiswa() {
             status: existingData.status,
             message: `Siswa ini sudah diabsen dengan status "${existingData.status}" hari ini.`
           });
-          setIsProcessing(false);
-          setTimeout(() => { setScanned(false); }, 2000);
           return;
         }
 
         if (existingData.waktu_masuk && existingData.waktu_pulang) {
-          setScanResult({
-            id: Date.now(),
+          showScanResult({
             type: 'info',
             title: 'SUDAH TAP PULANG',
             nama: dataSiswa.nama,
@@ -465,38 +447,30 @@ export default function PresensiSiswa() {
             status: existingData.status,
             message: `Siswa sudah melakukan Tap Pulang pada ${existingData.waktu_pulang} WIB hari ini.`
           });
-          setIsProcessing(false);
-          setTimeout(() => { setScanned(false); }, 2000);
           return;
         }
 
         if (existingData.waktu_masuk) {
           const diffMins = timeToMinutes(currentTime) - timeToMinutes(existingData.waktu_masuk);
           if (diffMins < 5) {
-            setScanResult({
-              id: Date.now(),
+            showScanResult({
               type: 'warning',
               title: 'TAP TERLALU CEPAT',
               nama: dataSiswa.nama,
               kelas: dataSiswa.kelas,
               message: 'Beri jeda minimal 5 menit dari waktu Tap Masuk sebelumnya.'
             });
-            setIsProcessing(false);
-            setTimeout(() => { setScanned(false); }, 2000);
             return;
           }
 
           if (timeToMinutes(currentTime) < timeToMinutes('10:00')) {
-            setScanResult({
-              id: Date.now(),
+            showScanResult({
               type: 'warning',
               title: 'BELUM WAKTUNYA PULANG',
               nama: dataSiswa.nama,
               kelas: dataSiswa.kelas,
               message: `Sudah Tap Masuk pada pukul ${existingData.waktu_masuk}. Saat ini belum waktunya Tap Pulang!`
             });
-            setIsProcessing(false);
-            setTimeout(() => { setScanned(false); }, 2000);
             return;
           }
 
@@ -511,8 +485,7 @@ export default function PresensiSiswa() {
 
           if (errUpdate) throw errUpdate;
 
-          setScanResult({
-            id: Date.now(),
+          showScanResult({
             type: 'success',
             title: 'TAP PULANG BERHASIL',
             nama: dataSiswa.nama,
@@ -525,37 +498,20 @@ export default function PresensiSiswa() {
           if (Platform.OS === 'android') {
             ToastAndroid.show(`Tap Pulang: ${dataSiswa.nama}`, ToastAndroid.SHORT);
           }
-          sendWhatsAppNotification(dataSiswa.nama, dataSiswa.kelas, dataSiswa.wa_ortu, actStatus, currentTime);
           sendPushNotification(dataSiswa.nipd, 'Tap Pulang Berhasil', `Ananda ${dataSiswa.nama} telah melakukan tap pulang pada ${currentTime}.`);
         }
       }
     } catch (e: any) {
       console.error(e);
-      setScanResult({
-        id: Date.now(),
+      showScanResult({
         type: 'error',
         title: 'GAGAL MEMPROSES',
         message: `Gagal memproses presensi: ${e.message || 'Terjadi kesalahan'}`
       });
-    } finally {
-      setIsProcessing(false);
-      setTimeout(() => {
-        setScanned(false);
-      }, 2000);
     }
   };
 
-  const objectOutput = useObjectOutput({
-    types: ['qr'],
-    onObjectsScanned: (objects) => {
-      for (const obj of objects) {
-        if (isScannedCode(obj) && obj.value) {
-          handleBarcodeScanned(obj.value);
-          break;
-        }
-      }
-    }
-  });
+
 
   // ===============================
   // MANUAL LOGIC
@@ -578,7 +534,7 @@ export default function PresensiSiswa() {
 
       const absenNipds = (dataAbsen || []).map(a => a.nipd);
       const siswaBelumAbsen = (dataSiswa || []).filter(s => !absenNipds.includes(s.nipd));
-      
+
       setSiswaList(siswaBelumAbsen);
       const uniqueKelas = [...new Set(siswaBelumAbsen.map(s => s.kelas).filter(Boolean))].sort() as string[];
       setAvailableKelas(uniqueKelas);
@@ -592,13 +548,13 @@ export default function PresensiSiswa() {
 
   const submitBulkManual = async () => {
     if (selectedSiswaIds.length === 0) return Alert.alert('Perhatian', 'Pilih minimal 1 siswa.');
-    
+
     setIsProcessing(true);
     try {
       const { tahun_ajaran, semester } = getTahunAjaranSemester();
       const now = new Date();
       const jamSekarang = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      
+
       const selectedSiswaList = siswaList.filter(s => selectedSiswaIds.includes(s.nipd));
       const payloadArray = selectedSiswaList.map(siswa => ({
         nipd: siswa.nipd,
@@ -621,15 +577,6 @@ export default function PresensiSiswa() {
       if (error) throw error;
 
       Alert.alert('Berhasil', `Presensi ${manualStatus} untuk ${payloadArray.length} siswa berhasil disimpan.`);
-      
-      let delayMs = 0;
-      selectedSiswaList.forEach((siswa, index) => {
-        const randomMs = Math.floor(Math.random() * (15000)) + 15000;
-        delayMs += (index === 0 ? 0 : randomMs);
-        setTimeout(() => {
-          sendWhatsAppNotification(siswa.nama, siswa.kelas, siswa.wa_ortu, manualStatus, jamSekarang);
-        }, delayMs);
-      });
 
       setSelectedSiswaIds([]);
       setManualAlasan('');
@@ -690,12 +637,12 @@ export default function PresensiSiswa() {
 
       const finalData = (data || []).map(d => {
         let evalStatus = d.status || '';
-        
+
         if (d.waktu_masuk && !d.waktu_pulang) {
           const isHadirOrTerlambat = evalStatus.includes('Hadir') || evalStatus.includes('Terlambat');
           const isPastDate = d.tanggal < todayStr;
           const isPastJamPulang = currentMinutes > pulangMinutes;
-          
+
           if (isHadirOrTerlambat && (isPastDate || (d.tanggal === todayStr && isPastJamPulang))) {
             evalStatus = 'Bolos';
           }
@@ -955,24 +902,26 @@ export default function PresensiSiswa() {
     const namaSekolah = (dataLembaga.nama_lembaga || 'SMP IT HIDAYATUL MUBTADI-IEN').toUpperCase();
     const text = `*SURAT PERINGATAN KEDISIPLINAN SISWA*\n*${namaSekolah}*\n\nYth. Bapak/Ibu Wali Murid dari:\nNama: *${siswa.nama}*\nKelas: *${siswa.kelas}*\n\nMemberitahukan bahwa ananda telah tercatat melanggar kedisiplinan presensi sekolah sebanyak *${siswa.totalPelanggaran} kali*:\n- Terlambat: ${siswa.jmlTerlambat}x\n- Bolos: ${siswa.jmlBolos}x\n- Alfa: ${siswa.jmlAlfa}x\n\nKategori Peringatan: *${siswa.levelPeringatan}*\n\nMohon bimbingan dan kerja sama Bapak/Ibu agar ananda hadir tertib dan tepat waktu di sekolah.\n\nTerima kasih.`;
     if (!siswa.wa_ortu) {
-       Alert.alert('Gagal', 'Nomor WA orang tua tidak ditemukan.');
-       return;
+      Alert.alert('Gagal', 'Nomor WA orang tua tidak ditemukan.');
+      return;
     }
     Alert.alert('Kirim SP', `Kirim Surat Peringatan via WA ke ortu ${siswa.nama} (${siswa.wa_ortu})?`, [
       { text: 'Batal', style: 'cancel' },
-      { text: 'Kirim', onPress: () => {
-         let noWa = (siswa.wa_ortu || '').toString().replace(/\D/g, '');
-         if (noWa.startsWith('0')) noWa = '62' + noWa.substring(1);
-         const formData = new FormData();
-         formData.append('target', noWa);
-         formData.append('message', text);
-         fetch('https://api.fonnte.com/send', {
-           method: 'POST',
-           headers: { 'Authorization': FONNTE_TOKEN },
-           body: formData
-         }).then(() => Alert.alert('Berhasil', 'Surat Peringatan telah dikirim via WhatsApp.'))
-           .catch(() => Alert.alert('Gagal', 'Terjadi kesalahan pengiriman WA.'));
-      }}
+      {
+        text: 'Kirim', onPress: () => {
+          let noWa = (siswa.wa_ortu || '').toString().replace(/\D/g, '');
+          if (noWa.startsWith('0')) noWa = '62' + noWa.substring(1);
+          const formData = new FormData();
+          formData.append('target', noWa);
+          formData.append('message', text);
+          fetch('https://api.fonnte.com/send', {
+            method: 'POST',
+            headers: { 'Authorization': FONNTE_TOKEN },
+            body: formData
+          }).then(() => Alert.alert('Berhasil', 'Surat Peringatan telah dikirim via WhatsApp.'))
+            .catch(() => Alert.alert('Gagal', 'Terjadi kesalahan pengiriman WA.'));
+        }
+      }
     ]);
   };
 
@@ -1156,7 +1105,7 @@ export default function PresensiSiswa() {
             <Settings color="#fff" size={22} />
           </TouchableOpacity>
         </View>
-        
+
         <View style={styles.tabWrapper}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabContainer}>
             <TouchableOpacity style={[styles.tabBtn, currentTab === 'scan' && styles.tabBtnActive]} onPress={() => setCurrentTab('scan')}>
@@ -1186,8 +1135,8 @@ export default function PresensiSiswa() {
 
       {/* TAB SCAN */}
       {currentTab === 'scan' && (
-        <ScrollView 
-          style={styles.scanScroll} 
+        <ScrollView
+          style={styles.scanScroll}
           contentContainerStyle={styles.scanScrollContent}
           showsVerticalScrollIndicator={false}
         >
@@ -1199,22 +1148,7 @@ export default function PresensiSiswa() {
             <Settings size={14} color="#6b7280" />
           </TouchableOpacity>
 
-          {/* Subheader bar: Judul & Tombol Toggle Kamera Depan/Belakang */}
-          <View style={styles.scanHeaderRow}>
-            <Text style={styles.scanTitle}>Arahkan Kartu QR Siswa</Text>
-            <TouchableOpacity 
-              style={styles.switchCameraBtn} 
-              onPress={() => setFacing(prev => prev === 'back' ? 'front' : 'back')}
-              activeOpacity={0.7}
-            >
-              <SwitchCamera size={16} color="#1E257F" style={{ marginRight: 6 }} />
-              <Text style={styles.switchCameraBtnText}>
-                {facing === 'back' ? 'Kamera Depan' : 'Kamera Belakang'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {!hasPermission ? (
+          {!permission?.granted ? (
             <View style={styles.permissionBox}>
               <Text style={{ textAlign: 'center', marginBottom: 16 }}>Aplikasi membutuhkan akses kamera untuk memindai kartu absen.</Text>
               <TouchableOpacity style={styles.btnPrimary} onPress={requestPermission}>
@@ -1223,27 +1157,32 @@ export default function PresensiSiswa() {
             </View>
           ) : (
             <View style={styles.cameraWrapper}>
-              <Camera 
-                style={styles.camera} 
-                device={device!}
-                isActive={currentTab === 'scan'}
-                outputs={[objectOutput]}
+              <CameraView
+                style={StyleSheet.absoluteFill}
+                facing={facing}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                }}
+                onBarcodeScanned={scanned ? undefined : ({ data }) => {
+                  if (data) handleBarcodeScanned(data);
+                }}
+                onMountError={(e) => console.warn('Camera Mount Error:', e.message)}
               />
-              <View style={styles.overlayContainer}>
+              <View style={styles.overlayContainer} pointerEvents="box-none">
                 {/* Floating camera switch button on camera */}
                 <TouchableOpacity
                   style={styles.cameraFloatingFlipBtn}
-                  onPress={() => setFacing(prev => prev === 'back' ? 'front' : 'back')}
+                  onPress={toggleCameraFacing}
                   activeOpacity={0.8}
                 >
                   <SwitchCamera size={18} color="#FFFFFF" />
                 </TouchableOpacity>
 
                 {/* Dark Masking */}
-                <View style={styles.maskRow}>
+                <View style={styles.maskRow} pointerEvents="none">
                   <View style={styles.maskSide} />
                 </View>
-                <View style={styles.maskCenterRow}>
+                <View style={styles.maskCenterRow} pointerEvents="none">
                   <View style={styles.maskSide} />
                   <View style={styles.transparentHole}>
                     {/* Corner Brackets */}
@@ -1251,10 +1190,10 @@ export default function PresensiSiswa() {
                     <View style={[styles.corner, styles.cornerTR]} />
                     <View style={[styles.corner, styles.cornerBL]} />
                     <View style={[styles.corner, styles.cornerBR]} />
-                    
+
                     {/* Animated Scanning Line */}
                     {!isProcessing && (
-                      <Animatable.View 
+                      <Animatable.View
                         animation={{
                           0: { translateY: 0 },
                           0.5: { translateY: 220 },
@@ -1269,95 +1208,18 @@ export default function PresensiSiswa() {
                   </View>
                   <View style={styles.maskSide} />
                 </View>
-                <View style={styles.maskRow}>
+                <View style={styles.maskRow} pointerEvents="none">
                   <View style={styles.maskSide} />
                 </View>
               </View>
             </View>
           )}
 
-          {/* 1. INFORMASI LOADING (Tepat di atas pesan informasi absensi) */}
-          {isProcessing && (
-            <Animatable.View animation="fadeIn" duration={200} style={styles.loadingInfoContainer}>
-              <ActivityIndicator color="#1E257F" size="small" style={{ marginRight: 8 }} />
-              <Text style={styles.loadingInfoText}>Memproses data presensi siswa...</Text>
-            </Animatable.View>
-          )}
-
-          {/* 2. PESAN INFORMASI ABSENSI (Yang tadinya berupa Alert bertombol OK) */}
-          {scanResult ? (
-            <Animatable.View
-              key={scanResult.id || scanResult.title + (scanResult.nama || '')}
-              animation="bounceIn"
-              duration={500}
-              style={[
-                styles.resultCard,
-                scanResult.type === 'success' && styles.resultCardSuccess,
-                scanResult.type === 'warning' && styles.resultCardWarning,
-                scanResult.type === 'info' && styles.resultCardInfo,
-                scanResult.type === 'error' && styles.resultCardError,
-              ]}
-            >
-              <View style={styles.resultCardHeader}>
-                <View style={styles.resultCardIconTitle}>
-                  {scanResult.type === 'success' && <CheckCircle size={22} color="#059669" />}
-                  {scanResult.type === 'warning' && <AlertTriangle size={22} color="#D97706" />}
-                  {scanResult.type === 'info' && <AlertCircle size={22} color="#2563EB" />}
-                  {scanResult.type === 'error' && <XCircle size={22} color="#DC2626" />}
-                  <Text style={[
-                    styles.resultCardTitle,
-                    scanResult.type === 'success' && { color: '#059669' },
-                    scanResult.type === 'warning' && { color: '#D97706' },
-                    scanResult.type === 'info' && { color: '#2563EB' },
-                    scanResult.type === 'error' && { color: '#DC2626' },
-                  ]}>
-                    {scanResult.title}
-                  </Text>
-                </View>
-                {scanResult.waktu && (
-                  <View style={styles.resultTimeBadge}>
-                    <Clock size={12} color="#1E257F" style={{ marginRight: 4 }} />
-                    <Text style={styles.resultTimeText}>{scanResult.waktu} WIB</Text>
-                  </View>
-                )}
-              </View>
-
-              {scanResult.nama ? (
-                <View style={styles.resultBody}>
-                  <Text style={styles.resultNama} numberOfLines={1}>{scanResult.nama}</Text>
-                  <View style={styles.resultMetaRow}>
-                    {scanResult.kelas && (
-                      <View style={styles.resultMetaBadge}>
-                        <Text style={styles.resultMetaBadgeText}>Kelas {scanResult.kelas}</Text>
-                      </View>
-                    )}
-                    {scanResult.status && (
-                      <View style={[
-                        styles.resultMetaBadge,
-                        scanResult.status.includes('Hadir') ? { backgroundColor: '#D1FAE5' } : { backgroundColor: '#FEF3C7' }
-                      ]}>
-                        <Text style={[
-                          styles.resultMetaBadgeText,
-                          scanResult.status.includes('Hadir') ? { color: '#065F46' } : { color: '#92400E' }
-                        ]}>
-                          {scanResult.status}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              ) : null}
-
-              {scanResult.message ? (
-                <Text style={styles.resultMessage}>{scanResult.message}</Text>
-              ) : null}
-            </Animatable.View>
-          ) : (
-            <View style={styles.resultPlaceholder}>
-              <QrCode size={18} color="#9CA3AF" style={{ marginRight: 8 }} />
-              <Text style={styles.resultPlaceholderText}>Siap memindai kartu QR siswa...</Text>
-            </View>
-          )}
+          {/* Placeholder Status Siap Memindai */}
+          <View style={styles.resultPlaceholder}>
+            <QrCode size={18} color="#1E257F" style={{ marginRight: 8 }} />
+            <Text style={styles.resultPlaceholderText}>Kamera Aktif • Siap memindai kartu QR siswa</Text>
+          </View>
 
           <View style={{ height: 40 }} />
         </ScrollView>
@@ -1661,16 +1523,16 @@ export default function PresensiSiswa() {
                       <View style={[
                         styles.statusPill,
                         isHadir ? { backgroundColor: '#ecfdf5', borderColor: '#a7f3d0' } :
-                        isTelat ? { backgroundColor: '#fef9c3', borderColor: '#fde047' } :
-                        isBolosAlfa ? { backgroundColor: '#fef2f2', borderColor: '#fecaca' } :
-                        { backgroundColor: '#fff7ed', borderColor: '#fed7aa' }
+                          isTelat ? { backgroundColor: '#fef9c3', borderColor: '#fde047' } :
+                            isBolosAlfa ? { backgroundColor: '#fef2f2', borderColor: '#fecaca' } :
+                              { backgroundColor: '#fff7ed', borderColor: '#fed7aa' }
                       ]}>
                         <Text style={[
                           styles.statusPillText,
                           isHadir ? { color: '#059669' } :
-                          isTelat ? { color: '#ca8a04' } :
-                          isBolosAlfa ? { color: '#dc2626' } :
-                          { color: '#ea580c' }
+                            isTelat ? { color: '#ca8a04' } :
+                              isBolosAlfa ? { color: '#dc2626' } :
+                                { color: '#ea580c' }
                         ]}>
                           {d.status}
                         </Text>
@@ -1757,7 +1619,7 @@ export default function PresensiSiswa() {
           {/* Filter Toolbar Card */}
           <View style={styles.rekapHeaderCard}>
             <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#374151', marginBottom: 8 }}>Filter Periode Peringatan:</Text>
-            
+
             {/* Filter Mode Chips */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingBottom: 4 }}>
               {[
@@ -2039,14 +1901,14 @@ export default function PresensiSiswa() {
                       <View style={[
                         styles.violationItemTag,
                         v.status === 'Terlambat' ? { backgroundColor: '#fef9c3' } :
-                        v.status === 'Bolos' ? { backgroundColor: '#fee2e2' } :
-                        { backgroundColor: '#ffe4e6' }
+                          v.status === 'Bolos' ? { backgroundColor: '#fee2e2' } :
+                            { backgroundColor: '#ffe4e6' }
                       ]}>
                         <Text style={[
                           styles.violationItemTagText,
                           v.status === 'Terlambat' ? { color: '#a16207' } :
-                          v.status === 'Bolos' ? { color: '#b91c1c' } :
-                          { color: '#be123c' }
+                            v.status === 'Bolos' ? { color: '#b91c1c' } :
+                              { color: '#be123c' }
                         ]}>
                           {v.status}
                         </Text>
@@ -2106,6 +1968,111 @@ export default function PresensiSiswa() {
         </View>
       </Modal>
 
+      {/* ================= MODAL FLOATING HASIL SCAN & LOADING TEPAT DI TENGAH-TENGAH LAYAR ================= */}
+      <Modal
+        visible={(!!scanResult || isProcessing) && currentTab === 'scan'}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => {
+          setScanResult(null);
+          setScanned(false);
+          setIsProcessing(false);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.floatingCenterOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            if (!isProcessing) {
+              setScanResult(null);
+              setScanned(false);
+            }
+          }}
+        >
+          <TouchableOpacity activeOpacity={1} style={{ width: '100%', maxWidth: 360, alignItems: 'center' }}>
+            {isProcessing ? (
+              <Animatable.View animation="zoomIn" duration={250} style={styles.floatingLoadingCard}>
+                <ActivityIndicator size="large" color="#1E257F" style={{ marginBottom: 14 }} />
+                <Text style={styles.floatingLoadingTitle}>Memproses Presensi Siswa...</Text>
+                <Text style={styles.floatingLoadingSubtitle}>Menyimpan catatan presensi ke sistem</Text>
+              </Animatable.View>
+            ) : scanResult ? (
+              <Animatable.View
+                key={scanResult.id || scanResult.title + (scanResult.nama || '')}
+                animation="zoomIn"
+                duration={300}
+                style={[
+                  styles.floatingResultCard,
+                  scanResult.type === 'success' && styles.floatingCardSuccess,
+                  scanResult.type === 'warning' && styles.floatingCardWarning,
+                  scanResult.type === 'info' && styles.floatingCardInfo,
+                  scanResult.type === 'error' && styles.floatingCardError,
+                ]}
+              >
+                {/* Big Centered Status Icon */}
+                <View style={styles.floatingIconContainer}>
+                  {scanResult.type === 'success' && <CheckCircle size={56} color="#059669" />}
+                  {scanResult.type === 'warning' && <AlertTriangle size={56} color="#D97706" />}
+                  {scanResult.type === 'info' && <AlertCircle size={56} color="#2563EB" />}
+                  {scanResult.type === 'error' && <XCircle size={56} color="#DC2626" />}
+                </View>
+
+                {/* Status Title */}
+                <Text style={[
+                  styles.floatingResultTitle,
+                  scanResult.type === 'success' && { color: '#059669' },
+                  scanResult.type === 'warning' && { color: '#D97706' },
+                  scanResult.type === 'info' && { color: '#2563EB' },
+                  scanResult.type === 'error' && { color: '#DC2626' },
+                ]}>
+                  {scanResult.title}
+                </Text>
+
+                {/* Nama Siswa */}
+                {scanResult.nama ? (
+                  <Text style={styles.floatingNamaSiswa} numberOfLines={2}>
+                    {scanResult.nama}
+                  </Text>
+                ) : null}
+
+                {/* Meta Badges: Kelas, Status, Waktu */}
+                <View style={styles.floatingMetaRow}>
+                  {scanResult.kelas ? (
+                    <View style={styles.floatingMetaBadge}>
+                      <Text style={styles.floatingMetaBadgeText}>Kelas {scanResult.kelas}</Text>
+                    </View>
+                  ) : null}
+                  {scanResult.status ? (
+                    <View style={[
+                      styles.floatingMetaBadge,
+                      scanResult.status.includes('Hadir') ? { backgroundColor: '#D1FAE5' } : { backgroundColor: '#FEF3C7' }
+                    ]}>
+                      <Text style={[
+                        styles.floatingMetaBadgeText,
+                        scanResult.status.includes('Hadir') ? { color: '#065F46' } : { color: '#92400E' }
+                      ]}>
+                        {scanResult.status}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {scanResult.waktu ? (
+                    <View style={styles.floatingTimeBadge}>
+                      <Clock size={13} color="#1E257F" style={{ marginRight: 4 }} />
+                      <Text style={styles.floatingTimeText}>{scanResult.waktu} WIB</Text>
+                    </View>
+                  ) : null}
+                </View>
+
+                {/* Pesan Keterangan */}
+                {scanResult.message ? (
+                  <Text style={styles.floatingMessageText}>{scanResult.message}</Text>
+                ) : null}
+              </Animatable.View>
+            ) : null}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
     </View>
   );
 }
@@ -2123,20 +2090,16 @@ const styles = StyleSheet.create({
   tabBtnActive: { backgroundColor: '#fff' },
   tabText: { color: '#9ca3af', fontWeight: 'bold', fontSize: 13 },
   tabTextActive: { color: '#2a2c87' },
-  
+
   content: { flex: 1, alignItems: 'center', paddingTop: 16 },
   scanScroll: { flex: 1 },
   scanScrollContent: { alignItems: 'center', paddingTop: 16, paddingHorizontal: 16 },
   infoBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#e0e7ff', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, gap: 8, marginBottom: 14, borderWidth: 1, borderColor: '#c7d2fe', width: 320, maxWidth: '100%' },
   infoBarText: { fontSize: 13, color: '#1e1b4b', flex: 1 },
-  scanHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 320, maxWidth: '100%', marginBottom: 12 },
-  scanTitle: { fontSize: 15, color: '#374151', fontWeight: '700' },
-  switchCameraBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECEEFF', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: '#C7D2FE' },
-  switchCameraBtnText: { fontSize: 12, fontWeight: '700', color: '#1E257F' },
   permissionBox: { padding: 24, backgroundColor: '#fff', borderRadius: 16, marginHorizontal: 20 },
   btnPrimary: { backgroundColor: '#1E257F', paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
   btnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
-  
+
   cameraWrapper: { width: 320, height: 380, borderRadius: 24, overflow: 'hidden', position: 'relative' },
   camera: { flex: 1 },
   cameraFloatingFlipBtn: { position: 'absolute', top: 12, right: 12, zIndex: 10, backgroundColor: 'rgba(0,0,0,0.5)', width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' },
@@ -2151,28 +2114,34 @@ const styles = StyleSheet.create({
   cornerBL: { bottom: 0, left: 0, borderBottomWidth: 4, borderLeftWidth: 4, borderBottomLeftRadius: 12 },
   cornerBR: { bottom: 0, right: 0, borderBottomWidth: 4, borderRightWidth: 4, borderBottomRightRadius: 12 },
   scanLaser: { width: '100%', height: 2, backgroundColor: '#10b981', shadowColor: '#10b981', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 1, shadowRadius: 4, elevation: 4 },
-  
+
   loadingInfoContainer: { width: 320, maxWidth: '100%', backgroundColor: '#ECEEFF', borderColor: '#C7D2FE', borderWidth: 1, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 14, marginBottom: 8 },
   loadingInfoText: { color: '#1E257F', fontWeight: '700', fontSize: 13 },
-  
-  resultCard: { width: 320, maxWidth: '100%', borderRadius: 16, padding: 14, marginTop: 8, borderWidth: 1.5, backgroundColor: '#FFFFFF', elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  resultCardSuccess: { borderColor: '#10B981', backgroundColor: '#F0FDF4' },
-  resultCardWarning: { borderColor: '#F59E0B', backgroundColor: '#FFFBEB' },
-  resultCardInfo: { borderColor: '#3B82F6', backgroundColor: '#EFF6FF' },
-  resultCardError: { borderColor: '#EF4444', backgroundColor: '#FEF2F2' },
-  resultCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  resultCardIconTitle: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  resultCardTitle: { fontSize: 13, fontWeight: '800', letterSpacing: 0.3 },
-  resultTimeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ECEEFF', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  resultTimeText: { fontSize: 11, fontWeight: '700', color: '#1E257F' },
-  resultBody: { marginTop: 4, marginBottom: 6 },
-  resultNama: { fontSize: 16, fontWeight: '800', color: '#1F2937' },
-  resultMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
-  resultMetaBadge: { backgroundColor: '#E5E7EB', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
-  resultMetaBadgeText: { fontSize: 11, fontWeight: '700', color: '#374151' },
-  resultMessage: { fontSize: 12, color: '#4B5563', lineHeight: 17, marginTop: 2 },
-  resultPlaceholder: { width: 320, maxWidth: '100%', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: '#E5E7EB', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 10 },
-  resultPlaceholderText: { fontSize: 13, color: '#9CA3AF', fontWeight: '600' },
+
+  resultPlaceholder: { width: 320, maxWidth: '100%', paddingVertical: 14, paddingHorizontal: 16, backgroundColor: '#FFFFFF', borderRadius: 14, borderWidth: 1, borderColor: '#C7D2FE', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  resultPlaceholderText: { fontSize: 13, color: '#1E257F', fontWeight: '600' },
+
+  // FLOATING CENTER OVERLAY & RESULT CARD STYLES
+  floatingCenterOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.65)', justifyContent: 'center', alignItems: 'center', padding: 24, zIndex: 99999, elevation: 25 },
+  floatingLoadingCard: { width: '100%', maxWidth: 340, backgroundColor: '#FFFFFF', borderRadius: 24, paddingVertical: 32, paddingHorizontal: 24, alignItems: 'center', elevation: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.25, shadowRadius: 16 },
+  floatingLoadingTitle: { fontSize: 17, fontWeight: '800', color: '#1E257F', marginBottom: 4 },
+  floatingLoadingSubtitle: { fontSize: 13, color: '#6B7280' },
+
+  floatingResultCard: { width: '100%', maxWidth: 360, backgroundColor: '#FFFFFF', borderRadius: 24, padding: 24, alignItems: 'center', borderWidth: 2, elevation: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 20 },
+  floatingCardSuccess: { borderColor: '#10B981' },
+  floatingCardWarning: { borderColor: '#F59E0B' },
+  floatingCardInfo: { borderColor: '#3B82F6' },
+  floatingCardError: { borderColor: '#EF4444' },
+  floatingIconContainer: { marginBottom: 12 },
+  floatingResultTitle: { fontSize: 18, fontWeight: '800', letterSpacing: 0.5, textAlign: 'center', marginBottom: 8 },
+  floatingNamaSiswa: { fontSize: 20, fontWeight: 'bold', color: '#111827', textAlign: 'center', marginBottom: 12 },
+  floatingMetaRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8, marginBottom: 12 },
+  floatingMetaBadge: { backgroundColor: '#F3F4F6', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  floatingMetaBadgeText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+  floatingTimeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  floatingTimeText: { fontSize: 12, fontWeight: '700', color: '#1E257F' },
+  floatingMessageText: { fontSize: 13, color: '#4B5563', textAlign: 'center', lineHeight: 18, marginBottom: 4 },
+
 
   processingBadge: { position: 'absolute', bottom: 40, backgroundColor: '#10b981', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 30, flexDirection: 'row', alignItems: 'center' },
 
@@ -2182,14 +2151,14 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: '#2a2c87' },
   chipText: { fontSize: 14, color: '#4b5563', fontWeight: '500' },
   chipTextActive: { color: '#fff' },
-  
+
   bulkActionBox: { backgroundColor: '#fff', padding: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
   chipStatus: { flex: 1, paddingVertical: 8, borderRadius: 8, backgroundColor: '#f3f4f6', alignItems: 'center' },
   chipStatusActive: { backgroundColor: '#eef2ff', borderWidth: 1, borderColor: '#4f46e5' },
   chipStatusText: { fontSize: 13, color: '#6b7280', fontWeight: '500' },
   chipStatusTextActive: { color: '#4f46e5', fontWeight: 'bold' },
   inputField: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 10, marginBottom: 12 },
-  
+
   siswaList: { padding: 16, paddingBottom: 40 },
   selectAllBtn: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, backgroundColor: '#fff', padding: 12, borderRadius: 12 },
   siswaCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 16, borderRadius: 12, marginBottom: 8 },

@@ -31,6 +31,8 @@ export default function CbtJadwalSiswa() {
   const [sesiMap, setSesiMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [filterTab, setFilterTab] = useState('semua');
+  const [isStudentActive, setIsStudentActive] = useState(true);
+  const [statusKeaktifan, setStatusKeaktifan] = useState('Aktif');
 
   // State Review Lembar Koreksi Soal
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -63,11 +65,16 @@ export default function CbtJadwalSiswa() {
         .eq('id', parsedSiswa.id)
         .maybeSingle();
 
-      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+      const isAktif = (dbSiswa?.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+      if (!dbSiswa || !isAktif) {
+        setIsStudentActive(false);
+        setStatusKeaktifan(dbSiswa?.status_keaktifan || 'Nonaktif');
         setJadwalList([]);
         setLoading(false);
         return;
       }
+      setIsStudentActive(true);
+      setStatusKeaktifan('Aktif');
 
       const kelasSiswa = dbSiswa?.kelas || parsedSiswa.kelas || '';
 
@@ -104,8 +111,10 @@ export default function CbtJadwalSiswa() {
         .eq('siswa_id', parsedSiswa.id);
 
       const pRuangMap = new Map();
+      let defaultPRuang = null;
       (pRuangData || []).forEach((pr) => {
         pRuangMap.set(Number(pr.jadwal_id), pr);
+        if (!defaultPRuang) defaultPRuang = pr;
       });
       const allocatedJadwalIds = Array.from(pRuangMap.keys());
 
@@ -164,6 +173,7 @@ export default function CbtJadwalSiswa() {
           if (!pRuangMap.has(Number(j.id))) return false;
         }
 
+
         // B. Riwayat Ujian Selesai / Sedang Dikerjakan (selalu tampil)
         if (sesi?.status === 'selesai' || sesi?.status === 'mengerjakan' || sesi?.status === 'diblokir') {
           return true;
@@ -176,7 +186,7 @@ export default function CbtJadwalSiswa() {
 
         return true;
       }).map((j) => {
-        const pr = pRuangMap.get(Number(j.id));
+        const pr = pRuangMap.get(Number(j.id)) || defaultPRuang;
         // Cari bank soal yang cocok untuk tingkat kelas siswa
         const matchedBank = (availableBanks || []).find(b =>
           Number(b.mapel_id) === Number(j.mapel_id) &&
@@ -380,6 +390,20 @@ export default function CbtJadwalSiswa() {
         <div className="flex flex-col items-center justify-center p-16 bg-white rounded-3xl border border-gray-100 shadow-sm">
           <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
           <p className="mt-4 text-xs font-semibold text-gray-500">Memuat data jadwal ujian CBT...</p>
+        </div>
+      ) : !isStudentActive ? (
+        <div className="bg-rose-50 border-2 border-rose-200 rounded-3xl p-8 text-center max-w-2xl mx-auto shadow-sm">
+          <div className="w-16 h-16 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center mx-auto mb-4">
+            <XCircle size={36} />
+          </div>
+          <h3 className="text-xl font-bold text-rose-900 mb-2">Akses Ujian Tidak Tersedia</h3>
+          <p className="text-sm text-rose-700 leading-relaxed mb-4">
+            Status akun siswa Anda saat ini adalah <span className="font-bold underline uppercase">{statusKeaktifan}</span>.
+            Sesuai ketentuan, hanya siswa dengan status keaktifan <strong>Aktif</strong> yang berhak mengikuti ujian CBT.
+          </p>
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-rose-700 bg-white px-4 py-2 rounded-xl border border-rose-200 shadow-sm">
+            Silakan hubungi pihak sekolah / Tata Usaha jika terdapat kekeliruan data status keaktifan Anda.
+          </div>
         </div>
       ) : filteredJadwal.length === 0 ? (
         <div className="flex flex-col items-center justify-center p-16 bg-white rounded-3xl border border-gray-100 shadow-sm text-center">

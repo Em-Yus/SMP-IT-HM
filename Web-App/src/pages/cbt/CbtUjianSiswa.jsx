@@ -530,11 +530,12 @@ export default function CbtUjianSiswa() {
         .maybeSingle();
 
       // Validasi status keaktifan siswa (Hanya siswa Aktif yang boleh mengakses ujian CBT)
-      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
+      const isAktif = (dbSiswa?.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+      if (!dbSiswa || !isAktif) {
         Swal.fire({
           icon: 'error',
           title: 'Akses Ujian Ditolak',
-          text: `Akun siswa Anda saat ini berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang berhak mengakses dan mengerjakan ujian CBT.`,
+          text: `Akun siswa Anda saat ini berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Sesuai ketentuan, hanya siswa berstatus "Aktif" yang berhak mengakses dan mengerjakan ujian CBT.`,
           confirmButtonText: 'Kembali ke Dashboard',
           confirmButtonColor: '#2a2c87',
           allowOutsideClick: false,
@@ -1083,6 +1084,19 @@ export default function CbtUjianSiswa() {
         if (createErr) throw createErr;
         setSesiSiswa(newSesi);
       } else {
+        if (checkSesi.status === 'belum_mulai') {
+          const initialSeconds = checkSesi.sisa_detik || (jadwal.durasi_menit || 90) * 60;
+          await supabase
+            .from('cbt_sesi_siswa')
+            .update({
+              status: 'mengerjakan',
+              waktu_mulai: checkSesi.waktu_mulai || new Date().toISOString(),
+              sisa_detik: initialSeconds,
+            })
+            .eq('id', checkSesi.id);
+          checkSesi.status = 'mengerjakan';
+          checkSesi.sisa_detik = initialSeconds;
+        }
         setSesiSiswa(checkSesi);
       }
 

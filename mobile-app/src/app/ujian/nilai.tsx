@@ -122,7 +122,12 @@ export default function UjianNilai() {
           targetKelas = kRow.nama_kelas;
         }
       }
-      let siswaQuery = supabase.from('data_siswa').select('id, nama, nipd, nisn, kelas').order('nama', { ascending: true });
+      let siswaQuery = supabase
+        .from('data_siswa')
+        .select('id, nama, nipd, nisn, kelas, status_keaktifan')
+        .eq('status_keaktifan', 'Aktif')
+        .neq('kelas', 'Calon Siswa')
+        .order('nama', { ascending: true });
       if (targetKelas) {
         siswaQuery = siswaQuery.eq('kelas', targetKelas);
       }
@@ -133,7 +138,7 @@ export default function UjianNilai() {
         .from('cbt_sesi_siswa')
         .select(`
           *,
-          data_siswa(id, nama, nipd, nisn, kelas)
+          data_siswa(id, nama, nipd, nisn, kelas, status_keaktifan)
         `)
         .eq('jadwal_id', jId);
 
@@ -144,14 +149,14 @@ export default function UjianNilai() {
         sesiMap[s.siswa_id] = s;
       });
 
-      // Kumpulkan siswa: gabungkan siswa dari kelas target dan siswa yang sudah ada sesi ujiannya
+      // Kumpulkan siswa: gabungkan siswa aktif dari kelas target dan siswa aktif yang sudah ada sesi ujiannya
       const studentMap = new Map();
       (allSiswa || []).forEach(sw => {
         studentMap.set(Number(sw.id), sw);
       });
 
       (sesiData || []).forEach(s => {
-        if (s.data_siswa) {
+        if (s.data_siswa && (s.data_siswa.status_keaktifan || '').trim().toLowerCase() === 'aktif' && s.data_siswa.kelas !== 'Calon Siswa') {
           const matchKelas = targetKelas
             ? (s.data_siswa.kelas || '').trim().toLowerCase() === targetKelas.trim().toLowerCase()
             : true;

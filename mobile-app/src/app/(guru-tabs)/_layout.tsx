@@ -59,9 +59,9 @@ export default function GuruTabLayout() {
           ),
           tabBarIcon: () => (
             <View style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
+              width: 72,
+              height: 72,
+              borderRadius: 36,
               backgroundColor: '#1E257F',
               justifyContent: 'center',
               alignItems: 'center',
@@ -74,7 +74,7 @@ export default function GuruTabLayout() {
               borderWidth: 4,
               borderColor: '#ffffff',
             }}>
-              <LayoutGrid size={28} color="#ffffff" />
+              <LayoutGrid size={36} color="#ffffff" />
             </View>
           ),
         }}

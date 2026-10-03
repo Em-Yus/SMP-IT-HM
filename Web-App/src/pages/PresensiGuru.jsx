@@ -5,31 +5,57 @@ import {
   Clock, Search, Save, Calendar, CheckCircle, XCircle, AlertCircle, 
   RefreshCw, Download, UserCheck, FileText, QrCode, DollarSign, 
   Camera, Sparkles, LogIn, LogOut, ChevronLeft, ChevronRight, 
-  Edit3, X, Eye, BookOpen, Award, ShieldCheck, AlertTriangle
+  Edit3, X, Eye, BookOpen, Award, ShieldCheck, AlertTriangle, SwitchCamera
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { getOperationalDate, getOperationalDayName, getOperationalDayIndex, getLocalDate } from '../utils/dateUtils';
 
-// Sub-component QR Scanner with Html5Qrcode
+// Sub-component QR Scanner with Html5Qrcode & Camera Switching
 function QrScannerModal({ isOpen, onClose, onScan, isProcessing }) {
   const qrCodeId = useRef(`qr-teacher-scanner-${Date.now()}`);
   const onScanRef = useRef(onScan);
   const isProcessingRef = useRef(isProcessing);
+
+  const [cameraFacing, setCameraFacing] = useState('environment'); // 'environment' | 'user'
+  const [cameraList, setCameraList] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [isSwitching, setIsSwitching] = useState(false);
+  const [scannerError, setScannerError] = useState('');
 
   useEffect(() => {
     onScanRef.current = onScan;
     isProcessingRef.current = isProcessing;
   }, [onScan, isProcessing]);
 
+  // Muat daftar kamera yang tersedia saat modal terbuka
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+    Html5Qrcode.getCameras().then(devices => {
+      if (isMounted && devices && devices.length > 0) {
+        setCameraList(devices);
+      }
+    }).catch(err => {
+      console.warn("Could not list teacher scanner cameras:", err);
+    });
+    return () => { isMounted = false; };
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
 
     let scannerInstance = null;
-    let isStopped = false;
+    let isMounted = true;
+    setIsSwitching(true);
+    setScannerError('');
 
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
       try {
+        const el = document.getElementById(qrCodeId.current);
+        if (!el) return;
+        el.innerHTML = '';
+
         scannerInstance = new Html5Qrcode(qrCodeId.current);
         const config = {
           fps: 10,
@@ -37,26 +63,41 @@ function QrScannerModal({ isOpen, onClose, onScan, isProcessing }) {
           formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
         };
 
-        scannerInstance.start(
-          { facingMode: "environment" },
-          config,
-          (decodedText) => {
-            if (!isProcessingRef.current && onScanRef.current) {
-              onScanRef.current(decodedText);
-            }
-          },
-          () => {}
-        ).catch(err => {
-          console.warn("Scanner camera error:", err);
-        });
+        let cameraTarget;
+        if (selectedCameraId) {
+          cameraTarget = { deviceId: { exact: selectedCameraId } };
+        } else {
+          cameraTarget = { facingMode: cameraFacing };
+        }
+
+        const handleSuccess = (decodedText) => {
+          if (!isProcessingRef.current && onScanRef.current) {
+            onScanRef.current(decodedText);
+          }
+        };
+
+        try {
+          await scannerInstance.start(cameraTarget, config, handleSuccess, () => {});
+        } catch (firstErr) {
+          console.warn("Camera start failed, trying fallback user camera:", firstErr);
+          try {
+            await scannerInstance.start({ facingMode: "user" }, config, handleSuccess, () => {});
+          } catch (secondErr) {
+            console.error("All camera starts failed:", secondErr);
+            if (isMounted) setScannerError('Gagal mengakses kamera.');
+          }
+        }
       } catch (err) {
         console.error("Failed to init Html5Qrcode:", err);
+        if (isMounted) setScannerError('Kamera tidak dapat diinisialisasi.');
+      } finally {
+        if (isMounted) setIsSwitching(false);
       }
-    }, 150);
+    }, 120);
 
     return () => {
+      isMounted = false;
       clearTimeout(timer);
-      isStopped = true;
       if (scannerInstance) {
         try {
           if (scannerInstance.isScanning || scannerInstance.getState() === 2) {
@@ -69,7 +110,27 @@ function QrScannerModal({ isOpen, onClose, onScan, isProcessing }) {
         }
       }
     };
-  }, [isOpen]);
+  }, [isOpen, cameraFacing, selectedCameraId]);
+
+  const handleSwitchCamera = () => {
+    if (isSwitching) return;
+    if (cameraList.length > 1) {
+      const currentIndex = cameraList.findIndex(c => c.id === selectedCameraId);
+      const nextIndex = (currentIndex + 1) % cameraList.length;
+      setSelectedCameraId(cameraList[nextIndex].id);
+    } else {
+      setSelectedCameraId('');
+      setCameraFacing(prev => prev === 'environment' ? 'user' : 'environment');
+    }
+  };
+
+  const getCameraLabel = () => {
+    if (selectedCameraId) {
+      const found = cameraList.find(c => c.id === selectedCameraId);
+      if (found) return found.label || `Kamera ${cameraList.indexOf(found) + 1}`;
+    }
+    return cameraFacing === 'environment' ? 'Kamera Belakang' : 'Kamera Depan';
+  };
 
   if (!isOpen) return null;
 
@@ -82,21 +143,71 @@ function QrScannerModal({ isOpen, onClose, onScan, isProcessing }) {
             <Camera size={20} className="text-amber-300" />
             <h3 className="font-bold text-sm">Pindai QR Presensi Guru</h3>
           </div>
-          <button 
-            type="button" 
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-white/20 text-white transition"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSwitchCamera}
+              disabled={isSwitching || isProcessing}
+              className="px-2.5 py-1 bg-white/20 hover:bg-white/30 active:scale-95 rounded-xl text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Beralih Kamera"
+            >
+              <SwitchCamera size={14} className={isSwitching ? 'animate-spin' : ''} />
+              <span className="hidden sm:inline">Beralih Kamera</span>
+            </button>
+            <button 
+              type="button" 
+              onClick={onClose}
+              className="p-1 rounded-lg hover:bg-white/20 text-white transition cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Video Viewport */}
-        <div className="p-4 bg-gray-900 flex flex-col items-center">
+        <div className="p-4 bg-gray-900 flex flex-col items-center relative">
           <div 
             id={qrCodeId.current} 
-            className="w-full min-h-[280px] bg-black rounded-2xl overflow-hidden relative shadow-inner"
+            className="w-full min-h-[280px] bg-black rounded-2xl overflow-hidden relative shadow-inner [&_video]:w-full [&_video]:h-full [&_video]:object-cover"
           />
+
+          {/* Camera Info Pill */}
+          <div className="absolute top-6 left-6 pointer-events-none">
+            <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2.5 py-1 rounded-full border border-white/10 shadow">
+              {getCameraLabel()}
+            </span>
+          </div>
+
+          {/* Quick Switch Button on mobile overlay */}
+          <div className="absolute top-6 right-6">
+            <button
+              type="button"
+              onClick={handleSwitchCamera}
+              disabled={isSwitching || isProcessing}
+              className="bg-white/90 hover:bg-white text-gray-800 p-2 rounded-full shadow-lg border border-gray-200 cursor-pointer active:scale-90 transition disabled:opacity-50"
+              title="Beralih Kamera"
+            >
+              <SwitchCamera size={16} className={`text-primary ${isSwitching ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {cameraList.length > 1 && (
+            <div className="w-full mt-2">
+              <select
+                value={selectedCameraId}
+                onChange={(e) => setSelectedCameraId(e.target.value)}
+                className="w-full bg-gray-800 text-gray-200 text-xs px-2.5 py-1 rounded-lg border border-gray-700 outline-none"
+              >
+                <option value="">Otomatis ({cameraFacing === 'environment' ? 'Kamera Belakang' : 'Kamera Depan'})</option>
+                {cameraList.map((cam, idx) => (
+                  <option key={cam.id || idx} value={cam.id}>
+                    {cam.label || `Kamera ${idx + 1}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="mt-3 text-center">
             <p className="text-xs font-semibold text-gray-300 flex items-center justify-center gap-1.5">
               <Sparkles size={14} className="text-amber-400" />

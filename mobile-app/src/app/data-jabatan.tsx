@@ -52,7 +52,9 @@ export const menusConfig = [
       { to: "/tagihan-siswa", label: "Tagihan Siswa" },
       { to: "/rekap-bayar", label: "Rekap Bayar" },
       { to: "/input-biaya-pengembangan-mutu", label: "Biaya Pengembangan Mutu" },
-      { to: "/pemasukan-lainnya", label: "Pemasukan Lainnya" }
+      { to: "/pemasukan-lainnya", label: "Pemasukan Lainnya" },
+      { to: "/pengeluaran", label: "Pengeluaran" },
+      { to: "/rekap-keuangan", label: "Rekap Keuangan" }
     ]
   },
   {

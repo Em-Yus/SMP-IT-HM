@@ -89,7 +89,7 @@ export default function CbtDaftarHadirPrint({ type = 'peserta' }) {
       }
 
       // Ambil Siswa Peserta Ujian: Prioritas dari cbt_peserta_ruang, fallback ke data_siswa
-      const { data: pRuangData } = await supabase
+      let { data: pRuangData } = await supabase
         .from('cbt_peserta_ruang')
         .select(`
           id,
@@ -102,9 +102,32 @@ export default function CbtDaftarHadirPrint({ type = 'peserta' }) {
         .eq('jadwal_id', jadwalId)
         .order('nomor_meja', { ascending: true, nullsFirst: false });
 
+      if (!pRuangData || pRuangData.length === 0) {
+        const { data: latestPR } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('jadwal_id')
+          .order('id', { ascending: false })
+          .limit(1);
+        if (latestPR && latestPR.length > 0) {
+          const { data: fbData } = await supabase
+            .from('cbt_peserta_ruang')
+            .select(`
+              id,
+              siswa_id,
+              ruang_id,
+              nomor_meja,
+              data_ruang(id, nama_ruang),
+              data_siswa:siswa_id(id, nama, nisn, nipd, kelas, status_keaktifan)
+            `)
+            .eq('jadwal_id', latestPR[0].jadwal_id)
+            .order('nomor_meja', { ascending: true, nullsFirst: false });
+          if (fbData && fbData.length > 0) pRuangData = fbData;
+        }
+      }
+
       if (pRuangData && pRuangData.length > 0) {
         const mapped = pRuangData
-          .filter((p) => p.data_siswa && (!p.data_siswa.status_keaktifan || p.data_siswa.status_keaktifan === 'Aktif'))
+          .filter((p) => p.data_siswa && (p.data_siswa.status_keaktifan || '').trim().toLowerCase() === 'aktif' && p.data_siswa.kelas !== 'Calon Siswa')
           .map((p) => ({
             ...p.data_siswa,
             ruang_nama: p.data_ruang?.nama_ruang || jRes.data?.data_ruang?.nama_ruang || 'Lab CBT',

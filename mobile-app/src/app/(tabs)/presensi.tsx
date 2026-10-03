@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  View, Text, StyleSheet, ScrollView, ActivityIndicator, 
-  TouchableOpacity, DeviceEventEmitter, ToastAndroid, Platform, Modal 
+import {
+  View, Text, StyleSheet, ScrollView, ActivityIndicator,
+  TouchableOpacity, DeviceEventEmitter, ToastAndroid, Platform, Modal
 } from 'react-native';
 import { supabase } from '../../../services/supabaseClient';
-import { 
-  UserCheck, UserX, UserMinus, ChevronLeft, ChevronRight, 
+import {
+  UserCheck, UserX, UserMinus, ChevronLeft, ChevronRight,
   CalendarCheck, Calendar, Filter, Clock, Award, ShieldAlert,
   AlertCircle, RefreshCw, Check
 } from 'lucide-react-native';
@@ -72,7 +72,7 @@ export default function PresensiScreen() {
 
   useEffect(() => {
     loadUserAndFetch();
-  
+
     const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
       console.log('Global refresh triggered in (tabs)/presensi.tsx');
       if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
@@ -97,7 +97,7 @@ export default function PresensiScreen() {
       monday.setDate(now.getDate() + diffToMonday);
       const sunday = new Date(monday);
       sunday.setDate(monday.getDate() + 6);
-      
+
       const startDate = monday.toISOString().split('T')[0];
       const endDate = sunday.toISOString().split('T')[0];
       const label = `${monday.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })} - ${sunday.toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`;
@@ -129,7 +129,7 @@ export default function PresensiScreen() {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const localUserStr = await AsyncStorage.getItem('user_siswa');
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       let user = null;
       if (localUserStr) {
         user = JSON.parse(localUserStr);
@@ -164,12 +164,12 @@ export default function PresensiScreen() {
         .gte('tanggal', dateRange.startDate)
         .lte('tanggal', dateRange.endDate)
         .order('tanggal', { ascending: false });
-        
+
       if (error) throw error;
 
       const list = data || [];
       setPresensiData(list);
-      
+
       let h = 0, disp = 0, i = 0, s = 0, t = 0, b = 0, a = 0;
       list.forEach((p: any) => {
         const status = (p.status || '').toLowerCase();
@@ -181,7 +181,7 @@ export default function PresensiScreen() {
         else if (status.includes('bolos')) b++;
         else a++;
       });
-      
+
       setStats({
         hadir: h,
         dispensasi: disp,
@@ -191,7 +191,7 @@ export default function PresensiScreen() {
         bolos: b,
         alfa: a
       });
-      
+
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -232,7 +232,7 @@ export default function PresensiScreen() {
     if (s.includes('bolos')) return '#6366f1'; // indigo
     return '#ef4444'; // red
   };
-  
+
   const getStatusIcon = (status: string, color: string) => {
     const s = (status || '').toLowerCase();
     if (s.includes('dispensasi')) return <Award size={20} color={color} />;
@@ -264,8 +264,8 @@ export default function PresensiScreen() {
                 Periode: <Text style={{ color: '#84D43F', fontWeight: 'bold' }}>{dateRange.label}</Text>
               </Text>
             </View>
-            <TouchableOpacity 
-              style={styles.refreshBtn} 
+            <TouchableOpacity
+              style={styles.refreshBtn}
               onPress={() => loadUserAndFetch()}
               disabled={loading}
               activeOpacity={0.7}
@@ -327,8 +327,8 @@ export default function PresensiScreen() {
                   <Text style={styles.navLabel} numberOfLines={1}>
                     {filterWeekOffset === 0 ? 'Minggu Ini' : `${Math.abs(filterWeekOffset)} Mgg Lalu`}
                   </Text>
-                  <TouchableOpacity 
-                    style={[styles.navArrowBtn, filterWeekOffset >= 0 && { opacity: 0.4 }]} 
+                  <TouchableOpacity
+                    style={[styles.navArrowBtn, filterWeekOffset >= 0 && { opacity: 0.4 }]}
                     onPress={() => setFilterWeekOffset(prev => prev + 1)}
                     disabled={filterWeekOffset >= 0}
                   >
@@ -338,8 +338,8 @@ export default function PresensiScreen() {
               )}
 
               {filterMode === 'bulanan' && (
-                <TouchableOpacity 
-                  style={styles.monthSelectorBtn} 
+                <TouchableOpacity
+                  style={styles.monthSelectorBtn}
                   onPress={() => setShowMonthModal(true)}
                   activeOpacity={0.8}
                 >
@@ -349,8 +349,8 @@ export default function PresensiScreen() {
               )}
 
               {filterMode === 'semester' && (
-                <TouchableOpacity 
-                  style={styles.monthSelectorBtn} 
+                <TouchableOpacity
+                  style={styles.monthSelectorBtn}
                   onPress={() => setShowSemesterModal(true)}
                   activeOpacity={0.8}
                 >
@@ -376,8 +376,8 @@ export default function PresensiScreen() {
       </LinearGradient>
 
       {/* KONTEN UTAMA */}
-      <ScrollView 
-        contentContainerStyle={styles.contentContainer} 
+      <ScrollView
+        contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={false}
       >
         {/* 1. INFORMASI PADA BAGIAN PALING ATAS HALAMAN (KARTU STATISTIK + INFORMASI DISPENSASI) */}
@@ -476,9 +476,9 @@ export default function PresensiScreen() {
             const color = getStatusColor(item.status || '');
             const isDisp = (item.status || '').toLowerCase().includes('dispensasi');
             return (
-              <Animatable.View 
-                key={`presensi-${item.id || idx}`} 
-                animation="fadeInUp" 
+              <Animatable.View
+                key={`presensi-${item.id || idx}`}
+                animation="fadeInUp"
                 delay={idx * 30}
                 duration={350}
               >
@@ -517,9 +517,9 @@ export default function PresensiScreen() {
         animationType="fade"
         onRequestClose={() => setShowStatusModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowStatusModal(false)}
         >
           <View style={styles.modalCard}>
@@ -554,9 +554,9 @@ export default function PresensiScreen() {
         animationType="fade"
         onRequestClose={() => setShowMonthModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowMonthModal(false)}
         >
           <View style={styles.modalCard}>
@@ -593,9 +593,9 @@ export default function PresensiScreen() {
         animationType="fade"
         onRequestClose={() => setShowSemesterModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowSemesterModal(false)}
         >
           <View style={styles.modalCard}>

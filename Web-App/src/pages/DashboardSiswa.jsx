@@ -275,7 +275,7 @@ export default function DashboardSiswa() {
           .eq('id', u.id)
           .maybeSingle();
 
-        if (dbCheckSiswa?.status_keaktifan && dbCheckSiswa.status_keaktifan.toLowerCase() !== 'aktif') {
+        if (!dbCheckSiswa || (dbCheckSiswa.status_keaktifan || '').trim().toLowerCase() !== 'aktif') {
           setActiveExam(null);
           return;
         }

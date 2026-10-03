@@ -7,7 +7,7 @@ import {
   Trash2, Video, Award, FileText, CheckCircle2, AlertTriangle, AlertCircle,
   FileCheck, Printer, ArrowUpDown, Filter, LayoutGrid, List,
   Settings, Eye, ShieldCheck, X, Building, Shuffle, Check,
-  Search, RotateCcw, ChevronDown
+  Search, RotateCcw, ChevronDown, UserCheck
 } from 'lucide-react';
 import CbtPengaturanUjianModal from '../../components/cbt/CbtPengaturanUjianModal';
 import { getOperationalDate, getOperationalDayName, getLocalDate } from '../../utils/dateUtils';
@@ -200,6 +200,7 @@ export default function CbtJadwalUjian() {
   // States Pengaturan Ruang Peserta
   const [isRuangPesertaModalOpen, setIsRuangPesertaModalOpen] = useState(false);
   const [targetJadwalForRuang, setTargetJadwalForRuang] = useState(null);
+  const [applyToAllJadwal, setApplyToAllJadwal] = useState(true);
   const [modeRuang, setModeRuang] = useState('default'); // 'default' | 'acak' | 'custom'
   const [selectedActiveRuangIds, setSelectedActiveRuangIds] = useState([]);
   const [siswaPesertaList, setSiswaPesertaList] = useState([]);
@@ -209,6 +210,21 @@ export default function CbtJadwalUjian() {
   const [savingRuangPeserta, setSavingRuangPeserta] = useState(false);
   const [searchSiswaRuang, setSearchSiswaRuang] = useState('');
   const [filterKelasRuang, setFilterKelasRuang] = useState('Semua');
+
+  // States Pengaturan Pengawas Setiap Ruangan
+  const [isPengawasRuangModalOpen, setIsPengawasRuangModalOpen] = useState(false);
+  const [targetJadwalForPengawas, setTargetJadwalForPengawas] = useState(null);
+  const [pengawasRuangList, setPengawasRuangList] = useState([]);
+  const [loadingPengawasRuang, setLoadingPengawasRuang] = useState(false);
+  const [savingPengawasRuang, setSavingPengawasRuang] = useState(false);
+  const [globalPengawasId, setGlobalPengawasId] = useState('');
+  const [jadwalPengawasRuangMap, setJadwalPengawasRuangMap] = useState({});
+
+  // States Modal Pilih Ruangan Sebelum Masuk Pengawasan Ujian
+  const [isPilihRuangAwasiModalOpen, setIsPilihRuangAwasiModalOpen] = useState(false);
+  const [targetJadwalForAwasi, setTargetJadwalForAwasi] = useState(null);
+  const [selectedRuangIdForAwasi, setSelectedRuangIdForAwasi] = useState('');
+  const [availableRuangForAwasi, setAvailableRuangForAwasi] = useState([]);
 
   // Modal Pilih Kelas (Untuk Tombol Soal Ujian)
   const [isKelasModalOpen, setIsKelasModalOpen] = useState(false);
@@ -241,6 +257,8 @@ export default function CbtJadwalUjian() {
     skema_konversi: 'asli',
     menit_tombol_selesai_aktif: 15,
   });
+
+
 
   useEffect(() => {
     initPage();
@@ -327,6 +345,25 @@ export default function CbtJadwalUjian() {
       if (ruangRes.data) setRuangList(ruangRes.data);
       if (bankRes.data) setBankSoalList(bankRes.data);
       if (pemRes.data) setPembelajaranList(pemRes.data);
+
+      // Fetch penugasan pengawas per ruangan dari cbt_berita_acara
+      const { data: baData } = await supabase
+        .from('cbt_berita_acara')
+        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama), data_ruang(id, nama_ruang)');
+
+      const pMap = {};
+      (baData || []).forEach((item) => {
+        if (item.jadwal_id && item.pengawas_guru_id) {
+          if (!pMap[item.jadwal_id]) pMap[item.jadwal_id] = [];
+          pMap[item.jadwal_id].push({
+            ruang_id: item.ruang_id,
+            nama_ruang: item.data_ruang?.nama_ruang || `Ruang ${item.ruang_id}`,
+            guru_id: item.pengawas_guru_id,
+            guru_nama: item.data_guru?.nama || '-'
+          });
+        }
+      });
+      setJadwalPengawasRuangMap(pMap);
     } catch (err) {
       console.error('Error fetching initial data:', err);
     }
@@ -933,6 +970,7 @@ export default function CbtJadwalUjian() {
       return;
     }
     setTargetJadwalForRuang(target);
+    setApplyToAllJadwal(true);
     setIsRuangPesertaModalOpen(true);
     setLoadingRuangPeserta(true);
 
@@ -948,10 +986,23 @@ export default function CbtJadwalUjian() {
       const allSiswa = sData || [];
       setSiswaPesertaList(allSiswa);
 
-      const { data: existingAlloc } = await supabase
+      // Coba ambil alokasi untuk target spesifik terlebih dahulu
+      let { data: existingAlloc } = await supabase
         .from('cbt_peserta_ruang')
-        .select('siswa_id, ruang_id')
+        .select('siswa_id, ruang_id, jadwal_id')
         .eq('jadwal_id', target.id);
+
+      // Jika jadwal spesifik ini belum memiliki alokasi, cari alokasi yang sudah pernah diatur dari jadwal mana pun
+      if (!existingAlloc || existingAlloc.length === 0) {
+        const { data: anyAlloc } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('siswa_id, ruang_id, jadwal_id')
+          .order('id', { ascending: false });
+        if (anyAlloc && anyAlloc.length > 0) {
+          const fallbackJId = anyAlloc[0].jadwal_id;
+          existingAlloc = anyAlloc.filter(a => a.jadwal_id === fallbackJId);
+        }
+      }
 
       const currentMode = target.mode_ruang || 'default';
       setModeRuang(currentMode);
@@ -1014,36 +1065,56 @@ export default function CbtJadwalUjian() {
   };
 
   const handleSavePengaturanRuang = async () => {
-    if (!targetJadwalForRuang?.id) return;
+    if (!targetJadwalForRuang?.id && (!jadwalList || jadwalList.length === 0)) return;
     try {
       setSavingRuangPeserta(true);
 
+      const targetJadwalIds = applyToAllJadwal
+        ? (jadwalList || []).map((j) => j.id)
+        : [targetJadwalForRuang.id];
+
+      // Update mode_ruang di cbt_jadwal_ujian
       await supabase
         .from('cbt_jadwal_ujian')
         .update({ mode_ruang: modeRuang })
-        .eq('id', targetJadwalForRuang.id);
+        .in('id', targetJadwalIds);
 
-      // Hapus alokasi lama untuk jadwal ini agar alokasi baru tersimpan bersih
+      // Hapus alokasi lama untuk jadwal-jadwal target
       await supabase
         .from('cbt_peserta_ruang')
         .delete()
-        .eq('jadwal_id', targetJadwalForRuang.id);
+        .in('jadwal_id', targetJadwalIds);
 
-      const payload = Object.entries(alokasiRuangMap)
-        .filter(([_, rId]) => Boolean(rId))
-        .map(([sId, rId], idx) => ({
-          jadwal_id: targetJadwalForRuang.id,
-          siswa_id: Number(sId),
-          ruang_id: Number(rId),
-          nomor_meja: idx + 1,
-        }));
+      const payload = [];
+      targetJadwalIds.forEach((jId) => {
+        Object.entries(alokasiRuangMap)
+          .filter(([_, rId]) => Boolean(rId))
+          .forEach(([sId, rId], idx) => {
+            payload.push({
+              jadwal_id: jId,
+              siswa_id: Number(sId),
+              ruang_id: Number(rId),
+              nomor_meja: idx + 1,
+            });
+          });
+      });
 
       if (payload.length > 0) {
-        const { error } = await supabase.from('cbt_peserta_ruang').insert(payload);
-        if (error) throw error;
+        const batchSize = 500;
+        for (let i = 0; i < payload.length; i += batchSize) {
+          const batch = payload.slice(i, i + batchSize);
+          const { error } = await supabase.from('cbt_peserta_ruang').insert(batch);
+          if (error) throw error;
+        }
       }
 
-      Swal.fire('Sukses', `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}!`, 'success');
+      Swal.fire(
+        'Sukses',
+        `Pengaturan ruang peserta berhasil disimpan dengan mode ${modeRuang.toUpperCase()}${
+          targetJadwalIds.length > 1 ? ` untuk ${targetJadwalIds.length} jadwal pelaksanaan ujian` : ''
+        }!`,
+        'success'
+      );
       setIsRuangPesertaModalOpen(false);
       fetchInitialData();
     } catch (err) {
@@ -1053,6 +1124,179 @@ export default function CbtJadwalUjian() {
       setSavingRuangPeserta(false);
     }
   };
+
+  // Handlers Pengaturan Pengawas Setiap Ruangan
+  const handleOpenPengawasRuangModal = async (jadwal) => {
+    if (!jadwal) return;
+    setTargetJadwalForPengawas(jadwal);
+    setIsPengawasRuangModalOpen(true);
+    setLoadingPengawasRuang(true);
+    setGlobalPengawasId('');
+
+    try {
+      // 1. Ambil data ruangan yang terasosiasi dengan jadwal ini (cbt_peserta_ruang)
+      let { data: pRuangData } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('ruang_id')
+        .eq('jadwal_id', jadwal.id);
+
+      // Jika jadwal spesifik ini belum memiliki entri cbt_peserta_ruang, 
+      // gunakan alokasi ruang peserta yang sudah diatur di halaman jadwal ujian
+      if (!pRuangData || pRuangData.length === 0) {
+        const { data: fallbackPRuang } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('ruang_id');
+        if (fallbackPRuang && fallbackPRuang.length > 0) {
+          pRuangData = fallbackPRuang;
+        }
+      }
+
+      const pesertaPerRuang = {};
+      if (pRuangData && pRuangData.length > 0) {
+        pRuangData.forEach((p) => {
+          if (p.ruang_id) {
+            pesertaPerRuang[p.ruang_id] = (pesertaPerRuang[p.ruang_id] || 0) + 1;
+          }
+        });
+      }
+
+      // 2. Ambil penugasan pengawas yang sudah tersimpan di cbt_berita_acara
+      const { data: existingBA } = await supabase
+        .from('cbt_berita_acara')
+        .select('ruang_id, pengawas_guru_id')
+        .eq('jadwal_id', jadwal.id);
+
+      const existingPengawasMap = {};
+      (existingBA || []).forEach((ba) => {
+        if (ba.ruang_id) {
+          existingPengawasMap[ba.ruang_id] = ba.pengawas_guru_id;
+        }
+      });
+
+      // 3. Susun daftar ruangan berdasarkan pengaturan ruang ujian yang sudah ada
+      const hasPesertaAllocation = Object.keys(pesertaPerRuang).length > 0;
+      const targetRuangList = hasPesertaAllocation
+        ? (ruangList || []).filter((r) => (pesertaPerRuang[r.id] || 0) > 0 || existingPengawasMap[r.id])
+        : (ruangList || []).filter((r) => !r.nama_ruang.toLowerCase().includes('kantor'));
+
+      const rooms = (targetRuangList.length > 0 ? targetRuangList : (ruangList || [])).map((r) => {
+        const pesertaCount = pesertaPerRuang[r.id] || 0;
+        const assignedGuruId = existingPengawasMap[r.id] || (existingBA?.length ? '' : (jadwal.pengawas_guru_id || ''));
+        return {
+          ruang_id: r.id,
+          nama_ruang: r.nama_ruang,
+          kode_ruang: r.kode_ruang || '',
+          jumlah_peserta: pesertaCount,
+          pengawas_guru_id: assignedGuruId ? String(assignedGuruId) : ''
+        };
+      });
+
+      rooms.sort((a, b) => {
+        return a.nama_ruang.localeCompare(b.nama_ruang, undefined, { numeric: true });
+      });
+
+      setPengawasRuangList(rooms);
+    } catch (err) {
+      console.error('Error open pengawas ruang modal:', err);
+      Swal.fire('Error', 'Gagal memuat data pengawas ruangan.', 'error');
+    } finally {
+      setLoadingPengawasRuang(false);
+    }
+  };
+
+  const handleSavePengawasRuang = async () => {
+    if (!targetJadwalForPengawas) return;
+    setSavingPengawasRuang(true);
+    try {
+      const upsertPayload = pengawasRuangList
+        .filter((item) => Boolean(item.pengawas_guru_id) || item.jumlah_peserta > 0)
+        .map((item) => ({
+          jadwal_id: targetJadwalForPengawas.id,
+          ruang_id: Number(item.ruang_id),
+          pengawas_guru_id: item.pengawas_guru_id ? Number(item.pengawas_guru_id) : null
+        }));
+
+      if (upsertPayload.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from('cbt_berita_acara')
+          .upsert(upsertPayload, { onConflict: 'jadwal_id, ruang_id' });
+        if (upsertErr) throw upsertErr;
+      }
+
+      const firstAssigned = pengawasRuangList.find((item) => Boolean(item.pengawas_guru_id));
+      if (firstAssigned) {
+        await supabase
+          .from('cbt_jadwal_ujian')
+          .update({ pengawas_guru_id: Number(firstAssigned.pengawas_guru_id) })
+          .eq('id', targetJadwalForPengawas.id);
+      }
+
+      Swal.fire({
+        icon: 'success',
+        title: 'Pengawas Ruangan Disimpan',
+        text: `Pengawas berhasil diatur untuk setiap ruangan pada sesi ujian "${targetJadwalForPengawas.nama_ujian}".`,
+        timer: 1800,
+        showConfirmButton: false
+      });
+
+      setIsPengawasRuangModalOpen(false);
+      await fetchInitialData();
+    } catch (err) {
+      console.error('Error save pengawas ruang:', err);
+      Swal.fire('Gagal Menyimpan', err.message || 'Terjadi kesalahan sistem.', 'error');
+    } finally {
+      setSavingPengawasRuang(false);
+    }
+  };
+
+  // Handler Buka Modal Pilih Ruangan Sebelum Awasi Ujian
+  const handleOpenAwasiModal = async (jadwal) => {
+    setTargetJadwalForAwasi(jadwal);
+    // Ambil daftar ruangan yang memiliki peserta di cbt_peserta_ruang
+    let { data: prData } = await supabase
+      .from('cbt_peserta_ruang')
+      .select('ruang_id, data_ruang(nama_ruang)')
+      .eq('jadwal_id', jadwal.id);
+
+    if (!prData || prData.length === 0) {
+      const { data: latestPR } = await supabase
+        .from('cbt_peserta_ruang')
+        .select('jadwal_id')
+        .order('id', { ascending: false })
+        .limit(1);
+      if (latestPR && latestPR.length > 0) {
+        const { data: fbData } = await supabase
+          .from('cbt_peserta_ruang')
+          .select('ruang_id, data_ruang(nama_ruang)')
+          .eq('jadwal_id', latestPR[0].jadwal_id);
+        if (fbData && fbData.length > 0) prData = fbData;
+      }
+    }
+
+    const mapR = new Map();
+    (prData || []).forEach((p) => {
+      if (p.ruang_id && !mapR.has(String(p.ruang_id))) {
+        mapR.set(String(p.ruang_id), p.data_ruang?.nama_ruang || `Ruang ${p.ruang_id}`);
+      }
+    });
+
+    let list = Array.from(mapR.entries()).map(([id, nama_ruang]) => ({ id, nama_ruang }));
+    if (list.length === 0) {
+      list = (ruangList || []).map((r) => ({ id: String(r.id), nama_ruang: r.nama_ruang }));
+    }
+
+    setAvailableRuangForAwasi(list);
+    setSelectedRuangIdForAwasi(list[0]?.id || '1');
+    setIsPilihRuangAwasiModalOpen(true);
+  };
+
+  const handleConfirmAwasi = () => {
+    if (!targetJadwalForAwasi) return;
+    setIsPilihRuangAwasiModalOpen(false);
+    navigate(`/cbt/pengawas/${targetJadwalForAwasi.id}?ruangId=${selectedRuangIdForAwasi}`);
+  };
+
+
 
   const todayName = getOperationalDayName();
 
@@ -1343,8 +1587,16 @@ export default function CbtJadwalUjian() {
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <Users size={14} className="text-emerald-500" />
-                          <span className="truncate">Pengawas: {j.pengawas?.nama || j.pengawas?.nama_guru || '-'}</span>
+                          <UserCheck size={14} className="text-teal-600 shrink-0" />
+                          <span className="truncate">
+                            Pengawas: {(() => {
+                              const rProctors = jadwalPengawasRuangMap[j.id];
+                              if (rProctors && rProctors.length > 0) {
+                                return rProctors.map(rp => `${rp.nama_ruang} (${rp.guru_nama})`).join(' • ');
+                              }
+                              return j.pengawas?.nama || j.pengawas?.nama_guru || '-';
+                            })()}
+                          </span>
                         </div>
                       </div>
 
@@ -1383,7 +1635,7 @@ export default function CbtJadwalUjian() {
                       {/* Skenario 1: OPS / Waka Kurikulum / Panitia -> 8 Tombol Lengkap */}
                       {isOPSOrPanitia ? (
                         <div className="space-y-2">
-                          {/* Row Aksi Utama (Awasi Ujian, Nilai, Soal Ujian) */}
+                          {/* Row Aksi Utama (Soal Ujian, Awasi, Pengawas Ruang) */}
                           <div className="grid grid-cols-3 gap-1.5">
                             <button
                               onClick={() => handleOpenSoalModal(j)}
@@ -1394,7 +1646,7 @@ export default function CbtJadwalUjian() {
                             </button>
 
                             <button
-                              onClick={() => navigate(`/cbt/pengawas/${j.id}`)}
+                              onClick={() => handleOpenAwasiModal(j)}
                               className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
                               title="Awasi Ujian"
                             >
@@ -1402,40 +1654,23 @@ export default function CbtJadwalUjian() {
                             </button>
 
                             <button
-                              onClick={() => navigate(`/cbt/nilai/${j.id}`)}
-                              className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                              title="Daftar Nilai"
+                              onClick={() => handleOpenPengawasRuangModal(j)}
+                              className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                              title="Atur Pengawas Setiap Ruangan"
                             >
-                              <Award size={13} /> Daftar Nilai
+                              <UserCheck size={13} /> Pengawas
                             </button>
                           </div>
 
-                          {/* Row Dokumen & Administrasi (Hadir Peserta, Hadir Pengawas, Berita Acara) */}
-                          <div className="grid grid-cols-3 gap-1.5">
-                            <button
-                              onClick={() => navigate(`/cbt/cetak/hadir-peserta/${j.id}`)}
-                              className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-semibold text-[10px] rounded-lg flex items-center justify-center gap-1 transition"
-                              title="Daftar Hadir Peserta"
-                            >
-                              <Printer size={12} /> Hadir Peserta
-                            </button>
-
-                            <button
-                              onClick={() => navigate(`/cbt/cetak/hadir-pengawas/${j.id}`)}
-                              className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-semibold text-[10px] rounded-lg flex items-center justify-center gap-1 transition"
-                              title="Daftar Hadir Pengawas"
-                            >
-                              <Printer size={12} /> Hadir Pengawas
-                            </button>
-
-                            <button
-                              onClick={() => navigate(`/cbt/cetak/berita-acara/${j.id}`)}
-                              className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-semibold text-[10px] rounded-lg flex items-center justify-center gap-1 transition"
-                              title="Berita Acara Ujian"
-                            >
-                              <FileText size={12} /> Berita Acara
-                            </button>
-                          </div>
+                          {/* Tombol Daftar Nilai */}
+                          <button
+                            onClick={() => navigate(`/cbt/nilai/${j.id}`)}
+                            className="w-full py-1.5 px-3 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition"
+                            title="Daftar Nilai"
+                          >
+                            <Award size={14} />
+                            <span>Daftar Nilai</span>
+                          </button>
 
                           {/* Row CRUD (Edit, Hapus) */}
                           <div className="flex items-center justify-end gap-2 pt-1">
@@ -1480,34 +1715,41 @@ export default function CbtJadwalUjian() {
                           </div>
                         </div>
                       ) : isDiampu ? (
-                        /* Skenario 2: Guru Mapel Diampu -> 3 Tombol */
-                        <div className="grid grid-cols-3 gap-2">
-                          <button
-                            onClick={() => handleOpenSoalModal(j)}
-                            className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                          >
-                            <BookOpen size={14} /> Soal Ujian
-                          </button>
+                        /* Skenario 2: Guru Mapel Diampu -> Soal, Pengawas */
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => handleOpenSoalModal(j)}
+                              className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                            >
+                              <BookOpen size={14} /> Soal Ujian
+                            </button>
+
+                            <button
+                              onClick={() => handleOpenPengawasRuangModal(j)}
+                              className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                              title="Atur Pengawas Setiap Ruangan"
+                            >
+                              <UserCheck size={14} /> Pengawas
+                            </button>
+                          </div>
 
                           <button
                             onClick={() => navigate(`/cbt/nilai/${j.id}`)}
-                            className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                            className="w-full py-1.5 px-3 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition"
+                            title="Daftar Nilai"
                           >
-                            <Award size={14} /> Daftar Nilai
+                            <Award size={14} />
+                            <span>Daftar Nilai</span>
                           </button>
 
-                          <button
-                            onClick={() => navigate(`/cbt/cetak/hadir-peserta/${j.id}`)}
-                            className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
-                          >
-                            <Printer size={14} /> Hadir Peserta
-                          </button>
+
                         </div>
                       ) : isDiawasi ? (
-                        /* Skenario 3: Guru Mapel Diawasi -> 4 Tombol */
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        /* Skenario 3: Guru Pengawas -> Awasi, Nilai */
+                        <div className="grid grid-cols-2 gap-2">
                           <button
-                            onClick={() => navigate(`/cbt/pengawas/${j.id}`)}
+                            onClick={() => handleOpenAwasiModal(j)}
                             className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
                           >
                             <Video size={14} /> Awasi Ujian
@@ -1518,28 +1760,6 @@ export default function CbtJadwalUjian() {
                             className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
                           >
                             <Award size={14} /> Daftar Nilai
-                          </button>
-
-                          <button
-                            onClick={() => navigate(`/cbt/cetak/hadir-peserta/${j.id}`)}
-                            className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
-                          >
-                            <Printer size={14} /> Hadir Peserta
-                          </button>
-
-                          <button
-                            onClick={() => navigate(`/cbt/cetak/hadir-pengawas/${j.id}`)}
-                            className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
-                            title="Daftar Hadir Pengawas"
-                          >
-                            <Printer size={14} /> Hadir Pengawas
-                          </button>
-
-                          <button
-                            onClick={() => navigate(`/cbt/cetak/berita-acara/${j.id}`)}
-                            className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-gray-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1 transition"
-                          >
-                            <FileText size={14} /> Berita Acara
                           </button>
                         </div>
                       ) : (
@@ -1968,7 +2188,9 @@ export default function CbtJadwalUjian() {
                 <div>
                   <h3 className="text-base font-black text-gray-800">Pengaturan Ruang Peserta</h3>
                   <p className="text-xs text-gray-500 font-medium">
-                    {targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT'}
+                    {applyToAllJadwal
+                      ? `Semua Jadwal Ujian CBT (${jadwalList.length} Jadwal Terhubung)`
+                      : (targetJadwalForRuang?.data_mapel?.nama_mapel || targetJadwalForRuang?.nama_ujian || 'Ujian CBT')}
                   </p>
                 </div>
               </div>
@@ -2372,22 +2594,288 @@ export default function CbtJadwalUjian() {
             </div>
 
             {/* Footer Modal */}
-            <div className="flex justify-end gap-2 p-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl">
+              <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-700 bg-blue-50/70 hover:bg-blue-100/70 px-3 py-1.5 rounded-xl border border-blue-200 transition">
+                <input
+                  type="checkbox"
+                  checked={applyToAllJadwal}
+                  onChange={(e) => setApplyToAllJadwal(e.target.checked)}
+                  className="w-4 h-4 text-primary rounded focus:ring-primary cursor-pointer"
+                />
+                <span>Terapkan ke <b>Semua Jadwal Ujian CBT</b> ({jadwalList.length} jadwal)</span>
+              </label>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsRuangPesertaModalOpen(false)}
+                  disabled={savingRuangPeserta}
+                  className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-200 rounded-xl transition"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSavePengaturanRuang}
+                  disabled={savingRuangPeserta}
+                  className="px-5 py-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
+                >
+                  {savingRuangPeserta ? 'Menyimpan...' : 'Simpan Alokasi Ruang'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PENGATURAN PENGAWAS SETIAP RUANGAN */}
+      {isPengawasRuangModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col my-8 border border-gray-100 max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-6 bg-gradient-to-r from-teal-700 to-emerald-800 text-white flex items-start justify-between shrink-0">
+              <div>
+                <div className="flex items-center gap-2">
+                  <UserCheck size={22} className="text-teal-200" />
+                  <h3 className="text-lg font-bold">Atur Pengawas Setiap Ruangan</h3>
+                </div>
+                <p className="text-xs text-teal-100 mt-1">
+                  {targetJadwalForPengawas?.nama_ujian} • {targetJadwalForPengawas?.data_mapel?.nama_mapel}
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <span className="bg-black/20 text-white text-[11px] font-semibold px-2.5 py-0.5 rounded-full border border-white/10">
+                    {targetJadwalForPengawas?.hari}, {targetJadwalForPengawas?.tanggal_ujian}
+                  </span>
+                  <span className="bg-black/20 text-white text-[11px] font-semibold px-2.5 py-0.5 rounded-full border border-white/10">
+                    {targetJadwalForPengawas?.jam_mulai?.slice(0, 5)} - {targetJadwalForPengawas?.jam_selesai?.slice(0, 5)} WIB
+                  </span>
+                </div>
+              </div>
               <button
                 type="button"
-                onClick={() => setIsRuangPesertaModalOpen(false)}
-                disabled={savingRuangPeserta}
-                className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-200 rounded-xl transition"
+                onClick={() => setIsPengawasRuangModalOpen(false)}
+                className="p-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-4 flex-1">
+              {/* Quick Bulk Assign Bar */}
+              <div className="bg-teal-50 border border-teal-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex-1 w-full">
+                  <label className="block text-[11px] font-bold text-teal-900 mb-1">
+                    Terapkan Satu Pengawas ke Semua Ruangan:
+                  </label>
+                  <select
+                    value={globalPengawasId}
+                    onChange={(e) => setGlobalPengawasId(e.target.value)}
+                    className="w-full bg-white border border-teal-300 rounded-xl px-3 py-2 text-xs font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                  >
+                    <option value="">-- Pilih Guru Pengawas Serentak --</option>
+                    {guruList.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.nama}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!globalPengawasId) {
+                      Swal.fire('Peringatan', 'Silakan pilih guru pengawas terlebih dahulu.', 'warning');
+                      return;
+                    }
+                    setPengawasRuangList(prev => prev.map(item => ({
+                      ...item,
+                      pengawas_guru_id: String(globalPengawasId)
+                    })));
+                  }}
+                  className="w-full sm:w-auto px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer mt-auto"
+                >
+                  <Check size={14} /> Terapkan ke Semua
+                </button>
+              </div>
+
+              {/* Room List */}
+              {loadingPengawasRuang ? (
+                <div className="py-12 flex flex-col items-center justify-center text-gray-400">
+                  <div className="w-8 h-8 border-3 border-teal-600 border-t-transparent rounded-full animate-spin mb-2" />
+                  <p className="text-xs font-semibold">Memuat daftar ruangan dan penugasan pengawas...</p>
+                </div>
+              ) : pengawasRuangList.length === 0 ? (
+                <div className="py-8 text-center text-gray-400">
+                  <Building size={36} className="mx-auto mb-2 text-gray-300" />
+                  <p className="text-sm font-semibold">Tidak ada data ruangan ditemukan.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs text-gray-500 px-1 font-semibold">
+                    <span>Ruangan Ujian ({pengawasRuangList.length} Ruang Tersedia)</span>
+                    <span>Guru Pengawas Ruang</span>
+                  </div>
+
+                  {pengawasRuangList.map((item, index) => {
+                    const isAssigned = Boolean(item.pengawas_guru_id);
+                    return (
+                      <div
+                        key={item.ruang_id}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          isAssigned
+                            ? 'bg-white border-teal-200 shadow-xs'
+                            : 'bg-gray-50/60 border-gray-200'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          {/* Ruang Info */}
+                          <div className="flex items-center gap-3">
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 ${
+                              isAssigned ? 'bg-teal-100 text-teal-800' : 'bg-gray-200 text-gray-600'
+                            }`}>
+                              {index + 1}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-gray-900 text-sm">{item.nama_ruang}</h4>
+                                {item.kode_ruang && (
+                                  <span className="text-[10px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md">
+                                    {item.kode_ruang}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-gray-500 mt-0.5">
+                                {item.jumlah_peserta > 0 ? (
+                                  <span className="text-emerald-600 font-semibold">{item.jumlah_peserta} Peserta Terdaftar</span>
+                                ) : (
+                                  <span>Ruangan Opsional / Cadangan</span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Proctor Select */}
+                          <div className="w-full sm:w-64">
+                            <select
+                              value={item.pengawas_guru_id || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPengawasRuangList(prev => prev.map(p => 
+                                  p.ruang_id === item.ruang_id ? { ...p, pengawas_guru_id: val } : p
+                                ));
+                              }}
+                              className={`w-full text-xs font-semibold rounded-xl px-3 py-2 border outline-none transition cursor-pointer ${
+                                isAssigned 
+                                  ? 'border-teal-400 bg-teal-50/30 text-teal-950 font-bold focus:ring-2 focus:ring-teal-500' 
+                                  : 'border-gray-300 bg-white text-gray-600 focus:ring-2 focus:ring-primary'
+                              }`}
+                            >
+                              <option value="">-- Pilih Pengawas --</option>
+                              {guruList.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                  {g.nama}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-5 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsPengawasRuangModalOpen(false)}
+                className="px-5 py-2.5 text-xs font-bold text-gray-600 hover:bg-gray-200 rounded-xl transition cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="button"
-                onClick={handleSavePengaturanRuang}
-                disabled={savingRuangPeserta}
-                className="px-5 py-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center gap-1.5"
+                onClick={handleSavePengawasRuang}
+                disabled={savingPengawasRuang}
+                className="px-6 py-2.5 bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                {savingRuangPeserta ? 'Menyimpan...' : 'Simpan Alokasi Ruang'}
+                <Check size={16} />
+                <span>{savingPengawasRuang ? 'Menyimpan...' : 'Simpan Pengawas Ruangan'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Popup Pilih Ruangan Pengawasan */}
+      {isPilihRuangAwasiModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="p-5 bg-gradient-to-r from-red-600 to-rose-700 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-white/20 rounded-2xl backdrop-blur-xs">
+                  <Video size={22} className="text-white" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base leading-tight">Pilih Ruang Pengawasan</h3>
+                  <p className="text-xs text-red-100 font-medium mt-0.5">
+                    {targetJadwalForAwasi?.data_mapel?.nama_mapel || targetJadwalForAwasi?.nama_ujian}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsPilihRuangAwasiModalOpen(false)}
+                className="p-1.5 hover:bg-white/20 text-white/80 hover:text-white rounded-full transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  Pilih Ruang Ujian yang Diawasi :
+                </label>
+                <div className="relative">
+                  <Building size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <select
+                    value={selectedRuangIdForAwasi}
+                    onChange={(e) => setSelectedRuangIdForAwasi(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-red-500 focus:bg-white transition"
+                  >
+                    {availableRuangForAwasi.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.nama_ruang}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[11.5px] text-slate-500 mt-2">
+                  Anda akan masuk ke monitor pengawasan khusus ruangan ini sehingga sistem bekerja sangat ringan dan cepat.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsPilihRuangAwasiModalOpen(false)}
+                className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-200/60 rounded-xl transition cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAwasi}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-md shadow-red-600/20 flex items-center gap-1.5 transition cursor-pointer"
+              >
+                <Video size={14} /> Mulai Awasi
               </button>
             </div>
           </div>

@@ -43,6 +43,8 @@ export default function CbtJadwalSiswa() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filterTab, setFilterTab] = useState<'semua' | 'aktif' | 'selesai'>('semua');
+  const [isStudentActive, setIsStudentActive] = useState(true);
+  const [statusKeaktifan, setStatusKeaktifan] = useState('Aktif');
 
   // State Review Lembar Koreksi Soal
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
@@ -76,16 +78,16 @@ export default function CbtJadwalSiswa() {
         .eq('id', parsedSiswa.id)
         .maybeSingle();
 
-      if (!dbSiswa || (dbSiswa.status_keaktifan && dbSiswa.status_keaktifan.toLowerCase() !== 'aktif')) {
-        Alert.alert(
-          'Akses Ditolak',
-          `Akun Anda berstatus "${dbSiswa?.status_keaktifan || 'Nonaktif'}". Hanya siswa berstatus "Aktif" yang dapat melihat dan mengikuti ujian CBT.`,
-          [{ text: 'Kembali', onPress: () => router.back() }]
-        );
+      const isAktif = (dbSiswa?.status_keaktifan || '').trim().toLowerCase() === 'aktif';
+      if (!dbSiswa || !isAktif) {
+        setIsStudentActive(false);
+        setStatusKeaktifan(dbSiswa?.status_keaktifan || 'Nonaktif');
         setJadwalList([]);
         setLoading(false);
         return;
       }
+      setIsStudentActive(true);
+      setStatusKeaktifan('Aktif');
 
       const kelasSiswa = dbSiswa?.kelas || parsedSiswa.kelas || '';
 
@@ -122,8 +124,10 @@ export default function CbtJadwalSiswa() {
         .eq('siswa_id', parsedSiswa.id);
 
       const pRuangMap = new Map();
+      let defaultPRuang: any = null;
       (pRuangData || []).forEach((pr: any) => {
         pRuangMap.set(Number(pr.jadwal_id), pr);
+        if (!defaultPRuang) defaultPRuang = pr;
       });
       const allocatedJadwalIds = Array.from(pRuangMap.keys());
 
@@ -182,6 +186,7 @@ export default function CbtJadwalSiswa() {
           if (!pRuangMap.has(Number(j.id))) return false;
         }
 
+
         // B. Riwayat Ujian Selesai / Sedang Dikerjakan (selalu tampil)
         if (sesi?.status === 'selesai' || sesi?.status === 'mengerjakan' || sesi?.status === 'diblokir') {
           return true;
@@ -194,7 +199,7 @@ export default function CbtJadwalSiswa() {
 
         return true;
       }).map((j: any) => {
-        const pr = pRuangMap.get(Number(j.id));
+        const pr = pRuangMap.get(Number(j.id)) || defaultPRuang;
         // Cari bank soal yang cocok untuk tingkat kelas siswa
         const matchedBank = (availableBanks || []).find((b: any) =>
           Number(b.mapel_id) === Number(j.mapel_id) &&
@@ -433,7 +438,18 @@ export default function CbtJadwalSiswa() {
           contentContainerStyle={styles.scrollContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#3740A1']} />}
         >
-          {filteredJadwal.length === 0 ? (
+          {!isStudentActive ? (
+            <View style={[styles.emptyCard, { backgroundColor: '#fff1f2', borderColor: '#fecdd3', borderWidth: 1 }]}>
+              <XCircle size={54} color="#e11d48" />
+              <Text style={[styles.emptyTitle, { color: '#9f1239' }]}>Akses Ujian Tidak Tersedia</Text>
+              <Text style={[styles.emptySubtitle, { color: '#be123c' }]}>
+                Status akun siswa Anda saat ini: {statusKeaktifan.toUpperCase()}. Sesuai ketentuan, hanya siswa berstatus "Aktif" yang dapat mengikuti ujian CBT.
+              </Text>
+              <Text style={[styles.emptySubtitle, { color: '#9f1239', fontSize: 11, marginTop: 8 }]}>
+                Silakan hubungi pihak sekolah jika status ini tidak sesuai.
+              </Text>
+            </View>
+          ) : filteredJadwal.length === 0 ? (
             <View style={styles.emptyCard}>
               <FileQuestion size={54} color="#9ca3af" />
               <Text style={styles.emptyTitle}>Tidak Ada Jadwal Ujian</Text>
