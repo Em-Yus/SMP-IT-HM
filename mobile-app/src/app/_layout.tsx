@@ -14,6 +14,7 @@ import {
   scheduleSiswaReminders,
   PENGUMUMAN_CHANNEL_ID 
 } from '../services/scheduleNotificationHelper';
+import { isPengumumanVisibleForSiswa } from '../utils/pengumumanHelper';
 
 // Cegah splash screen hilang otomatis sebelum aplikasi siap
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -142,10 +143,19 @@ export default function RootLayout() {
           const isGuru = !!localUserGuru;
           const isSiswa = !!localUserSiswa && !isGuru;
 
-          const matchTarget =
-            newRow.target === 'Semua' ||
-            (newRow.target === 'Guru' && isGuru) ||
-            (newRow.target === 'Siswa' && isSiswa);
+          let matchTarget = false;
+          if (newRow.target === 'Semua') {
+            matchTarget = true;
+          } else if (newRow.target === 'Guru') {
+            matchTarget = isGuru;
+          } else if (isSiswa && localUserSiswa) {
+            try {
+              const parsedSiswa = JSON.parse(localUserSiswa);
+              matchTarget = isPengumumanVisibleForSiswa(newRow.target, parsedSiswa);
+            } catch (e) {
+              matchTarget = newRow.target === 'Siswa';
+            }
+          }
 
           if (matchTarget) {
             try {

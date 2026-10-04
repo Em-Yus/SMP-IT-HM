@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, TextInput as RNTextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
-import { Receipt, Printer, ArrowLeft, Filter } from 'lucide-react-native';
+import { Receipt, Printer, ArrowLeft, Filter, Calendar } from 'lucide-react-native';
 import { router } from 'expo-router';
 // import * as Print from 'expo-print'; // REMOVED TO PREVENT CRASH
 import { Picker } from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 export type Pembayaran = {
   id: number;
@@ -41,6 +42,73 @@ export default function RekapPembayaran() {
   });
   
   const [showFilter, setShowFilter] = useState(false);
+
+  // Date Picker States
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [activeDatePickerField, setActiveDatePickerField] = useState<'start' | 'end'>('start');
+
+  const parseDateString = (dateStr: string) => {
+    if (!dateStr) return new Date();
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      return new Date(y, m, d);
+    }
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (event.type === 'set' && selectedDate) {
+      const yyyy = selectedDate.getFullYear();
+      const mm = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(selectedDate.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+      if (activeDatePickerField === 'start') {
+        setStartDate(dateStr);
+      } else {
+        setEndDate(dateStr);
+      }
+      if (Platform.OS === 'ios') {
+        setShowDatePicker(false);
+      }
+    } else if (event.type === 'dismissed') {
+      setShowDatePicker(false);
+    }
+  };
+
+  const formatDisplayDate = (dateStr: string) => {
+    if (!dateStr) return 'Pilih Tanggal';
+    const d = parseDateString(dateStr);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
+  const handleQuickPreset = (preset: 'today' | 'this_month' | 'this_year') => {
+    const t = new Date();
+    if (preset === 'today') {
+      const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === 'this_month') {
+      const fDay = new Date(t.getFullYear(), t.getMonth(), 1);
+      const lDay = new Date(t.getFullYear(), t.getMonth() + 1, 0);
+      const startStr = `${fDay.getFullYear()}-${String(fDay.getMonth() + 1).padStart(2, '0')}-${String(fDay.getDate()).padStart(2, '0')}`;
+      const endStr = `${lDay.getFullYear()}-${String(lDay.getMonth() + 1).padStart(2, '0')}-${String(lDay.getDate()).padStart(2, '0')}`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    } else if (preset === 'this_year') {
+      const startStr = `${t.getFullYear()}-01-01`;
+      const endStr = `${t.getFullYear()}-12-31`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    }
+  };
 
   useEffect(() => {
     fetchInitialData();
@@ -345,27 +413,59 @@ export default function RekapPembayaran() {
 
           <View style={[styles.dateRow, { marginTop: 12 }]}>
             <View style={styles.dateCol}>
-              <Text style={styles.filterLabel}>Dari (YYYY-MM-DD)</Text>
-              <RNTextInput
-                style={styles.dateInput}
-                value={startDate}
-                onChangeText={(t) => setStartDate(t)}
-                placeholder="2025-01-01"
-                keyboardType="numeric"
-                maxLength={10}
-              />
+              <Text style={styles.filterLabel}>Dari Tanggal</Text>
+              <TouchableOpacity
+                style={styles.dateButton}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setActiveDatePickerField('start');
+                  setShowDatePicker(true);
+                }}
+              >
+                <Calendar size={16} color="#10b981" style={{ marginRight: 8 }} />
+                <Text style={styles.dateButtonText}>{formatDisplayDate(startDate)}</Text>
+              </TouchableOpacity>
             </View>
+
             <View style={styles.dateCol}>
-              <Text style={styles.filterLabel}>Sampai (YYYY-MM-DD)</Text>
-              <RNTextInput
-                style={styles.dateInput}
-                value={endDate}
-                onChangeText={(t) => setEndDate(t)}
-                placeholder="2025-12-31"
-                keyboardType="numeric"
-                maxLength={10}
-              />
+              <Text style={styles.filterLabel}>Sampai Tanggal</Text>
+              <TouchableOpacity
+                style={styles.dateButton}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setActiveDatePickerField('end');
+                  setShowDatePicker(true);
+                }}
+              >
+                <Calendar size={16} color="#10b981" style={{ marginRight: 8 }} />
+                <Text style={styles.dateButtonText}>{formatDisplayDate(endDate)}</Text>
+              </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Quick Filter Presets */}
+          <View style={styles.quickFilterRow}>
+            <TouchableOpacity 
+              style={styles.quickFilterChip} 
+              onPress={() => handleQuickPreset('today')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.quickFilterChipText}>Hari Ini</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.quickFilterChip} 
+              onPress={() => handleQuickPreset('this_month')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.quickFilterChipText}>Bulan Ini</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.quickFilterChip} 
+              onPress={() => handleQuickPreset('this_year')}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.quickFilterChipText}>1 Tahun</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -417,6 +517,19 @@ export default function RekapPembayaran() {
           />
         )}
       </View>
+      {/* DateTimePicker Dialog */}
+      {showDatePicker && (
+        <DateTimePicker
+          value={
+            activeDatePickerField === 'start'
+              ? parseDateString(startDate)
+              : parseDateString(endDate)
+          }
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={handleDateChange}
+        />
+      )}
     </View>
   );
 }
@@ -485,16 +598,39 @@ const styles = StyleSheet.create({
   dateCol: {
     flex: 1,
   },
-  dateInput: {
-    backgroundColor: '#f3f4f6',
+  dateButton: {
+    backgroundColor: '#f9fafb',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#1f2937',
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dateButtonText: {
+    fontSize: 13,
+    color: '#1f2937',
+    fontWeight: '600',
+  },
+  quickFilterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  quickFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  quickFilterChipText: {
+    fontSize: 12,
+    color: '#374151',
+    fontWeight: '600',
   },
   summaryCard: {
     backgroundColor: '#10b981',

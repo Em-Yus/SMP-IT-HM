@@ -5,6 +5,7 @@ import { Bell, ChevronLeft } from 'lucide-react-native';
 import { router } from 'expo-router';
 import * as Animatable from 'react-native-animatable';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { isPengumumanVisibleForSiswa } from '../../utils/pengumumanHelper';
 
 export default function PengumumanScreen() {
   const [loading, setLoading] = useState(true);
@@ -27,15 +28,21 @@ export default function PengumumanScreen() {
 
   const fetchPengumuman = async () => {
     try {
+      const localUserStr = await AsyncStorage.getItem('user_siswa');
+      let currentSiswa: any = null;
+      if (localUserStr) {
+        try { currentSiswa = JSON.parse(localUserStr); } catch (e) {}
+      }
+
       const { data, error } = await supabase
         .from('cms_pengumuman')
         .select('*')
         .eq('status', 'Aktif')
-        .in('target', ['Siswa', 'Semua'])
         .order('created_at', { ascending: false });
         
       if (!error && data) {
-        setPengumumanData(data);
+        const filtered = data.filter((item: any) => isPengumumanVisibleForSiswa(item.target, currentSiswa));
+        setPengumumanData(filtered);
       }
     } catch (err) {
       console.error(err);

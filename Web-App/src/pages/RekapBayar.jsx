@@ -27,6 +27,27 @@ export default function RekapBayar() {
   const [startDate, setStartDate] = useState(firstDay);
   const [endDate, setEndDate] = useState(lastDay);
 
+  const handleQuickPreset = (preset) => {
+    const t = new Date();
+    if (preset === 'today') {
+      const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === 'this_month') {
+      const fDay = new Date(t.getFullYear(), t.getMonth(), 1);
+      const lDay = new Date(t.getFullYear(), t.getMonth() + 1, 0);
+      const startStr = `${fDay.getFullYear()}-${String(fDay.getMonth() + 1).padStart(2, '0')}-${String(fDay.getDate()).padStart(2, '0')}`;
+      const endStr = `${lDay.getFullYear()}-${String(lDay.getMonth() + 1).padStart(2, '0')}-${String(lDay.getDate()).padStart(2, '0')}`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    } else if (preset === 'this_year') {
+      const startStr = `${t.getFullYear()}-01-01`;
+      const endStr = `${t.getFullYear()}-12-31`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    }
+  };
+
   const fetchData = async () => {
     setIsLoading(true);
     try {
@@ -102,7 +123,7 @@ export default function RekapBayar() {
 
         {/* Filter Card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6 flex flex-col md:flex-row gap-4 items-stretch md:items-end">
-          <div className="flex-1 min-w-[200px] w-full">
+          <div className="flex-1 min-w-[180px] w-full">
             <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Tahun Pelajaran</label>
             <select 
               value={tahunPelajaran} 
@@ -115,34 +136,75 @@ export default function RekapBayar() {
             </select>
           </div>
 
-          <div className="flex-1 min-w-[200px] w-full">
+          <div className="flex-1 min-w-[180px] w-full">
             <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Dari Tanggal</label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                <Calendar size={16} className="text-gray-400" />
+              <div 
+                onClick={() => {
+                  const input = document.getElementById('filter-start-date');
+                  if (input) input.showPicker?.();
+                }}
+                className="absolute inset-y-0 left-0 flex items-center pl-3 cursor-pointer text-gray-400 hover:text-primary transition"
+              >
+                <Calendar size={16} />
               </div>
               <input 
+                id="filter-start-date"
                 type="date" 
                 value={startDate}
+                onClick={(e) => e.target.showPicker?.()}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary focus:border-primary block pl-10 p-2.5 outline-none font-medium" 
+                className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary focus:border-primary block pl-10 p-2.5 outline-none font-medium cursor-pointer" 
               />
             </div>
           </div>
 
-          <div className="flex-1 min-w-[200px] w-full">
+          <div className="flex-1 min-w-[180px] w-full">
             <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Sampai Tanggal</label>
             <div className="relative">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                <Calendar size={16} className="text-gray-400" />
+              <div 
+                onClick={() => {
+                  const input = document.getElementById('filter-end-date');
+                  if (input) input.showPicker?.();
+                }}
+                className="absolute inset-y-0 left-0 flex items-center pl-3 cursor-pointer text-gray-400 hover:text-primary transition"
+              >
+                <Calendar size={16} />
               </div>
               <input 
+                id="filter-end-date"
                 type="date" 
                 value={endDate}
+                onClick={(e) => e.target.showPicker?.()}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary focus:border-primary block pl-10 p-2.5 outline-none font-medium" 
+                className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-primary focus:border-primary block pl-10 p-2.5 outline-none font-medium cursor-pointer" 
               />
             </div>
+          </div>
+
+          {/* Quick Filter Presets */}
+          <div className="flex items-center gap-2 pb-0.5">
+            <button
+              type="button"
+              onClick={() => handleQuickPreset('today')}
+              className="px-3 py-2.5 text-xs font-semibold rounded-lg bg-gray-50 hover:bg-emerald-50 hover:text-emerald-700 text-gray-600 border border-gray-200 transition whitespace-nowrap"
+            >
+              Hari Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickPreset('this_month')}
+              className="px-3 py-2.5 text-xs font-semibold rounded-lg bg-gray-50 hover:bg-emerald-50 hover:text-emerald-700 text-gray-600 border border-gray-200 transition whitespace-nowrap"
+            >
+              Bulan Ini
+            </button>
+            <button
+              type="button"
+              onClick={() => handleQuickPreset('this_year')}
+              className="px-3 py-2.5 text-xs font-semibold rounded-lg bg-gray-50 hover:bg-emerald-50 hover:text-emerald-700 text-gray-600 border border-gray-200 transition whitespace-nowrap"
+            >
+              1 Tahun
+            </button>
           </div>
         </div>
       </div>

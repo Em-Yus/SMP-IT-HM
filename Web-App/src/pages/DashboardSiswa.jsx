@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { User, BookOpen, Clock, CalendarDays, Award, Megaphone, Wallet, ChevronRight, Laptop } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { getOperationalDayName } from '../utils/dateUtils';
+import { isPengumumanVisibleForSiswa } from '../utils/pengumumanHelper';
 
 export default function DashboardSiswa() {
   const currentYear = new Date().getFullYear();
@@ -235,12 +236,11 @@ export default function DashboardSiswa() {
           .from('cms_pengumuman')
           .select('*')
           .eq('status', 'Aktif')
-          .in('target', ['Siswa', 'Semua'])
-          .order('created_at', { ascending: false })
-          .limit(5);
+          .order('created_at', { ascending: false });
 
         if (error) throw error;
-        setPengumuman(data || []);
+        const filtered = (data || []).filter((item) => isPengumumanVisibleForSiswa(item.target, userData)).slice(0, 5);
+        setPengumuman(filtered);
       } catch (err) {
         console.error('Gagal memuat pengumuman:', err);
       } finally {
@@ -248,7 +248,7 @@ export default function DashboardSiswa() {
       }
     };
     fetchPengumuman();
-  }, []);
+  }, [userData]);
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);

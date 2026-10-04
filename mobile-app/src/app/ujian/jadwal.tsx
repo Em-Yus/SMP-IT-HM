@@ -270,7 +270,7 @@ export default function UjianJadwal() {
         supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id, jenis_ujian, pengawas_guru_id, pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)').order('judul'),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('pembelajaran').select('id, guru_id, kelas_id, mapel_id'),
-        supabase.from('data_guru').select('id, nama').order('nama'),
+        supabase.from('data_guru').select('id, nama').is('tanggal_keluar', null).order('nama'),
       ]);
 
       if (kRes.data) {
@@ -314,13 +314,14 @@ export default function UjianJadwal() {
       if (error) throw error;
       setJadwalList(data || []);
 
-      // Fetch room proctor mappings dari cbt_berita_acara
+      // Fetch room proctor mappings dari cbt_berita_acara (hanya guru aktif)
       const { data: baData } = await supabase
         .from('cbt_berita_acara')
-        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama), data_ruang(id, nama_ruang)');
+        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama, tanggal_keluar), data_ruang(id, nama_ruang)');
 
       const pMap: Record<string, any[]> = {};
       (baData || []).forEach((item: any) => {
+        if (item.data_guru?.tanggal_keluar) return; // Abaikan jika guru sudah tidak aktif
         if (item.jadwal_id && item.pengawas_guru_id) {
           const jId = String(item.jadwal_id);
           if (!pMap[jId]) pMap[jId] = [];
@@ -718,7 +719,7 @@ export default function UjianJadwal() {
         supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
         supabase.from('cbt_struktur_panitia').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-        supabase.from('data_guru').select('id, nama, nip'),
+        supabase.from('data_guru').select('id, nama, nip').is('tanggal_keluar', null),
       ]);
 
       const lembaga = lembagaRes.data || {};
@@ -1203,7 +1204,7 @@ export default function UjianJadwal() {
         supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
         supabase.from('cbt_struktur_panitia').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-        supabase.from('data_guru').select('id, nama, nip'),
+        supabase.from('data_guru').select('id, nama, nip').is('tanggal_keluar', null),
         supabase.from('cbt_jadwal_ujian').select(`
           *,
           data_mapel(nama_mapel),
@@ -1601,11 +1602,12 @@ export default function UjianJadwal() {
 
       const { data: existingBA } = await supabase
         .from('cbt_berita_acara')
-        .select('ruang_id, pengawas_guru_id')
+        .select('ruang_id, pengawas_guru_id, data_guru(tanggal_keluar)')
         .eq('jadwal_id', jadwal.id);
 
       const existingPengawasMap: Record<string, any> = {};
       (existingBA || []).forEach((ba: any) => {
+        if (ba.data_guru?.tanggal_keluar) return; // Abaikan jika pengawas sudah tidak aktif
         if (ba.ruang_id) {
           existingPengawasMap[String(ba.ruang_id)] = ba.pengawas_guru_id;
         }
@@ -2008,25 +2010,47 @@ export default function UjianJadwal() {
                     </View>
                   </View>
 
-                  {/* Info Pengawas */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4, marginBottom: 8, paddingHorizontal: 2 }}>
-                    <UserCheck size={13} color="#0f766e" />
-                    <Text style={{ fontSize: 11, color: '#334155', fontWeight: '600', flex: 1 }} numberOfLines={1}>
-                      Pengawas:{' '}
-                      {(() => {
-                        const rProctors = jadwalPengawasRuangMap[String(jadwal.id)];
-                        if (rProctors && rProctors.length > 0) {
-                          return rProctors.map(rp => `${rp.nama_ruang} (${rp.guru_nama})`).join(' • ');
-                        }
-                        return jadwal.pengawas?.nama || '-';
-                      })()}
-                    </Text>
+                  {/* Info Pengawas (Bentuk Poin-poin) */}
+                  <View style={styles.proctorListBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                      <UserCheck size={13} color="#0f766e" />
+                      <Text style={styles.proctorListTitle}>Pengawas Ruangan:</Text>
+                    </View>
+                    {(() => {
+                      const rProctors = jadwalPengawasRuangMap[String(jadwal.id)];
+                      if (rProctors && rProctors.length > 0) {
+                        return (
+                          <View style={{ paddingLeft: 4 }}>
+                            {rProctors.map((rp, idx) => (
+                              <View key={idx} style={styles.proctorPointItem}>
+                                <Text style={styles.proctorBullet}>•</Text>
+                                <Text style={styles.proctorPointText}>
+                                  <Text style={{ fontWeight: '700', color: '#1e293b' }}>{rp.nama_ruang}: </Text>
+                                  {rp.guru_nama}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        );
+                      }
+                      return (
+                        <View style={{ paddingLeft: 4 }}>
+                          <View style={styles.proctorPointItem}>
+                            <Text style={styles.proctorBullet}>•</Text>
+                            <Text style={styles.proctorPointText}>
+                              {jadwal.pengawas?.nama || 'Belum diatur'}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })()}
                   </View>
 
-                  {/* Baris Tombol Utama: Soal, Awasi, Pengawas Ruang */}
-                  {(showSoalBtn || showAwasiBtn || (canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum)) && (
+                  {/* 2 Baris Tombol (2 Tombol 2 Tombol: Soal & Daftar Nilai berdampingan, di bawahnya Pengawas di kiri & Awasi di kanan) */}
+                  {/* Baris 1: Tombol Soal (Kiri) dan Tombol Daftar Nilai (Kanan) */}
+                  {(showSoalBtn || showNilaiBtn) && (
                     <View style={styles.actionRow}>
-                      {showSoalBtn && (
+                      {showSoalBtn ? (
                         <TouchableOpacity
                           style={[styles.actionBtn, { backgroundColor: '#7c3aed' }]}
                           onPress={() => handleOpenKelasModal(jadwal, 'soal')}
@@ -2034,19 +2058,28 @@ export default function UjianJadwal() {
                           <FileQuestion size={14} color="#fff" />
                           <Text style={styles.actionBtnTextWhite}>Soal</Text>
                         </TouchableOpacity>
+                      ) : (
+                        <View style={{ flex: 1 }} />
                       )}
 
-                      {showAwasiBtn && (
+                      {showNilaiBtn ? (
                         <TouchableOpacity
-                          style={[styles.actionBtn, { backgroundColor: '#dc2626' }]}
-                          onPress={() => handleOpenRuangModal(jadwal, 'awasi')}
+                          style={[styles.actionBtn, { backgroundColor: '#2a2c87' }]}
+                          onPress={() => handleOpenKelasModal(jadwal, 'nilai')}
                         >
-                          <Eye size={14} color="#fff" />
-                          <Text style={styles.actionBtnTextWhite}>Awasi</Text>
+                          <BookOpenCheck size={14} color="#fff" />
+                          <Text style={styles.actionBtnTextWhite}>Daftar Nilai</Text>
                         </TouchableOpacity>
+                      ) : (
+                        <View style={{ flex: 1 }} />
                       )}
+                    </View>
+                  )}
 
-                      {(canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum) && (
+                  {/* Baris 2: Tombol Pengawas (Kiri) dan Tombol Awasi (Kanan) */}
+                  {((canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum) || showAwasiBtn) && (
+                    <View style={[styles.actionRow, { marginTop: (showSoalBtn || showNilaiBtn) ? 6 : 12 }]}>
+                      {(canManageJadwal || isOperatorOrPanitiaCore || isWakaKurikulum) ? (
                         <TouchableOpacity
                           style={[styles.actionBtn, { backgroundColor: '#0d9488' }]}
                           onPress={() => handleOpenPengawasRuangModal(jadwal)}
@@ -2054,20 +2087,21 @@ export default function UjianJadwal() {
                           <UserCheck size={14} color="#fff" />
                           <Text style={styles.actionBtnTextWhite}>Pengawas</Text>
                         </TouchableOpacity>
+                      ) : (
+                        <View style={{ flex: 1 }} />
                       )}
-                    </View>
-                  )}
 
-                  {/* Tombol Nilai */}
-                  {showNilaiBtn && (
-                    <View style={[styles.actionRow, { marginTop: 6 }]}>
-                      <TouchableOpacity
-                        style={[styles.actionBtn, { backgroundColor: '#2a2c87', flex: 1 }]}
-                        onPress={() => handleOpenKelasModal(jadwal, 'nilai')}
-                      >
-                        <BookOpenCheck size={14} color="#fff" />
-                        <Text style={styles.actionBtnTextWhite}>Daftar Nilai</Text>
-                      </TouchableOpacity>
+                      {showAwasiBtn ? (
+                        <TouchableOpacity
+                          style={[styles.actionBtn, { backgroundColor: '#dc2626' }]}
+                          onPress={() => handleOpenRuangModal(jadwal, 'awasi')}
+                        >
+                          <Eye size={14} color="#fff" />
+                          <Text style={styles.actionBtnTextWhite}>Awasi</Text>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={{ flex: 1 }} />
+                      )}
                     </View>
                   )}
 
@@ -3889,6 +3923,38 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     fontWeight: '600',
     color: '#334155',
+  },
+  proctorListBox: {
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  proctorListTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#0f766e',
+  },
+  proctorPointItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 2,
+  },
+  proctorBullet: {
+    fontSize: 13,
+    color: '#0d9488',
+    fontWeight: 'bold',
+    marginRight: 6,
+    lineHeight: 16,
+  },
+  proctorPointText: {
+    fontSize: 11,
+    color: '#334155',
+    flex: 1,
+    lineHeight: 16,
   },
   actionRow: {
     flexDirection: 'row',

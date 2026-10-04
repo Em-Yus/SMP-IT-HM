@@ -11,6 +11,7 @@ import Constants from 'expo-constants';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getOperationalDayName } from '../../utils/dateUtils';
 import { scheduleSiswaReminders } from '../../services/scheduleNotificationHelper';
+import { isPengumumanVisibleForSiswa } from '../../utils/pengumumanHelper';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -54,20 +55,27 @@ export default function DashboardScreen() {
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const lastRead = await AsyncStorage.getItem('pengumuman_last_read');
+      const localUserStr = await AsyncStorage.getItem('user_siswa');
+      let currentSiswa: any = null;
+      if (localUserStr) {
+        try { currentSiswa = JSON.parse(localUserStr); } catch (e) {}
+      }
+
       const { data } = await supabase
         .from('cms_pengumuman')
-        .select('created_at')
+        .select('*')
         .eq('status', 'Aktif')
-        .in('target', ['Siswa', 'Semua'])
-        .order('created_at', { ascending: false })
-        .limit(1);
+        .order('created_at', { ascending: false });
+
       if (data && data.length > 0) {
-        const latestCreatedAt = data[0].created_at;
-        // Tampilkan titik jika belum pernah buka, atau ada pengumuman baru setelah terakhir buka
-        setHasUnreadNotif(!lastRead || latestCreatedAt > lastRead);
-      } else {
-        setHasUnreadNotif(false);
+        const myPengumuman = data.filter((item: any) => isPengumumanVisibleForSiswa(item.target, currentSiswa));
+        if (myPengumuman.length > 0) {
+          const latestCreatedAt = myPengumuman[0].created_at;
+          setHasUnreadNotif(!lastRead || latestCreatedAt > lastRead);
+          return;
+        }
       }
+      setHasUnreadNotif(false);
     } catch (e) {
       setHasUnreadNotif(false);
     }

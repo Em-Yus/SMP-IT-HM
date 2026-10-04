@@ -176,7 +176,7 @@ export default function CbtBankSoal() {
           .select('*, data_mapel(nama_mapel), data_guru:data_guru!cbt_bank_soal_guru_id_fkey(nama), pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)')
           .order('created_at', { ascending: false }),
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
-        supabase.from('data_guru').select('id, nama').order('nama'),
+        supabase.from('data_guru').select('id, nama').is('tanggal_keluar', null).order('nama'),
         supabase.from('data_kelas').select('id, nama_kelas').order('nama_kelas'),
       ]);
 

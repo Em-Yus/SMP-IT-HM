@@ -5,9 +5,14 @@ import { ChevronLeft, Megaphone, Plus, Trash2, Edit, Save, X, EyeOff, Eye, Send 
 import { router } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import { sendAnnouncementPushNotification } from '../services/pushNotificationService';
+import { formatTargetBadge } from '../utils/pengumumanHelper';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function Pengumuman() {
+  const insets = useSafeAreaInsets();
   const [dataPengumuman, setDataPengumuman] = useState<any[]>([]);
+  const [kelasList, setKelasList] = useState<any[]>([]);
+  const [siswaList, setSiswaList] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal State
@@ -21,14 +26,24 @@ export default function Pengumuman() {
   const [judul, setJudul] = useState('');
   const [isi, setIsi] = useState('');
   const [target, setTarget] = useState('Semua');
+  const [targetType, setTargetType] = useState('Semua');
+  const [selectedKelas, setSelectedKelas] = useState('7');
+  const [selectedSiswa, setSelectedSiswa] = useState<any>(null);
+  const [searchSiswaQuery, setSearchSiswaQuery] = useState('');
   const [status, setStatus] = useState('Aktif');
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.from('cms_pengumuman').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      setDataPengumuman(data || []);
+      const [pengRes, kelasRes, siswaRes] = await Promise.all([
+        supabase.from('cms_pengumuman').select('*').order('created_at', { ascending: false }),
+        supabase.from('data_kelas').select('id, nama_kelas').order('id'),
+        supabase.from('data_siswa').select('id, nama, nipd, nisn, kelas').order('nama'),
+      ]);
+      if (pengRes.error) throw pengRes.error;
+      setDataPengumuman(pengRes.data || []);
+      setKelasList(kelasRes.data || []);
+      setSiswaList(siswaRes.data || []);
     } catch (err) {
       Alert.alert('Error', 'Gagal memuat data pengumuman.');
     } finally {
@@ -40,10 +55,9 @@ export default function Pengumuman() {
     fetchData();
   
     const listener = DeviceEventEmitter.addListener('globalRefresh', () => {
-      console.log('Global refresh triggered in ' + 'src\app\pengumuman.tsx');
+      console.log('Global refresh triggered in ' + 'src\\app\\pengumuman.tsx');
       if (Platform.OS === 'android') { ToastAndroid.show('Memperbarui data...', ToastAndroid.SHORT); }
-    fetchData();
-  
+      fetchData();
     });
 
     return () => listener.remove();
@@ -57,13 +71,36 @@ export default function Pengumuman() {
       setIsi(item.isi);
       setTarget(item.target);
       setStatus(item.status);
+
+      const t = String(item.target || '').trim();
+      if (t === 'Semua' || t === 'Publik') {
+        setTargetType('Semua');
+      } else if (t === 'Guru') {
+        setTargetType('Guru');
+      } else if (t === 'Siswa') {
+        setTargetType('Siswa');
+      } else if (t.startsWith('Kelas:')) {
+        setTargetType('Kelas');
+        setSelectedKelas(t.replace('Kelas:', '').trim());
+      } else if (t.startsWith('Siswa:')) {
+        setTargetType('Siswa_Spesifik');
+        const matchId = t.match(/\[(\d+)\]/);
+        if (matchId && matchId[1]) {
+          const found = siswaList.find((s: any) => String(s.id) === matchId[1]);
+          if (found) setSelectedSiswa(found);
+        }
+      }
     } else {
       setIsEditing(false);
       setEditId(null);
       setJudul('');
       setIsi('');
       setTarget('Semua');
+      setTargetType('Semua');
       setStatus('Aktif');
+      setSelectedKelas(kelasList[0]?.nama_kelas || '7');
+      setSelectedSiswa(null);
+      setSearchSiswaQuery('');
     }
     setIsModalOpen(true);
   };
@@ -217,9 +254,14 @@ export default function Pengumuman() {
                   <View style={[styles.badge, item.status === 'Aktif' ? styles.badgeActive : styles.badgeArchive]}>
                     <Text style={[styles.badgeText, item.status === 'Aktif' ? styles.badgeTextActive : styles.badgeTextArchive]}>{item.status}</Text>
                   </View>
-                  <View style={styles.badgeTarget}>
-                    <Text style={styles.badgeTargetText}>Target: {item.target}</Text>
-                  </View>
+                  {(() => {
+                    const badge = formatTargetBadge(item.target);
+                    return (
+                      <View style={[styles.badgeTarget, { backgroundColor: badge.bg, borderColor: badge.border, borderWidth: 1 }]}>
+                        <Text style={[styles.badgeTargetText, { color: badge.text }]}>{badge.label}</Text>
+                      </View>
+                    );
+                  })()}
                 </View>
                 <Text style={styles.cardDate}>{formatDate(item.created_at)}</Text>
               </View>
@@ -276,32 +318,136 @@ export default function Pengumuman() {
                   />
                 </View>
 
-                <View style={{ flexDirection: 'row', gap: 12 }}>
-                  <View style={[styles.formGroup, { flex: 1 }]}>
-                    <Text style={styles.label}>Target</Text>
-                    <View style={styles.pickerWrapper}>
-                      <Picker selectedValue={target} onValueChange={setTarget}>
-                        <Picker.Item label="Semua" value="Semua" />
-                        <Picker.Item label="Siswa" value="Siswa" />
-                        <Picker.Item label="Guru" value="Guru" />
-                        <Picker.Item label="Publik" value="Publik" />
-                      </Picker>
-                    </View>
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Target Pembaca</Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker
+                      selectedValue={targetType}
+                      onValueChange={(val) => {
+                        setTargetType(val);
+                        if (val === 'Semua') setTarget('Semua');
+                        else if (val === 'Guru') setTarget('Guru');
+                        else if (val === 'Siswa') setTarget('Siswa');
+                        else if (val === 'Kelas') {
+                          const defK = selectedKelas || kelasList[0]?.nama_kelas || '7';
+                          setTarget(`Kelas: ${defK}`);
+                        } else if (val === 'Siswa_Spesifik') {
+                          const s = selectedSiswa || siswaList[0];
+                          if (s) {
+                            setSelectedSiswa(s);
+                            setTarget(`Siswa: [${s.id}] [${s.nipd}] ${s.nama} (${s.kelas || '-'})`);
+                          }
+                        }
+                      }}
+                    >
+                      <Picker.Item label="Semua Pengguna (Guru & Siswa)" value="Semua" />
+                      <Picker.Item label="Khusus Guru" value="Guru" />
+                      <Picker.Item label="Semua Siswa (Seluruh Kelas)" value="Siswa" />
+                      <Picker.Item label="Kelas Tertentu (Tingkat / Rombel)" value="Kelas" />
+                      <Picker.Item label="Siswa Tertentu (1 Penerima Tunggal)" value="Siswa_Spesifik" />
+                    </Picker>
                   </View>
-                  <View style={[styles.formGroup, { flex: 1 }]}>
-                    <Text style={styles.label}>Status</Text>
+                </View>
+
+                {/* Sub-selector jika Target adalah Kelas Tertentu */}
+                {targetType === 'Kelas' && (
+                  <View style={styles.subSelectorBox}>
+                    <Text style={styles.subSelectorLabel}>PILIH KELAS SASARAN :</Text>
                     <View style={styles.pickerWrapper}>
-                      <Picker selectedValue={status} onValueChange={setStatus}>
-                        <Picker.Item label="Aktif" value="Aktif" />
-                        <Picker.Item label="Arsip" value="Arsip" />
+                      <Picker
+                        selectedValue={selectedKelas}
+                        onValueChange={(val) => {
+                          setSelectedKelas(val);
+                          setTarget(`Kelas: ${val}`);
+                        }}
+                      >
+                        <Picker.Item label="Tingkat Kelas 7 (Semua VII-A, VII-B, dst.)" value="7" />
+                        <Picker.Item label="Tingkat Kelas 8 (Semua VIII-A, VIII-B, dst.)" value="8" />
+                        <Picker.Item label="Tingkat Kelas 9 (Semua IX-A, IX-B, dst.)" value="9" />
+                        {kelasList.map((k: any) => (
+                          <Picker.Item key={k.id} label={`Kelas ${k.nama_kelas}`} value={k.nama_kelas} />
+                        ))}
                       </Picker>
                     </View>
+                    <Text style={styles.subSelectorHint}>
+                      Pengumuman hanya akan muncul di aplikasi siswa kelas ini.
+                    </Text>
+                  </View>
+                )}
+
+                {/* Sub-selector jika Target adalah 1 Siswa Spesifik */}
+                {targetType === 'Siswa_Spesifik' && (
+                  <View style={[styles.subSelectorBox, { backgroundColor: '#faf5ff', borderColor: '#e9d5ff' }]}>
+                    <Text style={[styles.subSelectorLabel, { color: '#6b21a8' }]}>PILIH 1 SISWA PENERIMA :</Text>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: '#fff', fontSize: 13, marginBottom: 8 }]}
+                      placeholder="Cari nama siswa / NIPD..."
+                      value={searchSiswaQuery}
+                      onChangeText={setSearchSiswaQuery}
+                    />
+                    <ScrollView style={{ maxHeight: 150, backgroundColor: '#fff', borderRadius: 8, borderWidth: 1, borderColor: '#e9d5ff' }} nestedScrollEnabled>
+                      {siswaList
+                        .filter((s: any) => {
+                          if (!searchSiswaQuery.trim()) return true;
+                          const q = searchSiswaQuery.toLowerCase();
+                          return (
+                            (s.nama || '').toLowerCase().includes(q) ||
+                            (s.nipd || '').includes(q) ||
+                            (s.nisn || '').includes(q) ||
+                            (s.kelas || '').toLowerCase().includes(q)
+                          );
+                        })
+                        .map((s: any) => {
+                          const isSelected = selectedSiswa?.id === s.id;
+                          return (
+                            <TouchableOpacity
+                              key={s.id}
+                              style={[
+                                styles.siswaSelectItem,
+                                isSelected && { backgroundColor: '#f3e8ff' }
+                              ]}
+                              onPress={() => {
+                                setSelectedSiswa(s);
+                                setTarget(`Siswa: [${s.id}] [${s.nipd}] ${s.nama} (${s.kelas || '-'})`);
+                              }}
+                            >
+                              <View style={{ flex: 1 }}>
+                                <Text style={[styles.siswaSelectName, isSelected && { color: '#6b21a8', fontWeight: 'bold' }]}>{s.nama}</Text>
+                                <Text style={styles.siswaSelectMeta}>Kelas: {s.kelas || '-'} • NIPD: {s.nipd || '-'}</Text>
+                              </View>
+                              {isSelected && (
+                                <Text style={styles.siswaSelectBadge}>Terpilih</Text>
+                              )}
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </ScrollView>
+                    {selectedSiswa && (
+                      <View style={styles.selectedSiswaBadgeBox}>
+                        <Text style={styles.selectedSiswaBadgeText}>
+                          Penerima Tertuju: {selectedSiswa.nama} (Kelas {selectedSiswa.kelas || '-'})
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Status Penayangan</Text>
+                  <View style={styles.pickerWrapper}>
+                    <Picker selectedValue={status} onValueChange={setStatus}>
+                      <Picker.Item label="Aktif (Ditayangkan)" value="Aktif" />
+                      <Picker.Item label="Arsip (Disembunyikan)" value="Arsip" />
+                    </Picker>
                   </View>
                 </View>
               </ScrollView>
             </KeyboardAvoidingView>
             
-            <View style={styles.modalFooter}>
+            <View style={[
+              styles.modalFooter,
+              { paddingBottom: Math.max(insets.bottom + 16, Platform.OS === 'android' ? 56 : 24) }
+            ]}>
               <TouchableOpacity style={styles.btnSaveModal} onPress={handleSave} disabled={isSaving}>
                 {isSaving ? <ActivityIndicator color="#fff" /> : <><Save size={20} color="#fff" /><Text style={styles.btnSaveModalText}>Simpan & Terbitkan</Text></>}
               </TouchableOpacity>
@@ -359,7 +505,7 @@ const styles = StyleSheet.create({
 
   // Modal Styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flex: 1 },
+  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flex: 1, marginTop: Platform.OS === 'android' ? 36 : 48 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#1f2937' },
   
@@ -369,7 +515,17 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, padding: 12, fontSize: 14 },
   pickerWrapper: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, overflow: 'hidden' },
   
-  modalFooter: { padding: 20, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#fff' },
+  modalFooter: { paddingHorizontal: 20, paddingTop: 16, borderTopWidth: 1, borderTopColor: '#f3f4f6', backgroundColor: '#fff' },
   btnSaveModal: { backgroundColor: '#2a2c87', paddingVertical: 14, borderRadius: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
   btnSaveModalText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+
+  subSelectorBox: { backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 12, padding: 12, marginBottom: 16 },
+  subSelectorLabel: { fontSize: 11, fontWeight: 'bold', color: '#92400e', marginBottom: 6, letterSpacing: 0.5 },
+  subSelectorHint: { fontSize: 11, color: '#b45309', marginTop: 6 },
+  siswaSelectItem: { padding: 10, borderBottomWidth: 1, borderBottomColor: '#f3e8ff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  siswaSelectName: { fontSize: 13, color: '#1f2937' },
+  siswaSelectMeta: { fontSize: 11, color: '#6b7280', marginTop: 2 },
+  siswaSelectBadge: { fontSize: 10, backgroundColor: '#7e22ce', color: '#fff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, fontWeight: 'bold' },
+  selectedSiswaBadgeBox: { backgroundColor: '#f3e8ff', padding: 8, borderRadius: 8, marginTop: 8 },
+  selectedSiswaBadgeText: { fontSize: 12, fontWeight: 'bold', color: '#6b21a8' },
 });

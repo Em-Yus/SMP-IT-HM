@@ -32,7 +32,7 @@ export default function CbtSopModal({ isOpen, onClose, onApproved, currentRole =
   const fetchInitialData = async () => {
     try {
       const [guruRes, lembagaRes, periodikRes] = await Promise.all([
-        supabase.from('data_guru').select('id, nama').order('nama'),
+        supabase.from('data_guru').select('id, nama').is('tanggal_keluar', null).order('nama'),
         supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
         supabase.from('data_periodik').select('*').limit(1).maybeSingle(),
       ]);

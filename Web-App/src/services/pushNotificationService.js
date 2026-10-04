@@ -128,6 +128,8 @@ const sendMessagesWithProjectHandling = async (messages) => {
  * Mengirim push notification pengumuman ke seluruh perangkat terdaftar
  * sesuai dengan target audiens (Semua, Guru, atau Siswa).
  */
+import { isPengumumanVisibleForSiswa } from '../utils/pengumumanHelper';
+
 export const sendAnnouncementPushNotification = async ({ judul, isi, target = 'Semua' }) => {
   try {
     // 1. Ambil token sesuai target audiens
@@ -137,6 +139,17 @@ export const sendAnnouncementPushNotification = async ({ judul, isi, target = 'S
       query = query.like('nipd', 'GURU_%');
     } else if (target === 'Siswa') {
       query = query.not('nipd', 'like', 'GURU_%');
+    } else if (String(target).startsWith('Kelas:') || String(target).startsWith('Siswa:')) {
+      // Ambil daftar siswa untuk menyaring NIPD sesuai target kelas/siswa spesifik
+      const { data: allSiswa } = await supabase.from('data_siswa').select('id, nama, nipd, nisn, kelas');
+      const matchingSiswa = (allSiswa || []).filter((s) => isPengumumanVisibleForSiswa(target, s));
+      const targetNipds = matchingSiswa.map((s) => s.nipd).filter(Boolean);
+
+      if (targetNipds.length === 0) {
+        console.log('Tidak ada siswa yang cocok dengan target pengumuman:', target);
+        return { success: true, sentCount: 0, failedCount: 0 };
+      }
+      query = query.in('nipd', targetNipds);
     }
 
     const { data: tokensData, error } = await query;

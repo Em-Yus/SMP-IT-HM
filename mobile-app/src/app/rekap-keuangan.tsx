@@ -24,6 +24,7 @@ import {
   Printer
 } from 'lucide-react-native';
 import { router } from 'expo-router';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 export default function RekapKeuanganScreen() {
   const currentYear = new Date().getFullYear();
@@ -41,6 +42,73 @@ export default function RekapKeuanganScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'semua' | 'masuk' | 'keluar'>('semua');
   const [activeTab, setActiveTab] = useState<'arus_kas' | 'kategori'>('arus_kas');
+
+  // Date Picker States
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [activeDatePickerField, setActiveDatePickerField] = useState<'start' | 'end'>('start');
+
+  const parseDateString = (dateStr: string) => {
+    if (!dateStr) return new Date();
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      const d = parseInt(parts[2], 10);
+      return new Date(y, m, d);
+    }
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? new Date() : d;
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (event.type === 'set' && selectedDate) {
+      const yyyy = selectedDate.getFullYear();
+      const mm = String(selectedDate.getMonth() + 1).padStart(2, '0');
+      const dd = String(selectedDate.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+      if (activeDatePickerField === 'start') {
+        setStartDate(dateStr);
+      } else {
+        setEndDate(dateStr);
+      }
+      if (Platform.OS === 'ios') {
+        setShowDatePicker(false);
+      }
+    } else if (event.type === 'dismissed') {
+      setShowDatePicker(false);
+    }
+  };
+
+  const formatDisplayDate = (dateStr: string) => {
+    if (!dateStr) return 'Pilih Tanggal';
+    const d = parseDateString(dateStr);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
+  const handleQuickPreset = (preset: 'today' | 'this_month' | 'this_year') => {
+    const t = new Date();
+    if (preset === 'today') {
+      const todayStr = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === 'this_month') {
+      const fDay = new Date(t.getFullYear(), t.getMonth(), 1);
+      const lDay = new Date(t.getFullYear(), t.getMonth() + 1, 0);
+      const startStr = `${fDay.getFullYear()}-${String(fDay.getMonth() + 1).padStart(2, '0')}-${String(fDay.getDate()).padStart(2, '0')}`;
+      const endStr = `${lDay.getFullYear()}-${String(lDay.getMonth() + 1).padStart(2, '0')}-${String(lDay.getDate()).padStart(2, '0')}`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    } else if (preset === 'this_year') {
+      const startStr = `${t.getFullYear()}-01-01`;
+      const endStr = `${t.getFullYear()}-12-31`;
+      setStartDate(startStr);
+      setEndDate(endStr);
+    }
+  };
 
   // Data
   const [dataPemasukanSiswa, setDataPemasukanSiswa] = useState<any[]>([]);
@@ -424,12 +492,45 @@ export default function RekapKeuanganScreen() {
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Mulai Tgl</Text>
-              <TextInput style={styles.inputDateSM} value={startDate} onChangeText={setStartDate} />
+              <TouchableOpacity
+                style={styles.datePickerBtn}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setActiveDatePickerField('start');
+                  setShowDatePicker(true);
+                }}
+              >
+                <Calendar size={15} color="#2a2c87" style={{ marginRight: 6 }} />
+                <Text style={styles.datePickerBtnText}>{formatDisplayDate(startDate)}</Text>
+              </TouchableOpacity>
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>Sampai Tgl</Text>
-              <TextInput style={styles.inputDateSM} value={endDate} onChangeText={setEndDate} />
+              <TouchableOpacity
+                style={styles.datePickerBtn}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setActiveDatePickerField('end');
+                  setShowDatePicker(true);
+                }}
+              >
+                <Calendar size={15} color="#2a2c87" style={{ marginRight: 6 }} />
+                <Text style={styles.datePickerBtnText}>{formatDisplayDate(endDate)}</Text>
+              </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Quick presets */}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+            <TouchableOpacity style={styles.quickPresetChip} onPress={() => handleQuickPreset('today')}>
+              <Text style={styles.quickPresetChipText}>Hari Ini</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.quickPresetChip} onPress={() => handleQuickPreset('this_month')}>
+              <Text style={styles.quickPresetChipText}>Bulan Ini</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.quickPresetChip} onPress={() => handleQuickPreset('this_year')}>
+              <Text style={styles.quickPresetChipText}>1 Tahun</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -544,6 +645,20 @@ export default function RekapKeuanganScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {/* DateTimePicker Dialog */}
+      {showDatePicker && (
+        <DateTimePicker
+          value={
+            activeDatePickerField === 'start'
+              ? parseDateString(startDate)
+              : parseDateString(endDate)
+          }
+          mode="date"
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={handleDateChange}
+        />
+      )}
     </View>
   );
 }
@@ -597,6 +712,10 @@ const styles = StyleSheet.create({
   label: { fontSize: 11, fontWeight: 'bold', color: '#475569', marginBottom: 4 },
   pickerWrapperSM: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, overflow: 'hidden', height: 40, justifyContent: 'center' },
   inputDateSM: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, height: 40, fontSize: 12, color: '#1e293b' },
+  datePickerBtn: { backgroundColor: '#f8fafc', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, height: 40, flexDirection: 'row', alignItems: 'center' },
+  datePickerBtnText: { fontSize: 12, color: '#1e293b', fontWeight: '600' },
+  quickPresetChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0' },
+  quickPresetChipText: { fontSize: 11, color: '#475569', fontWeight: '600' },
 
   subTabContainer: { flexDirection: 'row', backgroundColor: '#e2e8f0', padding: 4, borderRadius: 12, marginBottom: 12 },
   subTabBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },

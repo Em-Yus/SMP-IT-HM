@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Megaphone, Plus, Trash2, Edit, Save, X, EyeOff, Eye } from 'lucide-react';
+import { Megaphone, Plus, Trash2, Edit, Save, X, EyeOff, Eye, Search, UserCheck } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { sendAnnouncementPushNotification } from '../services/pushNotificationService';
+import { formatTargetBadge } from '../utils/pengumumanHelper';
 
 export default function CmsPengumuman() {
   const [dataPengumuman, setDataPengumuman] = useState([]);
+  const [kelasList, setKelasList] = useState([]);
+  const [siswaList, setSiswaList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
   // Modal State
@@ -17,18 +20,25 @@ export default function CmsPengumuman() {
   const [judul, setJudul] = useState('');
   const [isi, setIsi] = useState('');
   const [target, setTarget] = useState('Semua');
+  const [targetType, setTargetType] = useState('Semua');
+  const [selectedKelas, setSelectedKelas] = useState('7');
+  const [selectedSiswa, setSelectedSiswa] = useState(null);
+  const [searchSiswaQuery, setSearchSiswaQuery] = useState('');
   const [status, setStatus] = useState('Aktif');
 
   const fetchData = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('cms_pengumuman')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [pengumumanRes, kelasRes, siswaRes] = await Promise.all([
+        supabase.from('cms_pengumuman').select('*').order('created_at', { ascending: false }),
+        supabase.from('data_kelas').select('id, nama_kelas').order('id'),
+        supabase.from('data_siswa').select('id, nama, nipd, nisn, kelas').order('nama'),
+      ]);
 
-      if (error) throw error;
-      setDataPengumuman(data || []);
+      if (pengumumanRes.error) throw pengumumanRes.error;
+      setDataPengumuman(pengumumanRes.data || []);
+      setKelasList(kelasRes.data || []);
+      setSiswaList(siswaRes.data || []);
     } catch (err) {
       console.error(err);
       Swal.fire('Error', 'Gagal memuat data pengumuman.', 'error');
@@ -47,15 +57,38 @@ export default function CmsPengumuman() {
       setEditId(item.id);
       setJudul(item.judul);
       setIsi(item.isi);
-      setTarget(item.target);
       setStatus(item.status);
+      setTarget(item.target);
+
+      const t = String(item.target || '').trim();
+      if (t === 'Semua' || t === 'Publik') {
+        setTargetType('Semua');
+      } else if (t === 'Guru') {
+        setTargetType('Guru');
+      } else if (t === 'Siswa') {
+        setTargetType('Siswa');
+      } else if (t.startsWith('Kelas:')) {
+        setTargetType('Kelas');
+        setSelectedKelas(t.replace('Kelas:', '').trim());
+      } else if (t.startsWith('Siswa:')) {
+        setTargetType('Siswa_Spesifik');
+        const matchId = t.match(/\[(\d+)\]/);
+        if (matchId && matchId[1]) {
+          const found = siswaList.find((s) => String(s.id) === matchId[1]);
+          if (found) setSelectedSiswa(found);
+        }
+      }
     } else {
       setIsEditing(false);
       setEditId(null);
       setJudul('');
       setIsi('');
       setTarget('Semua');
+      setTargetType('Semua');
       setStatus('Aktif');
+      setSelectedKelas(kelasList[0]?.nama_kelas || '7');
+      setSelectedSiswa(null);
+      setSearchSiswaQuery('');
     }
     setIsModalOpen(true);
   };
@@ -258,13 +291,14 @@ export default function CmsPengumuman() {
                       <p className="text-xs text-gray-500 truncate max-w-xs" title={item.isi}>{item.isi}</p>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${item.target === 'Semua' ? 'bg-purple-100 text-purple-700' :
-                          item.target === 'Publik' ? 'bg-blue-100 text-blue-700' :
-                            item.target === 'Siswa' ? 'bg-green-100 text-green-700' :
-                              'bg-orange-100 text-orange-700'
-                        }`}>
-                        {item.target}
-                      </span>
+                      {(() => {
+                        const badge = formatTargetBadge(item.target);
+                        return (
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold border inline-flex items-center gap-1 ${badge.color}`}>
+                            {badge.label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-6 py-4 text-gray-600 font-medium text-xs">
                       {formatDate(item.created_at)}
@@ -327,32 +361,148 @@ export default function CmsPengumuman() {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Target Pembaca</label>
-                    <select
-                      value={target}
-                      onChange={(e) => setTarget(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#85c226] focus:border-[#85c226] font-medium"
-                    >
-                      <option value="Semua">Semua (Siswa, Guru, Publik)</option>
-                      <option value="Siswa">Hanya Siswa (Muncul di Dashboard Siswa)</option>
-                      <option value="Guru">Hanya Guru (Muncul di Dashboard Guru)</option>
-                      <option value="Publik">Hanya Publik (Muncul di Beranda Utama)</option>
-                    </select>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">Target Pembaca</label>
+                      <select
+                        value={targetType}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTargetType(val);
+                          if (val === 'Semua') setTarget('Semua');
+                          else if (val === 'Guru') setTarget('Guru');
+                          else if (val === 'Siswa') setTarget('Siswa');
+                          else if (val === 'Kelas') {
+                            const defK = selectedKelas || kelasList[0]?.nama_kelas || '7';
+                            setTarget(`Kelas: ${defK}`);
+                          } else if (val === 'Siswa_Spesifik') {
+                            const s = selectedSiswa || siswaList[0];
+                            if (s) {
+                              setSelectedSiswa(s);
+                              setTarget(`Siswa: [${s.id}] [${s.nipd}] ${s.nama} (${s.kelas || '-'})`);
+                            }
+                          }
+                        }}
+                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#85c226] focus:border-[#85c226] font-medium"
+                      >
+                        <option value="Semua">Semua Pengguna (Guru, Siswa, Publik)</option>
+                        <option value="Guru">Khusus Guru</option>
+                        <option value="Siswa">Semua Siswa (Seluruh Kelas)</option>
+                        <option value="Kelas">Kelas Tertentu (Tingkat / Rombel)</option>
+                        <option value="Siswa_Spesifik">Siswa Tertentu (1 Penerima Tunggal)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-gray-700 mb-1">Status Penayangan</label>
+                      <select
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#85c226] focus:border-[#85c226] font-medium"
+                      >
+                        <option value="Aktif">Aktif (Ditayangkan)</option>
+                        <option value="Arsip">Arsip (Disembunyikan)</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-bold text-gray-700 mb-1">Status Penayangan</label>
-                    <select
-                      value={status}
-                      onChange={(e) => setStatus(e.target.value)}
-                      className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#85c226] focus:border-[#85c226] font-medium"
-                    >
-                      <option value="Aktif">Aktif (Ditayangkan)</option>
-                      <option value="Arsip">Arsip (Disembunyikan)</option>
-                    </select>
-                  </div>
+                  {/* Sub-Selector jika Target adalah Kelas Tertentu */}
+                  {targetType === 'Kelas' && (
+                    <div className="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2 animate-in fade-in duration-150">
+                      <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider">
+                        Pilih Kelas Sasaran Ujian / Pengumuman :
+                      </label>
+                      <select
+                        value={selectedKelas}
+                        onChange={(e) => {
+                          setSelectedKelas(e.target.value);
+                          setTarget(`Kelas: ${e.target.value}`);
+                        }}
+                        className="w-full px-4 py-2.5 bg-white border border-amber-300 rounded-xl font-semibold text-gray-800 focus:ring-2 focus:ring-amber-500 text-sm"
+                      >
+                        <optgroup label="Tingkat Kelas (Mencakup Semua Rombel)">
+                          <option value="7">Tingkat Kelas 7 (Semua VII-A, VII-B, dst.)</option>
+                          <option value="8">Tingkat Kelas 8 (Semua VIII-A, VIII-B, dst.)</option>
+                          <option value="9">Tingkat Kelas 9 (Semua IX-A, IX-B, IX-C, dst.)</option>
+                        </optgroup>
+                        <optgroup label="Rombel Spesifik">
+                          {kelasList.map((k) => (
+                            <option key={k.id} value={k.nama_kelas}>
+                              Kelas {k.nama_kelas}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                      <p className="text-[11.5px] text-amber-800 font-medium">
+                        Pengumuman ini hanya akan dapat dilihat oleh siswa di kelas yang dipilih. Siswa di kelas lain tidak akan mendapatkan atau melihat pengumuman ini.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Sub-Selector jika Target adalah 1 Siswa Spesifik */}
+                  {targetType === 'Siswa_Spesifik' && (
+                    <div className="p-4 bg-purple-50/80 border border-purple-200 rounded-2xl space-y-3 animate-in fade-in duration-150">
+                      <label className="block text-xs font-bold text-purple-900 uppercase tracking-wider">
+                        Pilih 1 Siswa Penerima :
+                      </label>
+                      <div className="relative">
+                        <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-purple-400" />
+                        <input
+                          type="text"
+                          placeholder="Cari nama siswa, NIPD, atau kelas..."
+                          value={searchSiswaQuery}
+                          onChange={(e) => setSearchSiswaQuery(e.target.value)}
+                          className="w-full pl-9 pr-3.5 py-2 text-xs bg-white border border-purple-200 rounded-xl focus:ring-2 focus:ring-purple-500 font-medium"
+                        />
+                      </div>
+                      <div className="max-h-40 overflow-y-auto border border-purple-200 rounded-xl bg-white divide-y divide-purple-50 custom-scrollbar">
+                        {siswaList
+                          .filter((s) => {
+                            if (!searchSiswaQuery.trim()) return true;
+                            const q = searchSiswaQuery.toLowerCase();
+                            return (
+                              (s.nama || '').toLowerCase().includes(q) ||
+                              (s.nipd || '').includes(q) ||
+                              (s.nisn || '').includes(q) ||
+                              (s.kelas || '').toLowerCase().includes(q)
+                            );
+                          })
+                          .map((s) => {
+                            const isSelected = selectedSiswa?.id === s.id;
+                            return (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedSiswa(s);
+                                  setTarget(`Siswa: [${s.id}] [${s.nipd}] ${s.nama} (${s.kelas || '-'})`);
+                                }}
+                                className={`w-full text-left p-2.5 flex items-center justify-between text-xs transition cursor-pointer ${
+                                  isSelected ? 'bg-purple-100 font-bold text-purple-900' : 'hover:bg-purple-50/60 text-gray-700'
+                                }`}
+                              >
+                                <div>
+                                  <p className="font-semibold text-gray-800">{s.nama}</p>
+                                  <p className="text-[11px] text-gray-500">Kelas: {s.kelas || '-'} • NIPD: {s.nipd || '-'}</p>
+                                </div>
+                                {isSelected && (
+                                  <span className="px-2 py-0.5 bg-purple-600 text-white text-[10px] rounded-full font-bold">
+                                    Terpilih
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                      </div>
+                      {selectedSiswa && (
+                        <div className="flex items-center gap-2 text-xs font-bold text-purple-900 bg-purple-100 px-3 py-2 rounded-xl">
+                          <UserCheck size={16} className="text-purple-700" />
+                          <span>Penerima Tertuju: {selectedSiswa.nama} (Kelas {selectedSiswa.kelas || '-'})</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>

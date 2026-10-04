@@ -251,7 +251,7 @@ export default function UjianSoal() {
     try {
       const [mapelRes, guruRes] = await Promise.all([
         supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
-        supabase.from('data_guru').select('id, nama').order('nama'),
+        supabase.from('data_guru').select('id, nama').is('tanggal_keluar', null).order('nama'),
       ]);
       if (mapelRes.data) setMapelList(mapelRes.data);
       if (guruRes.data) setGuruList(guruRes.data);

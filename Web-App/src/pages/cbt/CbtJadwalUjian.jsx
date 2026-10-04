@@ -330,7 +330,7 @@ export default function CbtJadwalUjian() {
             .maybeSingle(),
           supabase.from('data_kelas').select('id, nama_kelas, ruang_id').order('nama_kelas'),
           supabase.from('data_mapel').select('id, nama_mapel').order('nama_mapel'),
-          supabase.from('data_guru').select('id, nama').order('nama'),
+          supabase.from('data_guru').select('id, nama').is('tanggal_keluar', null).order('nama'),
           supabase.from('data_ruang').select('id, nama_ruang').order('nama_ruang'),
           supabase.from('cbt_bank_soal').select('id, judul, total_soal, tingkat_kelas, mapel_id, jenis_ujian, pengawas_guru_id, pengawas:data_guru!cbt_bank_soal_pengawas_guru_id_fkey(nama)').order('judul'),
           supabase.from('pembelajaran').select('kelas_id, mapel_id, guru_id'),
@@ -346,13 +346,14 @@ export default function CbtJadwalUjian() {
       if (bankRes.data) setBankSoalList(bankRes.data);
       if (pemRes.data) setPembelajaranList(pemRes.data);
 
-      // Fetch penugasan pengawas per ruangan dari cbt_berita_acara
+      // Fetch penugasan pengawas per ruangan dari cbt_berita_acara (hanya guru yang berstatus aktif)
       const { data: baData } = await supabase
         .from('cbt_berita_acara')
-        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama), data_ruang(id, nama_ruang)');
+        .select('jadwal_id, ruang_id, pengawas_guru_id, data_guru(id, nama, tanggal_keluar), data_ruang(id, nama_ruang)');
 
       const pMap = {};
       (baData || []).forEach((item) => {
+        if (item.data_guru?.tanggal_keluar) return; // Abaikan guru yang sudah tidak aktif
         if (item.jadwal_id && item.pengawas_guru_id) {
           if (!pMap[item.jadwal_id]) pMap[item.jadwal_id] = [];
           pMap[item.jadwal_id].push({
@@ -743,7 +744,7 @@ export default function CbtJadwalUjian() {
         supabase.from('data_lembaga').select('*').limit(1).maybeSingle(),
         supabase.from('cbt_struktur_panitia').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
         supabase.from('cbt_sop_persetujuan').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-        supabase.from('data_guru').select('id, nama, nip'),
+        supabase.from('data_guru').select('id, nama, nip').is('tanggal_keluar', null),
       ]);
 
       const lembaga = lembagaRes.data || {};
@@ -1160,14 +1161,15 @@ export default function CbtJadwalUjian() {
         });
       }
 
-      // 2. Ambil penugasan pengawas yang sudah tersimpan di cbt_berita_acara
+      // 2. Ambil penugasan pengawas yang sudah tersimpan di cbt_berita_acara (hanya guru aktif)
       const { data: existingBA } = await supabase
         .from('cbt_berita_acara')
-        .select('ruang_id, pengawas_guru_id')
+        .select('ruang_id, pengawas_guru_id, data_guru(tanggal_keluar)')
         .eq('jadwal_id', jadwal.id);
 
       const existingPengawasMap = {};
       (existingBA || []).forEach((ba) => {
+        if (ba.data_guru?.tanggal_keluar) return; // Abaikan jika pengawas sudah tidak aktif
         if (ba.ruang_id) {
           existingPengawasMap[ba.ruang_id] = ba.pengawas_guru_id;
         }
@@ -1578,31 +1580,50 @@ export default function CbtJadwalUjian() {
                         Mapel: {j.data_mapel?.nama_mapel || '-'}
                       </p>
 
-                      {/* Metadata Waktu, Guru Pengampu, Pengawas */}
+                      {/* Metadata Waktu & Guru Pengampu */}
                       <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-gray-50 text-xs text-gray-600">
                         <div className="flex items-center gap-1.5">
-                          <Clock size={14} className="text-blue-500" />
-                          <span>
+                          <Clock size={14} className="text-blue-500 shrink-0" />
+                          <span className="truncate">
                             {j.jam_mulai?.slice(0, 5)} - {j.jam_selesai?.slice(0, 5)} ({j.durasi_menit} mnt)
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
-                          <UserCheck size={14} className="text-teal-600 shrink-0" />
-                          <span className="truncate">
-                            Pengawas: {(() => {
-                              const rProctors = jadwalPengawasRuangMap[j.id];
-                              if (rProctors && rProctors.length > 0) {
-                                return rProctors.map(rp => `${rp.nama_ruang} (${rp.guru_nama})`).join(' • ');
-                              }
-                              return j.pengawas?.nama || j.pengawas?.nama_guru || '-';
-                            })()}
+                          <Users size={14} className="text-amber-500 shrink-0" />
+                          <span className="truncate" title={j.guru_pengampu?.nama || j.guru_pengampu?.nama_guru || '-'}>
+                            Pengampu: {j.guru_pengampu?.nama || j.guru_pengampu?.nama_guru || '-'}
                           </span>
                         </div>
                       </div>
 
-                      <div className="mt-1 text-xs text-gray-600 flex items-center gap-1.5">
-                        <Users size={14} className="text-amber-500" />
-                        <span className="truncate">Guru Pengampu: {j.guru_pengampu?.nama || j.guru_pengampu?.nama_guru || '-'}</span>
+                      {/* Daftar Pengawas Ruang (Bentuk Poin-poin) */}
+                      <div className="mt-2.5 p-2 bg-slate-50/80 border border-slate-200/80 rounded-xl">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-teal-800 mb-1">
+                          <UserCheck size={13} className="text-teal-600 shrink-0" />
+                          <span>Pengawas Ruangan:</span>
+                        </div>
+                        <div className="space-y-1 pl-1">
+                          {(() => {
+                            const rProctors = jadwalPengawasRuangMap[j.id];
+                            if (rProctors && rProctors.length > 0) {
+                              return rProctors.map((rp, idx) => (
+                                <div key={idx} className="flex items-start gap-1.5 text-[11px] text-slate-700">
+                                  <span className="text-teal-600 font-bold leading-none select-none">•</span>
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-bold text-slate-800">{rp.nama_ruang}: </span>
+                                    <span className="text-slate-600">{rp.guru_nama}</span>
+                                  </div>
+                                </div>
+                              ));
+                            }
+                            return (
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                                <span className="text-teal-600 font-bold leading-none select-none">•</span>
+                                <span>{j.pengawas?.nama || j.pengawas?.nama_guru || 'Belum diatur'}</span>
+                              </div>
+                            );
+                          })()}
+                        </div>
                       </div>
 
                       {/* Bank Soal Terhubung (Dinamis per tingkat untuk 1 Card Semua Kelas) */}
@@ -1632,45 +1653,53 @@ export default function CbtJadwalUjian() {
 
                     {/* HAK AKSES PER ROLE PADA TOMBOL CARD JADWAL */}
                     <div className="pt-3 border-t border-gray-100 space-y-2">
-                      {/* Skenario 1: OPS / Waka Kurikulum / Panitia -> 8 Tombol Lengkap */}
+                      {/* Skenario 1: OPS / Waka Kurikulum / Panitia -> 2 Tombol 2 Tombol */}
                       {isOPSOrPanitia ? (
                         <div className="space-y-2">
-                          {/* Row Aksi Utama (Soal Ujian, Awasi, Pengawas Ruang) */}
-                          <div className="grid grid-cols-3 gap-1.5">
-                            <button
-                              onClick={() => handleOpenSoalModal(j)}
-                              className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                              title="Soal Ujian"
-                            >
-                              <BookOpen size={13} /> Soal Ujian
-                            </button>
+                          {/* 2 Baris Tombol: Baris 1: Soal Ujian & Daftar Nilai, Baris 2: Pengawas & Awasi Ujian */}
+                          <div className="space-y-1.5">
+                            {/* Baris 1: Soal Ujian (Kiri) & Daftar Nilai (Kanan) */}
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button
+                                onClick={() => handleOpenSoalModal(j)}
+                                className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                                title="Soal Ujian"
+                              >
+                                <BookOpen size={13} />
+                                <span>Soal Ujian</span>
+                              </button>
 
-                            <button
-                              onClick={() => handleOpenAwasiModal(j)}
-                              className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                              title="Awasi Ujian"
-                            >
-                              <Video size={13} /> Awasi Ujian
-                            </button>
+                              <button
+                                onClick={() => navigate(`/cbt/nilai/${j.id}`)}
+                                className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                                title="Daftar Nilai"
+                              >
+                                <Award size={13} />
+                                <span>Daftar Nilai</span>
+                              </button>
+                            </div>
 
-                            <button
-                              onClick={() => handleOpenPengawasRuangModal(j)}
-                              className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                              title="Atur Pengawas Setiap Ruangan"
-                            >
-                              <UserCheck size={13} /> Pengawas
-                            </button>
+                            {/* Baris 2: Pengawas (Kiri) & Awasi Ujian (Kanan) */}
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <button
+                                onClick={() => handleOpenPengawasRuangModal(j)}
+                                className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                                title="Atur Pengawas Setiap Ruangan"
+                              >
+                                <UserCheck size={13} />
+                                <span>Pengawas</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleOpenAwasiModal(j)}
+                                className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                                title="Awasi Ujian"
+                              >
+                                <Video size={13} />
+                                <span>Awasi Ujian</span>
+                              </button>
+                            </div>
                           </div>
-
-                          {/* Tombol Daftar Nilai */}
-                          <button
-                            onClick={() => navigate(`/cbt/nilai/${j.id}`)}
-                            className="w-full py-1.5 px-3 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition"
-                            title="Daftar Nilai"
-                          >
-                            <Award size={14} />
-                            <span>Daftar Nilai</span>
-                          </button>
 
                           {/* Row CRUD (Edit, Hapus) */}
                           <div className="flex items-center justify-end gap-2 pt-1">
@@ -1715,51 +1744,73 @@ export default function CbtJadwalUjian() {
                           </div>
                         </div>
                       ) : isDiampu ? (
-                        /* Skenario 2: Guru Mapel Diampu -> Soal, Pengawas */
-                        <div className="space-y-2">
-                          <div className="grid grid-cols-2 gap-2">
+                        /* Skenario 2: Guru Mapel Diampu -> 2 Tombol 2 Tombol */
+                        <div className="space-y-1.5">
+                          {/* Baris 1: Soal Ujian (Kiri) & Daftar Nilai (Kanan) */}
+                          <div className="grid grid-cols-2 gap-1.5">
                             <button
                               onClick={() => handleOpenSoalModal(j)}
-                              className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                              className="py-2 px-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                              title="Soal Ujian"
                             >
-                              <BookOpen size={14} /> Soal Ujian
+                              <BookOpen size={14} />
+                              <span>Soal Ujian</span>
                             </button>
 
                             <button
-                              onClick={() => handleOpenPengawasRuangModal(j)}
-                              className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                              title="Atur Pengawas Setiap Ruangan"
+                              onClick={() => navigate(`/cbt/nilai/${j.id}`)}
+                              className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                              title="Daftar Nilai"
                             >
-                              <UserCheck size={14} /> Pengawas
+                              <Award size={14} />
+                              <span>Daftar Nilai</span>
                             </button>
                           </div>
 
+                          {/* Baris 2: Pengawas (Kiri) & Awasi (Kanan) */}
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              onClick={() => handleOpenPengawasRuangModal(j)}
+                              className="py-2 px-2 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                              title="Atur Pengawas Setiap Ruangan"
+                            >
+                              <UserCheck size={14} />
+                              <span>Pengawas</span>
+                            </button>
+
+                            {isDiawasi ? (
+                              <button
+                                onClick={() => handleOpenAwasiModal(j)}
+                                className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                                title="Awasi Ujian"
+                              >
+                                <Video size={14} />
+                                <span>Awasi Ujian</span>
+                              </button>
+                            ) : (
+                              <div />
+                            )}
+                          </div>
+                        </div>
+                      ) : isDiawasi ? (
+                        /* Skenario 3: Guru Pengawas -> Nilai & Awasi */
+                        <div className="grid grid-cols-2 gap-1.5">
                           <button
                             onClick={() => navigate(`/cbt/nilai/${j.id}`)}
-                            className="w-full py-1.5 px-3 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition"
+                            className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
                             title="Daftar Nilai"
                           >
                             <Award size={14} />
                             <span>Daftar Nilai</span>
                           </button>
 
-
-                        </div>
-                      ) : isDiawasi ? (
-                        /* Skenario 3: Guru Pengawas -> Awasi, Nilai */
-                        <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => handleOpenAwasiModal(j)}
-                            className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
+                            className="py-2 px-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition cursor-pointer"
+                            title="Awasi Ujian"
                           >
-                            <Video size={14} /> Awasi Ujian
-                          </button>
-
-                          <button
-                            onClick={() => navigate(`/cbt/nilai/${j.id}`)}
-                            className="py-2 px-2 bg-primary hover:bg-blue-900 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1 shadow-sm transition"
-                          >
-                            <Award size={14} /> Daftar Nilai
+                            <Video size={14} />
+                            <span>Awasi Ujian</span>
                           </button>
                         </div>
                       ) : (
