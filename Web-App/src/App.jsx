@@ -6,6 +6,7 @@ import DashboardGuru from './pages/DashboardGuru';
 import VerifikasiPPDB from './pages/VerifikasiPPDB';
 import DataSiswa from './pages/DataSiswa';
 import DataSiswaNonaktif from './pages/DataSiswaNonaktif';
+import VerValDapoSis from './pages/VerValDapoSis';
 import DataPegawai from './pages/DataPegawai';
 import DataPegawaiNonaktif from './pages/DataPegawaiNonaktif';
 import DataKelas from './pages/DataKelas';
@@ -98,6 +99,8 @@ function App() {
           <Route path="/verifikasi-ppdb" element={<VerifikasiPPDB />} />
           <Route path="/admin/pendaftaran-spmb" element={<AdminPendaftaranSPMB />} />
           <Route path="/data-siswa" element={<DataSiswa />} />
+          <Route path="/verval-daposis" element={<VerValDapoSis />} />
+          <Route path="/verval-dapodik" element={<VerValDapoSis />} />
           <Route path="/siswa-nonaktif" element={<DataSiswaNonaktif />} />
           <Route path="/data-pegawai" element={<DataPegawai />} />
           <Route path="/pegawai-nonaktif" element={<DataPegawaiNonaktif />} />

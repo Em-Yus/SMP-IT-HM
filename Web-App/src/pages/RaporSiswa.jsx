@@ -69,12 +69,16 @@ export default function RaporSiswa() {
       
       // 7. Fetch Ekskul, Koku, Presensi, Catatan
       const { data: ekskulData } = await supabase.from('anggota_ekskul')
-        .select(`siswa_id, keterangan, data_ekskul ( nama_ekskul )`)
-        .eq('siswa_id', siswaId).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+        .select(`siswa_id, predikat, deskripsi, data_ekskul!inner ( nama_ekskul, tahun_ajaran, semester )`)
+        .eq('siswa_id', siswaId)
+        .eq('data_ekskul.tahun_ajaran', filterTahun)
+        .eq('data_ekskul.semester', filterSemester);
         
       const { data: kokuData } = await supabase.from('anggota_kokurikuler')
-        .select(`siswa_id, data_kokurikuler ( nama_kegiatan )`)
-        .eq('siswa_id', siswaId).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+        .select(`siswa_id, predikat, deskripsi, data_kokurikuler!inner ( nama_projek, tahun_ajaran, semester )`)
+        .eq('siswa_id', siswaId)
+        .eq('data_kokurikuler.tahun_ajaran', filterTahun)
+        .eq('data_kokurikuler.semester', filterSemester);
         
       const { data: presensiData } = await supabase.from('presensi_siswa')
         .select('siswa_id, status')
@@ -114,7 +118,7 @@ export default function RaporSiswa() {
       let tpsOptimal = [];
       let tpsPeningkatan = [];
 
-      ['Tugas', 'PTS', 'PAS'].forEach(jenis => {
+      ['Tugas 1', 'Tugas 2', 'Tugas 3', 'Tugas 4', 'Tugas', 'PTS', 'PAS'].forEach(jenis => {
         const n = nilaiMapel.find(x => x.jenis_nilai === jenis);
         if (n && n.nilai_siswa !== null) {
           total += Number(n.nilai_siswa);
@@ -158,13 +162,18 @@ export default function RaporSiswa() {
     const mapelWajib = mapelWithNilai.filter(m => m.kelompok?.toLowerCase().includes('wajib') || !m.kelompok || m.kelompok === 'A' || m.kelompok === 'B');
     const mapelPilihan = mapelWithNilai.filter(m => m.kelompok?.toLowerCase().includes('pilihan') || m.kelompok === 'C');
 
-    const formatEkskul = (ekskulData || []).map(e => ({
-      nama_ekskul: e.data_ekskul?.nama_ekskul,
-      keterangan: e.keterangan
-    }));
+    const formatEkskul = (ekskulData || []).map(e => {
+      let desc = e.deskripsi || '';
+      let predikatText = e.predikat ? `[Predikat: ${e.predikat}] ` : '';
+      let fullKet = `${predikatText}${desc}`.trim();
+      return {
+        nama_ekskul: e.data_ekskul?.nama_ekskul || 'Ekstrakurikuler',
+        keterangan: fullKet || (e.predikat ? `Predikat ${e.predikat}` : 'Aktif mengikuti kegiatan ekstrakurikuler.')
+      };
+    });
 
     const formatKoku = (kokuData || []).map(k => ({
-      nama_kegiatan: k.data_kokurikuler?.nama_kegiatan
+      nama_kegiatan: k.data_kokurikuler?.nama_projek || 'Kokurikuler'
     }));
 
     const presensi = { sakit: 0, izin: 0, alpha: 0 };

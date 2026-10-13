@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity, ActivityIndicator, Modal, ScrollView, Alert, KeyboardAvoidingView, Platform, DeviceEventEmitter, ToastAndroid } from 'react-native';
 import { supabase } from '../../services/supabaseClient';
-import { Search, ArrowLeft, UserCircle, X, Plus, Edit, UserMinus, Save, Filter, CheckSquare, Square } from 'lucide-react-native';
+import { Search, ArrowLeft, UserCircle, X, Plus, Edit, UserMinus, Save, Filter, CheckSquare, Square, ShieldCheck } from 'lucide-react-native';
 import { router } from 'expo-router';
 import CustomDatePicker from '../components/CustomDatePicker';
 import { Picker } from '@react-native-picker/picker';
@@ -553,6 +553,13 @@ export default function DataSiswaAktif() {
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Data Siswa Aktif</Text>
         </View>
+        <TouchableOpacity
+          style={styles.headerVervalBtn}
+          onPress={() => router.push('/verval-daposis' as any)}
+        >
+          <ShieldCheck color="#fff" size={16} />
+          <Text style={styles.headerVervalBtnText}>VerVal</Text>
+        </TouchableOpacity>
       </View>
       <View style={styles.tabContainer}>
         <TouchableOpacity style={[styles.tabBtn, activeTab === 'data' && styles.tabBtnActive]} onPress={() => setActiveTab('data')}>
@@ -763,6 +770,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  headerVervalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 6,
+  },
+  headerVervalBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
   headerBack: {
     padding: 8,

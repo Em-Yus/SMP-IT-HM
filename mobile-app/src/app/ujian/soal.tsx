@@ -22,6 +22,7 @@ import * as XLSX from 'xlsx';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import CbtMobileMathText from '../../components/CbtMobileMathText';
 import {
   ChevronLeft,
   FileQuestion,
@@ -1481,7 +1482,7 @@ export default function UjianSoal() {
                   </View>
 
                   {/* Pertanyaan */}
-                  <Text style={styles.pertanyaanText}>{soal.pertanyaan}</Text>
+                  <CbtMobileMathText text={soal.pertanyaan} style={styles.pertanyaanText} />
 
                   {/* Gambar Soal Jika Ada */}
                   {soal.gambar_url ? (
@@ -1518,9 +1519,11 @@ export default function UjianSoal() {
                               </Text>
                             </View>
                             <View style={{ flex: 1 }}>
-                              <Text style={[styles.opsiVal, isCorrect && styles.opsiValCorrect]}>
-                                {textVal || `Pilihan ${key}`}
-                              </Text>
+                              <CbtMobileMathText
+                                text={textVal || `Pilihan ${key}`}
+                                style={[styles.opsiVal, isCorrect && styles.opsiValCorrect]}
+                                inline
+                              />
                               {imgVal ? (
                                 <Image
                                   source={{ uri: imgVal }}

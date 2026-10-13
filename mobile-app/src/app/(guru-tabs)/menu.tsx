@@ -41,6 +41,7 @@ const menuGroups = [
       { name: 'Master Jam Guru', icon: Clock, route: '/master-jam-guru' },
       { name: 'Pegawai Nonaktif', icon: UserMinus, route: '/data-pegawai-nonaktif' },
       { name: 'Data Periodik Siswa', icon: Activity, route: '/data-periodik' },
+      { name: 'VerVal Dapodik', icon: CheckSquare, route: '/verval-daposis' },
     ]
   },
   {
@@ -92,6 +93,8 @@ export default function MenuScreen() {
 
   const ROUTE_MAPPING: Record<string, string> = {
     '/data-lembaga': '/identitas',
+    '/verval-daposis': '/verval-daposis',
+    '/verval-dapodik': '/verval-daposis',
     '/data-periodik-siswa': '/data-periodik',
     '/siswa-nonaktif': '/data-siswa-nonaktif',
     '/pegawai-nonaktif': '/data-pegawai-nonaktif',
@@ -293,7 +296,7 @@ export default function MenuScreen() {
 
   const handleMenuPress = (menuName: string, route: string) => {
     const implementedRoutes = [
-      '/rapor', '/rekap', '/kartu-siswa', '/identitas', '/data-siswa',
+      '/rapor', '/rekap', '/kartu-siswa', '/identitas', '/data-siswa', '/verval-daposis',
       '/data-periodik', '/data-siswa-nonaktif', '/data-pegawai', '/data-pegawai-nonaktif',
       '/data-jabatan', '/data-ruang', '/data-kelas', '/mata-pelajaran', '/data-surat',
       '/(guru-tabs)/jadwal', '/(guru-tabs)/presensi', '/presensi-siswa',

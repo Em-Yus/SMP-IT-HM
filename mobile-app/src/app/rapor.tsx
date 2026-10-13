@@ -103,12 +103,16 @@ export default function RaporGuru() {
     }
     
     const { data: ekskulData } = await supabase.from('anggota_ekskul')
-      .select(`siswa_id, keterangan, data_ekskul ( nama_ekskul )`)
-      .in('siswa_id', targetSiswaIds).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+      .select(`siswa_id, predikat, deskripsi, data_ekskul!inner ( nama_ekskul, tahun_ajaran, semester )`)
+      .in('siswa_id', targetSiswaIds)
+      .eq('data_ekskul.tahun_ajaran', filterTahun)
+      .eq('data_ekskul.semester', filterSemester);
     
     const { data: kokuData } = await supabase.from('anggota_kokurikuler')
-      .select(`siswa_id, data_kokurikuler ( nama_kegiatan )`)
-      .in('siswa_id', targetSiswaIds).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+      .select(`siswa_id, predikat, deskripsi, data_kokurikuler!inner ( nama_projek, tahun_ajaran, semester )`)
+      .in('siswa_id', targetSiswaIds)
+      .eq('data_kokurikuler.tahun_ajaran', filterTahun)
+      .eq('data_kokurikuler.semester', filterSemester);
     
     const { data: presensiData } = await supabase.from('presensi_siswa')
       .select('siswa_id, status')
@@ -269,7 +273,7 @@ export default function RaporGuru() {
                       <tbody>
                           <tr>
                               <td class="border border-black px-4 py-4 min-h-[60px] align-top">
-                                  ${kokuSiswa.length > 0 ? `<ul class="list-disc pl-5">${kokuSiswa.map((k: any) => `<li class="mb-1">${k.data_kokurikuler?.nama_kegiatan}</li>`).join('')}</ul>` : '<span class="italic text-gray-500">Tidak ada catatan kegiatan kokurikuler.</span>'}
+                                  ${kokuSiswa.length > 0 ? `<ul class="list-disc pl-5">${kokuSiswa.map((k: any) => `<li class="mb-1">${k.data_kokurikuler?.nama_projek}</li>`).join('')}</ul>` : '<span class="italic text-gray-500">Tidak ada catatan kegiatan kokurikuler.</span>'}
                               </td>
                           </tr>
                       </tbody>
@@ -285,12 +289,17 @@ export default function RaporGuru() {
                           </tr>
                       </thead>
                       <tbody>
-                          ${ekskulSiswa.length > 0 ? ekskulSiswa.map((e: any, i: number) => `
+                          ${ekskulSiswa.length > 0 ? ekskulSiswa.map((e: any, i: number) => {
+                            let desc = e.deskripsi || '';
+                            let predikatText = e.predikat ? `[Predikat: ${e.predikat}] ` : '';
+                            let fullKet = `${predikatText}${desc}`.trim();
+                            return `
                           <tr>
                               <td class="border border-black px-2 py-1 text-center">${i + 1}</td>
                               <td class="border border-black px-2 py-1">${e.data_ekskul?.nama_ekskul}</td>
-                              <td class="border border-black px-2 py-1">${e.keterangan || 'Baik'}</td>
-                          </tr>`).join('') : '<tr><td class="border border-black px-2 py-1 text-center">1</td><td class="border border-black px-2 py-1">-</td><td class="border border-black px-2 py-1">-</td></tr>'}
+                              <td class="border border-black px-2 py-1">${fullKet || (e.predikat ? `Predikat ${e.predikat}` : 'Baik')}</td>
+                          </tr>`;
+                          }).join('') : '<tr><td class="border border-black px-2 py-1 text-center">1</td><td class="border border-black px-2 py-1">-</td><td class="border border-black px-2 py-1">-</td></tr>'}
                       </tbody>
                   </table>
 

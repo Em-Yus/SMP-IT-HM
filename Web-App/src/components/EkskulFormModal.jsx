@@ -3,7 +3,7 @@ import { supabase } from '../services/supabaseClient';
 import { X, Save, Tent } from 'lucide-react';
 import Swal from 'sweetalert2';
 
-export default function EkskulFormModal({ isOpen, onClose, onSuccess, initialData }) {
+export default function EkskulFormModal({ isOpen, onClose, onSuccess, initialData, defaultTA, defaultSemester }) {
   const [formData, setFormData] = useState({
     nama_ekskul: '',
     pembina_nama: '',
@@ -54,7 +54,6 @@ export default function EkskulFormModal({ isOpen, onClose, onSuccess, initialDat
     Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
 
     try {
-      // Dapatkan tahun ajaran dan semester aktif saat ini
       const currentYear = new Date().getFullYear();
       const currentMonth = new Date().getMonth() + 1;
       let ta = currentMonth >= 7 ? `${currentYear}/${currentYear + 1}` : `${currentYear - 1}/${currentYear}`;
@@ -65,8 +64,8 @@ export default function EkskulFormModal({ isOpen, onClose, onSuccess, initialDat
         pembina_nama: formData.pembina_nama,
         hari_pelaksanaan: formData.hari_pelaksanaan,
         jam_pelaksanaan: formData.jam_pelaksanaan,
-        tahun_ajaran: initialData ? initialData.tahun_ajaran : ta,
-        semester: initialData ? initialData.semester : sem
+        tahun_ajaran: initialData ? initialData.tahun_ajaran : (defaultTA || ta),
+        semester: initialData ? initialData.semester : (defaultSemester || sem)
       };
 
       if (initialData) {
@@ -87,14 +86,24 @@ export default function EkskulFormModal({ isOpen, onClose, onSuccess, initialDat
     }
   };
 
+  const activeTA = initialData ? initialData.tahun_ajaran : defaultTA;
+  const activeSem = initialData ? initialData.semester : defaultSemester;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden">
         <div className="flex items-center justify-between p-5 border-b border-gray-100 bg-gray-50">
-          <h2 className="text-xl font-bold text-[#2a2c87] flex items-center gap-2">
-            <Tent className="text-[#85c226]" size={24} />
-            {initialData ? 'Edit Ekstrakurikuler' : 'Tambah Ekstrakurikuler'}
-          </h2>
+          <div>
+            <h2 className="text-xl font-bold text-[#2a2c87] flex items-center gap-2">
+              <Tent className="text-[#85c226]" size={24} />
+              {initialData ? 'Edit Ekstrakurikuler' : 'Tambah Ekstrakurikuler'}
+            </h2>
+            {activeTA && (
+              <p className="text-xs text-gray-500 mt-0.5">
+                Periode: <span className="font-semibold text-gray-700">TA {activeTA} ({activeSem})</span>
+              </p>
+            )}
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition">
             <X size={24} />
           </button>

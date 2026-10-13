@@ -14,7 +14,8 @@ import {
   AppState,
   ToastAndroid,
   RefreshControl,
-  StatusBar
+  StatusBar,
+  Image
 } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -23,6 +24,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CryptoJS from 'crypto-js';
+import CbtMobileMathText from '../components/CbtMobileMathText';
 import {
   ChevronLeft,
   ChevronRight,
@@ -2052,8 +2054,22 @@ export default function CbtUjian() {
             <Text style={styles.bobotText}>Bobot: {currentSoal.bobot_nilai || 1} Poin</Text>
           </View>
 
-          {/* Question Text */}
-          <Text style={styles.pertanyaanText}>{currentSoal.pertanyaan}</Text>
+          {/* Question Text with Math rendering */}
+          <CbtMobileMathText
+            text={currentSoal.pertanyaan}
+            style={styles.pertanyaanText}
+          />
+
+          {/* Diagram / Gambar Soal Geometri, Grafik, dsb */}
+          {currentSoal.gambar_url ? (
+            <View style={{ marginVertical: 12, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc' }}>
+              <Image
+                source={{ uri: currentSoal.gambar_url }}
+                style={{ width: '100%', height: 200, backgroundColor: '#ffffff' }}
+                resizeMode="contain"
+              />
+            </View>
+          ) : null}
 
           {/* Jawaban Pilihan Ganda (PG) */}
           {currentSoal.jenis_soal === 'pg' && (() => {
@@ -2081,9 +2097,20 @@ export default function CbtUjian() {
                           {displayLabel}
                         </Text>
                       </View>
-                      <Text style={[styles.opsiContentText, isSelected && styles.opsiContentTextSelected]}>
-                        {op.text || `Pilihan ${displayLabel}`}
-                      </Text>
+                      <View style={{ flex: 1 }}>
+                        <CbtMobileMathText
+                          text={op.text || `Pilihan ${displayLabel}`}
+                          style={[styles.opsiContentText, isSelected && styles.opsiContentTextSelected]}
+                          inline
+                        />
+                        {(op as any).gambar_url ? (
+                          <Image
+                            source={{ uri: (op as any).gambar_url }}
+                            style={{ width: 130, height: 75, borderRadius: 8, marginTop: 6, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#ffffff' }}
+                            resizeMode="contain"
+                          />
+                        ) : null}
+                      </View>
                     </TouchableOpacity>
                   );
                 })}

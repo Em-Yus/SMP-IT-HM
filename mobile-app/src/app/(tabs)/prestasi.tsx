@@ -135,22 +135,46 @@ export default function PrestasiScreen() {
                 <Text style={styles.emptyText}>Anda belum terdaftar dalam kegiatan ekstrakurikuler manapun.</Text>
               </View>
             ) : (
-              ekskulData.map((item, idx) => (
-                <View key={`eks-${item.id || idx}`} style={styles.card}>
-                  <View style={[styles.cardIcon, { backgroundColor: '#daffcc' }]}>
-                    <Star size={24} color="#85c226" />
-                  </View>
-                  <View style={styles.cardContent}>
-                    <Text style={styles.cardTitle}>{item.data_ekskul?.nama_ekskul || 'Ekstrakurikuler'}</Text>
-                    <Text style={styles.cardDesc}>{item.deskripsi || 'Anggota Aktif'}</Text>
-                  </View>
-                  {item.predikat && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>{item.predikat}</Text>
+              ekskulData.map((item, idx) => {
+                let rawTingkat = item.tingkat;
+                let rawDesc = item.deskripsi || '';
+                if (!rawTingkat && rawDesc) {
+                  const match = rawDesc.match(/^\[Tingkat:\s*([^\]]+)\]\s*/i);
+                  if (match) {
+                    rawTingkat = match[1];
+                    rawDesc = rawDesc.replace(match[0], '');
+                  }
+                }
+                let parsedTingkat: string[] = [];
+                if (Array.isArray(rawTingkat)) parsedTingkat = rawTingkat;
+                else if (typeof rawTingkat === 'string' && rawTingkat) {
+                  parsedTingkat = rawTingkat.split(',').map((s: string) => s.trim()).filter(Boolean);
+                }
+
+                return (
+                  <View key={`eks-${item.id || idx}`} style={styles.card}>
+                    <View style={[styles.cardIcon, { backgroundColor: '#daffcc' }]}>
+                      <Star size={24} color="#85c226" />
                     </View>
-                  )}
-                </View>
-              ))
+                    <View style={styles.cardContent}>
+                      <Text style={styles.cardTitle}>{item.data_ekskul?.nama_ekskul || 'Ekstrakurikuler'}</Text>
+                      <Text style={styles.cardDesc}>{rawDesc || 'Anggota Aktif'}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end', gap: 4 }}>
+                      {parsedTingkat.map((lvl, lIdx) => (
+                        <View key={lIdx} style={[styles.badge, { backgroundColor: '#dcfce7' }]}>
+                          <Text style={[styles.badgeText, { color: '#166534' }]}>Tingkat {lvl}</Text>
+                        </View>
+                      ))}
+                      {item.predikat && (
+                        <View style={styles.badge}>
+                          <Text style={styles.badgeText}>{item.predikat}</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
             )}
 
           </Animatable.View>

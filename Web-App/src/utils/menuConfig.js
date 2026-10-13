@@ -13,6 +13,7 @@ export const menusConfig = [
     items: [
       { to: "/data-lembaga", icon: Building2, label: "Identitas Lembaga" },
       { to: "/data-siswa", icon: Users, label: "Data Siswa Aktif" },
+      { to: "/verval-daposis", icon: FileCheck, label: "VerVal Dapodik Siswa" },
       { to: "/data-periodik-siswa", icon: ClipboardList, label: "Data Periodik Siswa" },
       { to: "/siswa-nonaktif", icon: UserMinus, label: "Siswa Nonaktif" },
       { to: "/data-pegawai", icon: UserCog, label: "Data Pegawai" },

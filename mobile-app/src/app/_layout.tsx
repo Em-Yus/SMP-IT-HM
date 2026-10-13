@@ -334,6 +334,7 @@ export default function RootLayout() {
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="(guru-tabs)" />
+        <Stack.Screen name="verval-daposis" />
       </Stack>
       
       {/* Tombol Refresh Global */}

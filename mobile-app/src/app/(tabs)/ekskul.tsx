@@ -75,10 +75,26 @@ export default function EkskulScreen() {
           }))
           .sort((a: any, b: any) => (a.kelas || '').localeCompare(b.kelas || '') || (a.nama_siswa || '').localeCompare(b.nama_siswa || ''));
 
+        let rawTingkat = ekskulData.tingkat;
+        let rawDesc = ekskulData.deskripsi || '';
+        if (!rawTingkat && rawDesc) {
+          const match = rawDesc.match(/^\[Tingkat:\s*([^\]]+)\]\s*/i);
+          if (match) {
+            rawTingkat = match[1];
+            rawDesc = rawDesc.replace(match[0], '');
+          }
+        }
+        let parsedTingkat: string[] = [];
+        if (Array.isArray(rawTingkat)) parsedTingkat = rawTingkat;
+        else if (typeof rawTingkat === 'string' && rawTingkat) {
+          parsedTingkat = rawTingkat.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+
         return {
           ...ekskulMaster, // so it maps nama_ekskul, hari_pelaksanaan, dll
           predikat: ekskulData.predikat,
-          deskripsi: ekskulData.deskripsi,
+          deskripsi: rawDesc,
+          tingkat: parsedTingkat,
           anggota: anggota
         };
       });
@@ -169,6 +185,29 @@ export default function EkskulScreen() {
                       <Clock size={16} color="#6b7280" />
                       <Text style={styles.detailText}><Text style={styles.bold}>Jam:</Text> {ekskul.jam_pelaksanaan || '-'}</Text>
                     </View>
+
+                    {(ekskul.predikat || (ekskul.tingkat && ekskul.tingkat.length > 0) || ekskul.deskripsi) && (
+                      <View style={styles.capaianSection}>
+                        <View style={styles.capaianHeaderRow}>
+                          <Text style={styles.capaianTitle}>Capaian Saya:</Text>
+                          <View style={styles.badgeGroup}>
+                            {ekskul.tingkat?.map((lvl: string, lIdx: number) => (
+                              <View key={lIdx} style={styles.badgeTingkat}>
+                                <Text style={styles.badgeTingkatText}>Tingkat {lvl}</Text>
+                              </View>
+                            ))}
+                            {ekskul.predikat ? (
+                              <View style={styles.badgePredikat}>
+                                <Text style={styles.badgePredikatText}>{ekskul.predikat}</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                        </View>
+                        {ekskul.deskripsi ? (
+                          <Text style={styles.capaianDesc}>{ekskul.deskripsi}</Text>
+                        ) : null}
+                      </View>
+                    )}
 
                     <View style={styles.divider} />
                     
@@ -362,5 +401,59 @@ const styles = StyleSheet.create({
   anggotaClass: {
     fontSize: 12,
     color: '#6b7280',
+  },
+  capaianSection: {
+    backgroundColor: '#f0fdf4',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#dcfce7',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  capaianHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  capaianTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#166534',
+  },
+  badgeGroup: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  badgeTingkat: {
+    backgroundColor: '#059669',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgeTingkatText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  badgePredikat: {
+    backgroundColor: '#2a2c87',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  badgePredikatText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  capaianDesc: {
+    fontSize: 12,
+    color: '#374151',
+    marginTop: 6,
+    lineHeight: 18,
   },
 });

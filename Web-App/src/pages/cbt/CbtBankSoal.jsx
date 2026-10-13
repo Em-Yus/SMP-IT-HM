@@ -7,8 +7,11 @@ import {
   BookOpen, Plus, Trash2, Edit3, Upload, Download, CheckCircle2,
   HelpCircle, FileText, ChevronDown, Save, ArrowLeft, Search, Filter,
   Settings, X, Check, Eye, AlertCircle, Layers, CheckSquare, Radio,
-  Image as ImageIcon, Loader2, RefreshCw
+  Image as ImageIcon, Loader2, RefreshCw, Crop
 } from 'lucide-react';
+import CbtMathRenderer from '../../components/cbt/CbtMathRenderer';
+import CbtMathToolbar from '../../components/cbt/CbtMathToolbar';
+import CbtImageCropModal from '../../components/cbt/CbtImageCropModal';
 
 export default function CbtBankSoal() {
   const navigate = useNavigate();
@@ -37,8 +40,10 @@ export default function CbtBankSoal() {
   // Tab filter jenis soal
   const [activeTabFilter, setActiveTabFilter] = useState('all'); // 'all' | 'pg' | 'isian' | 'esai'
 
-  // Image Upload State
+  // Image Upload & Math State
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [activeMathTarget, setActiveMathTarget] = useState('pertanyaan');
+  const [cropModalData, setCropModalData] = useState({ isOpen: false, file: null, field: null });
 
   // Modal Pengaturan Soal
   const [isPengaturanSoalOpen, setIsPengaturanSoalOpen] = useState(false);
@@ -312,6 +317,68 @@ export default function CbtBankSoal() {
       setUploadingImage(false);
       // Reset input file value so re-selecting same file triggers onChange
       e.target.value = '';
+    }
+  };
+
+  const handleInsertMath = (latex, target) => {
+    const field = target || activeMathTarget || 'pertanyaan';
+    setSoalForm(prev => {
+      const curVal = prev[field] || '';
+      const separator = curVal.length > 0 && !curVal.endsWith(' ') && !curVal.endsWith('\n') ? ' ' : '';
+      return {
+        ...prev,
+        [field]: `${curVal}${separator}${latex}`,
+      };
+    });
+  };
+
+  const handleFileSelectForCrop = (e, field) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      Swal.fire('Format Salah', 'File harus berupa gambar (JPG, PNG, WebP).', 'warning');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      Swal.fire('File Terlalu Besar', 'Maksimal ukuran gambar adalah 5MB.', 'warning');
+      return;
+    }
+
+    setCropModalData({ isOpen: true, file, field });
+    e.target.value = '';
+  };
+
+  const handleCropCompleteAndUpload = async (croppedFile) => {
+    const field = cropModalData.field || 'gambar_url';
+    setCropModalData({ isOpen: false, file: null, field: null });
+    await uploadDirectFile(croppedFile, field);
+  };
+
+  const uploadDirectFile = async (file, field) => {
+    setUploadingImage(true);
+    try {
+      const fileExt = file.name.split('.').pop() || 'webp';
+      const fileName = `cbt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+      const filePath = `soal/${fileName}`;
+
+      const { error: uploadErr } = await supabase.storage
+        .from('cbt_assets')
+        .upload(filePath, file, { cacheControl: '3600', upsert: true });
+
+      if (uploadErr) throw uploadErr;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('cbt_assets')
+        .getPublicUrl(filePath);
+
+      const publicUrl = publicUrlData?.publicUrl;
+      setSoalForm(prev => ({ ...prev, [field]: publicUrl }));
+    } catch (err) {
+      console.error('Upload image error:', err);
+      Swal.fire('Gagal Upload', err.message || 'Gagal mengunggah gambar ke server.', 'error');
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -1256,9 +1323,9 @@ export default function CbtBankSoal() {
                 </div>
 
                 {/* Teks Pertanyaan */}
-                <p className="text-sm font-semibold text-gray-800 leading-relaxed whitespace-pre-wrap">
-                  {s.pertanyaan}
-                </p>
+                <div className="text-sm font-semibold text-gray-800 leading-relaxed">
+                  <CbtMathRenderer text={s.pertanyaan} />
+                </div>
 
                 {/* Gambar Soal (Jika Ada) */}
                 {s.gambar_url && (
@@ -1294,7 +1361,7 @@ export default function CbtBankSoal() {
                               >
                                 {op.id}
                               </span>
-                              <span>{op.text}</span>
+                              <span><CbtMathRenderer text={op.text} inline /></span>
                             </div>
                             {isCorrect && (
                               <span className="text-[10px] text-emerald-700 font-black bg-emerald-100 px-1.5 py-0.5 rounded">
@@ -1324,7 +1391,7 @@ export default function CbtBankSoal() {
                   <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl text-xs flex items-center gap-2">
                     <span className="font-bold text-amber-900">Kunci Jawaban Singkat:</span>
                     <span className="font-extrabold text-amber-950 bg-white px-2.5 py-1 rounded border border-amber-300">
-                      {s.kunci_jawaban}
+                      <CbtMathRenderer text={s.kunci_jawaban} inline />
                     </span>
                   </div>
                 )}
@@ -1336,7 +1403,7 @@ export default function CbtBankSoal() {
                       Rubrik / Konsep Kunci Penilaian AI:
                     </span>
                     <div className="text-purple-900 bg-white p-2.5 rounded-lg border border-purple-200 leading-relaxed">
-                      {s.rubrik_esai || '-'}
+                      <CbtMathRenderer text={s.rubrik_esai || '-'} />
                     </div>
                   </div>
                 )}
@@ -1503,6 +1570,13 @@ export default function CbtBankSoal() {
                 </div>
               </div>
 
+              {/* Bilah Alat Simbol Matematika SMP (KaTeX & LaTeX) */}
+              <CbtMathToolbar
+                onInsert={handleInsertMath}
+                activeTarget={activeMathTarget}
+                onChangeTarget={setActiveMathTarget}
+              />
+
               {/* Teks Pertanyaan */}
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">
@@ -1510,24 +1584,47 @@ export default function CbtBankSoal() {
                 </label>
                 <textarea
                   rows={4}
-                  placeholder="Ketik teks pertanyaan soal di sini..."
+                  placeholder="Ketik teks pertanyaan soal di sini... (Gunakan $...$ untuk rumus matematika)"
                   value={soalForm.pertanyaan}
+                  onFocus={() => setActiveMathTarget('pertanyaan')}
                   onChange={(e) => setSoalForm({ ...soalForm, pertanyaan: e.target.value })}
-                  className="w-full text-xs border rounded-xl p-3 outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full text-xs border rounded-xl p-3 outline-none focus:ring-2 focus:ring-primary font-sans"
                   required
                 />
+
+                {/* Live Preview Rumus Matematika Soal */}
+                <div className="mt-2 p-3 bg-gradient-to-r from-blue-50/70 to-indigo-50/70 rounded-xl border border-indigo-100 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-indigo-900">
+                    <span className="flex items-center gap-1.5">
+                      <Eye size={13} className="text-indigo-600" />
+                      <span>Live Preview Tampilan Soal Siswa:</span>
+                    </span>
+                    <span className="text-[10px] text-indigo-600 font-semibold bg-white px-2 py-0.5 rounded border border-indigo-200">
+                      KaTeX Real-Time
+                    </span>
+                  </div>
+                  <div className="bg-white p-3 rounded-lg border border-indigo-100 text-sm font-medium text-gray-800 min-h-[44px] leading-relaxed shadow-2xs overflow-x-auto">
+                    {soalForm.pertanyaan ? (
+                      <CbtMathRenderer text={soalForm.pertanyaan} />
+                    ) : (
+                      <span className="text-gray-400 italic text-xs">
+                        Tampilan visual soal beserta rumus matematika ($...$) akan langsung terlihat di sini saat Anda mengetik...
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              {/* FITUR GAMBAR SOAL (Untuk SEMUA JENIS SOAL) */}
+              {/* FITUR GAMBAR & DIAGRAM SOAL (Untuk SEMUA JENIS SOAL) */}
               <div className="p-3 bg-blue-50/50 rounded-xl border border-blue-100 space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-gray-700 flex items-center gap-1.5">
                     <ImageIcon size={14} className="text-primary" />
-                    <span>Gambar Soal (Opsional - Semua Jenis Soal)</span>
+                    <span>Gambar / Diagram Soal (Geometri, Diagram Venn, Grafik, Koordinat)</span>
                   </label>
                   {uploadingImage && (
                     <span className="text-[11px] text-primary flex items-center gap-1">
-                      <Loader2 size={12} className="animate-spin" /> Mengunggah...
+                      <Loader2 size={12} className="animate-spin" /> Mengunggah & Memproses...
                     </span>
                   )}
                 </div>
@@ -1537,7 +1634,7 @@ export default function CbtBankSoal() {
                     <img
                       src={soalForm.gambar_url}
                       alt="Preview Gambar Soal"
-                      className="h-24 w-32 object-contain rounded-lg border border-gray-100 bg-gray-50"
+                      className="h-28 w-40 object-contain rounded-lg border border-gray-100 bg-gray-50"
                     />
                     <div className="space-y-1.5">
                       <p className="text-[11px] text-gray-500 font-medium break-all line-clamp-2">
@@ -1554,24 +1651,24 @@ export default function CbtBankSoal() {
                   </div>
                 ) : (
                   <div>
-                    <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-primary bg-white hover:bg-blue-50 border border-blue-200 rounded-xl cursor-pointer transition shadow-xs">
-                      <Upload size={13} />
-                      <span>Unggah Gambar Soal</span>
+                    <label className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-primary bg-white hover:bg-blue-50 border border-blue-200 rounded-xl cursor-pointer transition shadow-xs">
+                      <Crop size={14} className="text-emerald-600" />
+                      <span>Unggah & Crop Diagram / Gambar Soal</span>
                       <input
                         type="file"
                         accept="image/*"
-                        onChange={(e) => handleFileUpload(e, 'gambar_url')}
+                        onChange={(e) => handleFileSelectForCrop(e, 'gambar_url')}
                         className="hidden"
                       />
                     </label>
                     <p className="text-[11px] text-gray-400 mt-1">
-                      Format JPG, PNG, atau WebP (Maksimal 3MB).
+                      Mendukung format JPG, PNG, atau WebP (Maksimal 5MB) dengan fitur crop & rotasi responsif.
                     </p>
                   </div>
                 )}
               </div>
 
-              {/* FITUR PILIHAN GANDA (Dengan Dukungan Gambar per Opsi) */}
+              {/* FITUR PILIHAN GANDA (Dengan Dukungan Gambar & Rumus per Opsi) */}
               {soalForm.jenis_soal === 'pg' && (
                 <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <div className="flex items-center justify-between">
@@ -1586,6 +1683,7 @@ export default function CbtBankSoal() {
                   {['A', 'B', 'C', 'D'].map((opsiKey) => {
                     const imgField = `opsi_${opsiKey.toLowerCase()}_gambar`;
                     const currentImg = soalForm[imgField];
+                    const currentText = soalForm[`opsi_${opsiKey.toLowerCase()}`];
 
                     return (
                       <div key={opsiKey} className="bg-white p-3 rounded-xl border border-gray-200 space-y-2">
@@ -1606,8 +1704,9 @@ export default function CbtBankSoal() {
                           {/* Input Text Pilihan */}
                           <input
                             type="text"
-                            placeholder={`Teks pilihan jawaban ${opsiKey}`}
-                            value={soalForm[`opsi_${opsiKey.toLowerCase()}`]}
+                            placeholder={`Teks pilihan jawaban ${opsiKey} (cth: $x = 5$ atau $\\frac{1}{2}$)`}
+                            value={currentText}
+                            onFocus={() => setActiveMathTarget(`opsi_${opsiKey.toLowerCase()}`)}
                             onChange={(e) =>
                               setSoalForm({ ...soalForm, [`opsi_${opsiKey.toLowerCase()}`]: e.target.value })
                             }
@@ -1621,17 +1720,27 @@ export default function CbtBankSoal() {
                                 ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
                                 : 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600'
                             }`}
-                            title={`Unggah Gambar Opsi ${opsiKey}`}
+                            title={`Unggah & Crop Gambar Opsi ${opsiKey}`}
                           >
-                            <ImageIcon size={15} />
+                            <Crop size={15} />
                             <input
                               type="file"
                               accept="image/*"
-                              onChange={(e) => handleFileUpload(e, imgField)}
+                              onChange={(e) => handleFileSelectForCrop(e, imgField)}
                               className="hidden"
                             />
                           </label>
                         </div>
+
+                        {/* Live Preview Rumus Opsi jika ada teks */}
+                        {currentText && (
+                          <div className="mt-1 pl-11 text-xs text-indigo-800 bg-indigo-50/80 py-1 px-3 rounded-lg border border-indigo-200/80 inline-flex items-center gap-2 font-medium">
+                            <span className="text-[10px] text-indigo-600 font-bold bg-white px-1.5 py-0.5 rounded border border-indigo-200">
+                              Preview {opsiKey}:
+                            </span>
+                            <CbtMathRenderer text={currentText} inline />
+                          </div>
+                        )}
 
                         {/* Preview Gambar Opsi Jika Ada */}
                         {currentImg && (
@@ -1639,7 +1748,7 @@ export default function CbtBankSoal() {
                             <img
                               src={currentImg}
                               alt={`Preview Opsi ${opsiKey}`}
-                              className="h-14 w-20 object-contain rounded-lg border border-gray-200 bg-gray-50 p-0.5"
+                              className="h-16 w-24 object-contain rounded-lg border border-gray-200 bg-gray-50 p-0.5"
                             />
                             <button
                               type="button"
@@ -1664,12 +1773,19 @@ export default function CbtBankSoal() {
                   </label>
                   <input
                     type="text"
-                    placeholder="Contoh: Fotosintesis / H2O / Jakarta"
+                    placeholder="Contoh: 25 cm atau $x = 4$"
                     value={soalForm.kunci_jawaban}
+                    onFocus={() => setActiveMathTarget('kunci_jawaban')}
                     onChange={(e) => setSoalForm({ ...soalForm, kunci_jawaban: e.target.value })}
                     className="w-full text-xs border border-amber-300 rounded-xl p-2.5 bg-white outline-none focus:ring-2 focus:ring-amber-500 font-bold"
                     required
                   />
+                  {soalForm.kunci_jawaban && (
+                    <div className="mt-1 text-xs text-amber-900 bg-amber-100/70 py-1 px-3 rounded-lg border border-amber-300 inline-flex items-center gap-2 font-bold">
+                      <span className="text-[10px] text-amber-600">Preview:</span>
+                      <CbtMathRenderer text={soalForm.kunci_jawaban} inline />
+                    </div>
+                  )}
                   <p className="text-[11px] text-amber-700">
                     Sistem akan memvalidasi ketepatan kata kunci peserta dengan kunci jawaban ini (case-insensitive).
                   </p>
@@ -1684,12 +1800,19 @@ export default function CbtBankSoal() {
                   </label>
                   <textarea
                     rows={4}
-                    placeholder="Sebutkan kata kunci, konsep materi utama, dan indikator penilaian esai untuk model AI..."
+                    placeholder="Sebutkan kata kunci, konsep materi utama, rumus pembuktian, dan indikator penilaian esai untuk model AI..."
                     value={soalForm.rubrik_esai}
+                    onFocus={() => setActiveMathTarget('rubrik_esai')}
                     onChange={(e) => setSoalForm({ ...soalForm, rubrik_esai: e.target.value })}
                     className="w-full text-xs border border-purple-300 rounded-xl p-3 bg-white outline-none focus:ring-2 focus:ring-purple-500"
                     required
                   />
+                  {soalForm.rubrik_esai && (
+                    <div className="p-2.5 bg-white rounded-lg border border-purple-200 text-xs text-purple-900">
+                      <span className="text-[10px] font-bold text-purple-600 block mb-1">Preview Rubrik:</span>
+                      <CbtMathRenderer text={soalForm.rubrik_esai} />
+                    </div>
+                  )}
                   <p className="text-[11px] text-purple-700">
                     Model AI akan mencocokkan semantik jawaban esai siswa dengan rubrik ini secara komprehensif.
                   </p>
@@ -1717,6 +1840,14 @@ export default function CbtBankSoal() {
           </div>
         </div>
       )}
+
+      {/* Modal Crop & Penyesuaian Diagram Geometri / Gambar Soal */}
+      <CbtImageCropModal
+        isOpen={cropModalData.isOpen}
+        imageFile={cropModalData.file}
+        onCropComplete={handleCropCompleteAndUpload}
+        onCancel={() => setCropModalData({ isOpen: false, file: null, field: null })}
+      />
 
       {/* ========================================================
           MODAL 3: BUAT / EDIT PAKET BANK SOAL

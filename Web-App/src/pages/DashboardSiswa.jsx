@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { User, BookOpen, Clock, CalendarDays, Award, Megaphone, Wallet, ChevronRight, Laptop } from 'lucide-react';
+import { Clock, CalendarDays, Award, Megaphone, Wallet, ChevronRight, Laptop } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { getOperationalDayName } from '../utils/dateUtils';
 import { isPengumumanVisibleForSiswa } from '../utils/pengumumanHelper';
@@ -91,17 +91,27 @@ export default function DashboardSiswa() {
       let kelasId = null;
 
       if (user.kelas) {
-        // Fetch kelas_id dan tingkat
+        // Fetch kelas_id dan tingkat dengan ilike (case-insensitive)
         const { data: dataKelasRes } = await supabase
           .from('data_kelas')
           .select('id, tingkat')
-          .eq('nama_kelas', user.kelas)
+          .ilike('nama_kelas', user.kelas)
           .maybeSingle();
 
         if (dataKelasRes) {
           kelasId = dataKelasRes.id;
           if (dataKelasRes.tingkat) tingkatSiswa = dataKelasRes.tingkat;
+        }
 
+        // Fallback jika tingkat belum didapat dari data_kelas: ekstrak angka dari nama kelas (misal "9a" -> 9)
+        if (!dataKelasRes?.tingkat) {
+          const match = String(user.kelas).match(/\d+/);
+          if (match) {
+            tingkatSiswa = parseInt(match[0], 10);
+          }
+        }
+
+        if (kelasId) {
           const { data: jadwal } = await supabase
             .from('jadwal_pelajaran')
             .select('jam_ke, waktu, is_istirahat, data_mapel(nama_mapel), data_guru(nama), master_jam(urutan, waktu_mulai, waktu_selesai)')
@@ -124,22 +134,23 @@ export default function DashboardSiswa() {
         }
       }
 
-      // 2. Kalkulasi Tagihan Aktif
+      // 2. Kalkulasi Tagihan Aktif (Selaras Mobile App)
       let totalTagihan = 0;
       try {
-        // Pakai tahun_ajaran dari data_siswa untuk SEMUA query
-        const tahunPelajaran = user.tahun_ajaran;
+        const semester = 'Tahunan';
+        const now = new Date();
+        const currentSchoolYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
+        const defaultTahun = `${currentSchoolYear}/${currentSchoolYear + 1}`;
+        const tahunPelajaran = user.tahun_ajaran || defaultTahun;
 
         // Tentukan Tipe Siswa berdasarkan status_siswa di data_siswa
         let tipeSiswa = 'Siswa Baru';
         if (user.status_siswa) {
-          const statusLower = user.status_siswa.toLowerCase();
+          const statusLower = String(user.status_siswa).toLowerCase();
           if (statusLower === 'baru') {
             tipeSiswa = 'Siswa Baru';
           } else if (statusLower === 'pindahan') {
             // Hitung tingkat saat siswa MASUK berdasarkan selisih tahun
-            const now = new Date();
-            const currentSchoolYear = now.getMonth() >= 6 ? now.getFullYear() : now.getFullYear() - 1;
             const entryYear = parseInt((tahunPelajaran || '').split('/')[0]) || currentSchoolYear;
             const yearsPassed = Math.max(0, currentSchoolYear - entryYear);
             const entryTingkat = Math.max(7, tingkatSiswa - yearsPassed);
@@ -149,72 +160,69 @@ export default function DashboardSiswa() {
           }
         }
 
-        console.log('[DEBUG TAGIHAN]', {
-          nipd: user.nipd,
-          nama: user.nama,
-          tahun_ajaran: tahunPelajaran,
-          kelas: user.kelas,
-          tingkatSiswa,
-          tipeSiswa
-        });
-        if (!tahunPelajaran) throw new Error('Tahun ajaran tidak ditemukan');
-
+        // A. Total Biaya
         const { data: bpm } = await supabase
           .from('biaya_pengembangan_mutu')
-          .select('data_anggaran, tahun_pelajaran')
-          .eq('semester', 'Tahunan')
+          .select('data_anggaran')
+          .eq('semester', semester)
           .eq('tipe_siswa', tipeSiswa)
           .eq('tahun_pelajaran', tahunPelajaran)
           .maybeSingle();
 
-        console.log('[DEBUG BPM]', { bpm });
-          
         let totalBiaya = 0;
         if (bpm && bpm.data_anggaran) {
           bpm.data_anggaran.forEach(item => {
             const cost = item[`tingkat${tingkatSiswa}`] || item[`kelas${tingkatSiswa}`] || 0;
-            console.log('[DEBUG ITEM]', item.uraian, `tingkat${tingkatSiswa}=`, cost);
             totalBiaya += Number(cost);
           });
         }
 
+        // B. Total Pemasukan
         const { data: pemasukan } = await supabase
           .from('tb_pemasukan_siswa')
           .select('nominal')
           .eq('siswa_id', user.id)
           .eq('tahun_pelajaran', tahunPelajaran)
-          .eq('semester', 'Tahunan');
+          .eq('semester', semester);
 
-        console.log('[DEBUG PEMASUKAN]', pemasukan);
-          
         const totalPemasukan = (pemasukan || []).reduce((sum, item) => sum + Number(item.nominal || 0), 0);
 
+        // C. Saldo & Subsidi
         const { data: saldo } = await supabase
           .from('tb_saldo_siswa')
           .select('saldo_sebelumnya, subsidi_pip')
           .eq('siswa_id', user.id)
           .eq('tahun_pelajaran', tahunPelajaran)
-          .eq('semester', 'Tahunan')
+          .eq('semester', semester)
           .maybeSingle();
 
-        const totalSudahBayar = totalPemasukan + Number(saldo?.saldo_sebelumnya || 0) + Number(saldo?.subsidi_pip || 0);
-        totalTagihan = totalBiaya > totalSudahBayar ? totalBiaya - totalSudahBayar : 0;
-        console.log('[DEBUG FINAL]', { totalBiaya, totalPemasukan, totalSudahBayar, totalTagihan });
+        const saldoSblm = Number(saldo?.saldo_sebelumnya || 0);
+        const subsidi = Number(saldo?.subsidi_pip || 0);
+
+        // Rumus tagihan selaras Mobile App: totalBiaya + saldoSebelumnya - subsidi - totalPemasukan
+        totalTagihan = totalBiaya + saldoSblm - subsidi - totalPemasukan;
+        if (totalTagihan < 0) totalTagihan = 0;
       } catch (errTagihan) {
         console.error('Error calculating tagihan:', errTagihan);
       }
 
 
       // 4. Fetch Rata-rata Nilai
-      const { data: nilaiSiswa } = await supabase
-        .from('nilai_siswa')
-        .select('nilai_siswa')
-        .eq('nipd', user.nipd);
-      
+      const targetNilaiNipd = user.nipd || user.nisn || user.nis;
       let avgNilai = 0;
-      if (nilaiSiswa && nilaiSiswa.length > 0) {
-        const total = nilaiSiswa.reduce((sum, item) => sum + (Number(item.nilai_siswa) || 0), 0);
-        avgNilai = (total / nilaiSiswa.length).toFixed(1);
+      if (targetNilaiNipd) {
+        let nilaiQuery = supabase.from('nilai_siswa').select('nilai_siswa');
+        if (user.nipd && user.nisn && user.nipd !== user.nisn) {
+          nilaiQuery = nilaiQuery.or(`nipd.eq.${user.nipd},nipd.eq.${user.nisn}`);
+        } else {
+          nilaiQuery = nilaiQuery.eq('nipd', targetNilaiNipd);
+        }
+        const { data: nilaiSiswa } = await nilaiQuery;
+        
+        if (nilaiSiswa && nilaiSiswa.length > 0) {
+          const total = nilaiSiswa.reduce((sum, item) => sum + (Number(item.nilai_siswa) || 0), 0);
+          avgNilai = (total / nilaiSiswa.length).toFixed(1);
+        }
       }
 
       setMetrics({
@@ -249,6 +257,14 @@ export default function DashboardSiswa() {
     };
     fetchPengumuman();
   }, [userData]);
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Selamat Pagi';
+    if (hour < 15) return 'Selamat Siang';
+    if (hour < 18) return 'Selamat Sore';
+    return 'Selamat Malam';
+  };
 
   const formatDate = (dateString) => {
     const date = new Date(dateString);
@@ -373,41 +389,61 @@ export default function DashboardSiswa() {
 
   return (
     <div>
-      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-[#1A1818]">Halo, {userData?.nama || 'Siswa'}! 👋</h2>
-          <p className="text-[#6C757D] text-sm mt-1">Selamat datang di Portal Siswa SIAKAD.</p>
+      {/* Header Utama Beranda Siswa (Diselaraskan dengan Mobile App) */}
+      <div className="mb-6 bg-gradient-to-r from-[#1E257F] to-[#2a349c] rounded-2xl sm:rounded-3xl p-6 sm:p-7 text-white shadow-lg relative overflow-hidden">
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <span className="text-[#D0D6F9] text-sm font-medium">{getGreeting()},</span>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mt-0.5 tracking-tight">
+              {userData?.nama || 'Siswa'}
+            </h2>
+            <p className="text-white/80 text-xs sm:text-sm mt-1">Selamat datang di Portal Siswa SIAKAD.</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#84D43F]/20 text-[#84D43F] border border-[#84D43F]/40 shadow-sm backdrop-blur-sm">
+              {userData?.kelas ? `Kelas ${userData.kelas}` : 'Siswa Aktif'}
+            </span>
+            {(userData?.nisn || userData?.nipd) && (
+              <span className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-white/15 text-[#E2E8F0] border border-white/20 shadow-sm backdrop-blur-sm">
+                NISN: {userData?.nisn || userData?.nipd}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Banner Notifikasi Ujian Aktif: HANYA MUNCUL pada hari dan jam jadwal ujian aktif */}
+      {/* Banner Notifikasi Ujian Aktif: HANYA MUNCUL pada hari dan jam jadwal ujian aktif (Selaras Mobile App) */}
       {activeExam && (
-        <div className="mb-8 p-5 bg-gradient-to-r from-[#E63946] via-[#B91C1C] to-[#1E257F] text-white rounded-3xl shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in zoom-in-95">
+        <div className="mb-6 p-5 bg-[#FEF2F2] border-2 border-[#FCA5A5] rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in zoom-in-95">
           <div className="flex items-center gap-4">
-            <div className="p-3.5 bg-white/20 rounded-2xl backdrop-blur-md animate-pulse shrink-0">
-              <BookOpen size={28} className="text-white" />
+            <div className="w-12 h-12 rounded-2xl bg-red-100 border border-red-200 flex items-center justify-center shrink-0">
+              <Laptop size={24} className="text-[#DC2626]" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 bg-white text-[#E63946] text-[10px] font-black uppercase rounded-full tracking-wider">
-                  UJIAN CBT AKTIF HARI INI
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-600"></span>
                 </span>
-                <span className="text-xs text-white/90 font-mono">
-                  {activeExam.jam_mulai?.slice(0, 5)} - {activeExam.jam_selesai?.slice(0, 5)} WIB
+                <span className="text-xs font-bold text-[#DC2626] uppercase tracking-wider">
+                  Ujian CBT Sedang Berlangsung
                 </span>
               </div>
-              <h3 className="text-lg font-black mt-1 leading-tight">{activeExam.nama_ujian}</h3>
-              <p className="text-xs text-white/80 mt-0.5">
-                Mapel: {activeExam.data_mapel?.nama_mapel} • Ruang: {activeExam.data_ruang?.nama_ruang || 'Lab CBT'}
+              <h3 className="text-lg font-bold text-[#991B1B] mt-1 leading-tight">
+                {activeExam.data_mapel?.nama_mapel || activeExam.nama_ujian}
+              </h3>
+              <p className="text-xs text-[#B91C1C] mt-0.5">
+                Pukul {activeExam.jam_mulai?.slice(0, 5)} - {activeExam.jam_selesai?.slice(0, 5)} WIB • Ruang: {activeExam.data_ruang?.nama_ruang || 'Lab CBT'}
               </p>
             </div>
           </div>
 
           <Link
             to={`/cbt/ujian/${activeExam.id}`}
-            className="px-6 py-3 bg-white text-[#E63946] hover:bg-[#F8F9FA] font-black text-xs rounded-2xl shadow-lg transition transform hover:-translate-y-0.5 shrink-0 flex items-center gap-2"
+            className="px-5 py-2.5 bg-[#DC2626] hover:bg-[#B91C1C] text-white font-bold text-xs rounded-xl shadow transition shrink-0 flex items-center gap-2 self-end sm:self-auto"
           >
-            <span>Masuk Ruang Ujian (Scan Kartu)</span>
+            <span>Masuk Ruang Ujian</span>
             <ChevronRight size={16} />
           </Link>
         </div>

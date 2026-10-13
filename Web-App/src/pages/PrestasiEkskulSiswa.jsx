@@ -216,12 +216,42 @@ export default function PrestasiEkskulSiswa() {
                    </div>
                  ) : (
                    <div className="space-y-3">
-                     {ekskulList.map((eks, idx) => (
+                     {ekskulList.map((eks, idx) => {
+                       let rawTingkat = eks.tingkat || '';
+                       let rawDesc = eks.deskripsi || eks.keterangan || '';
+                       if (!rawTingkat && rawDesc) {
+                         const match = rawDesc.match(/^\[Tingkat:\s*([^\]]+)\]\s*/i);
+                         if (match) {
+                           rawTingkat = match[1];
+                           rawDesc = rawDesc.replace(match[0], '');
+                         }
+                       }
+                       const tingkatList = Array.isArray(rawTingkat) 
+                         ? rawTingkat 
+                         : (typeof rawTingkat === 'string' && rawTingkat ? rawTingkat.split(',').map(t => t.trim()).filter(Boolean) : []);
+
+                       return (
                        <div key={idx} className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                         <div className="font-bold text-gray-800 text-base">{eks.data_ekskul?.nama_ekskul}</div>
+                         <div className="flex justify-between items-start flex-wrap gap-2">
+                           <div className="font-bold text-gray-800 text-base">{eks.data_ekskul?.nama_ekskul}</div>
+                           <div className="flex items-center gap-1.5 flex-wrap">
+                             {tingkatList.map((lvl, lIdx) => (
+                               <span key={lIdx} className="bg-emerald-100 text-emerald-800 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                                 Tingkat {lvl}
+                               </span>
+                             ))}
+                             {eks.predikat && (
+                               <span className="bg-blue-100 text-blue-800 text-xs px-2.5 py-0.5 rounded-full font-bold">
+                                 Predikat: {eks.predikat}
+                               </span>
+                             )}
+                           </div>
+                         </div>
                          <div className="text-sm text-gray-600 mt-1"><span className="font-semibold">Pembina:</span> {eks.data_ekskul?.pembina_nama || eks.data_ekskul?.pembina || '-'}</div>
                          <div className="text-sm text-gray-600 mt-1"><span className="font-semibold">Jadwal:</span> {eks.data_ekskul?.hari_pelaksanaan || '-'} ({eks.data_ekskul?.jam_pelaksanaan || '-'})</div>
-                         <div className="text-sm text-gray-600 mt-1"><span className="font-semibold">Nilai/Keterangan:</span> {eks.predikat ? `${eks.predikat} - ` : ''}{eks.deskripsi || eks.keterangan || '-'}</div>
+                         {rawDesc ? (
+                           <div className="text-sm text-gray-600 mt-1"><span className="font-semibold">Capaian:</span> {rawDesc}</div>
+                         ) : null}
                          
                          {eks.anggota && eks.anggota.length > 0 && (
                            <div className="mt-3 pt-3 border-t border-gray-200">
@@ -243,7 +273,8 @@ export default function PrestasiEkskulSiswa() {
                            </div>
                          )}
                        </div>
-                     ))}
+                      );
+                    })}
                    </div>
                  )}
               </div>

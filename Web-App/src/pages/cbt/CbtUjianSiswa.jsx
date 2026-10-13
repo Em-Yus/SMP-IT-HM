@@ -13,6 +13,7 @@ import {
 import { evaluateShortAnswer, evaluateEssayWithAI } from '../../services/cbt/aiGradingService';
 import { calculateCbtFinalScore } from '../../services/cbt/scoringService';
 import { useEdgeFaceLandmarker } from '../../hooks/cbt/useEdgeFaceLandmarker';
+import CbtMathRenderer from '../../components/cbt/CbtMathRenderer';
 
 const SECRET_KEY = import.meta.env.VITE_KARTU_SISWA_SECRET || "KARTU_SISWA_SECRET";
 
@@ -1989,14 +1990,18 @@ export default function CbtUjianSiswa() {
           </div>
 
           {/* Teks Pertanyaan */}
-          <div className="text-base sm:text-lg font-medium text-gray-800 leading-relaxed space-y-3">
-            <p>{currentSoal.pertanyaan}</p>
+          <div className="text-base sm:text-lg font-medium text-gray-800 leading-relaxed space-y-4">
+            <div className="overflow-x-auto text-gray-900 leading-relaxed font-sans">
+              <CbtMathRenderer text={currentSoal.pertanyaan} />
+            </div>
             {currentSoal.gambar_url && (
-              <img
-                src={currentSoal.gambar_url}
-                alt="Gambar Soal"
-                className="max-h-64 rounded-2xl border object-contain"
-              />
+              <div className="my-2 p-2 bg-slate-50/80 rounded-2xl border border-slate-200 inline-block max-w-full shadow-xs">
+                <img
+                  src={currentSoal.gambar_url}
+                  alt="Diagram Soal"
+                  className="max-h-72 w-auto max-w-full rounded-xl border border-gray-100 object-contain bg-white"
+                />
+              </div>
             )}
           </div>
 
@@ -2026,13 +2031,19 @@ export default function CbtUjianSiswa() {
                         {displayLabel}
                       </span>
                       <div className="flex-1 space-y-2">
-                        {op.text ? <span className="text-sm sm:text-base block">{op.text}</span> : null}
+                        {op.text ? (
+                          <div className="text-sm sm:text-base leading-relaxed overflow-x-auto">
+                            <CbtMathRenderer text={op.text} inline />
+                          </div>
+                        ) : null}
                         {op.gambar_url && (
-                          <img
-                            src={op.gambar_url}
-                            alt={`Opsi ${displayLabel}`}
-                            className="max-h-40 rounded-xl border object-contain bg-white"
-                          />
+                          <div className="mt-1 p-1 bg-white rounded-xl border border-gray-200 inline-block shadow-2xs">
+                            <img
+                              src={op.gambar_url}
+                              alt={`Opsi ${displayLabel}`}
+                              className="max-h-40 rounded-lg object-contain bg-white"
+                            />
+                          </div>
                         )}
                       </div>
                       {isSelected && <CheckCircle2 size={18} className="text-primary" />}

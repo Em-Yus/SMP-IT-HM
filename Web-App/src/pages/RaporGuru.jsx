@@ -93,7 +93,7 @@ export default function RaporGuru() {
       let count = 0;
       let tps = [];
 
-      ['Tugas', 'PTS', 'PAS'].forEach(jenis => {
+      ['Tugas 1', 'Tugas 2', 'Tugas 3', 'Tugas 4', 'Tugas', 'PTS', 'PAS'].forEach(jenis => {
         const n = nilaiMapel.find(x => x.jenis_nilai === jenis);
         if (n && n.nilai_siswa !== null) {
           total += Number(n.nilai_siswa);
@@ -123,14 +123,19 @@ export default function RaporGuru() {
     const mapelPilihan = mapelWithNilai.filter(m => m.kelompok?.toLowerCase().includes('pilihan') || m.kelompok === 'C');
 
     const ekskulSiswa = ekskulData?.filter(e => e.siswa_id === siswa.id) || [];
-    const formatEkskul = ekskulSiswa.map(e => ({
-      nama_ekskul: e.data_ekskul?.nama_ekskul,
-      keterangan: e.keterangan
-    }));
+    const formatEkskul = ekskulSiswa.map(e => {
+      let desc = e.deskripsi || '';
+      let predikatText = e.predikat ? `[Predikat: ${e.predikat}] ` : '';
+      let fullKet = `${predikatText}${desc}`.trim();
+      return {
+        nama_ekskul: e.data_ekskul?.nama_ekskul || 'Ekstrakurikuler',
+        keterangan: fullKet || (e.predikat ? `Predikat ${e.predikat}` : 'Aktif mengikuti kegiatan ekstrakurikuler.')
+      };
+    });
 
     const kokuSiswa = kokuData?.filter(k => k.siswa_id === siswa.id) || [];
     const formatKoku = kokuSiswa.map(k => ({
-      nama_kegiatan: k.data_kokurikuler?.nama_kegiatan
+      nama_kegiatan: k.data_kokurikuler?.nama_projek || 'Kokurikuler'
     }));
 
     const presensiSiswa = presensiData?.filter(p => p.siswa_id === siswa.id) || [];
@@ -180,11 +185,15 @@ export default function RaporGuru() {
     }
     // 5. Fetch Ekskul & Kokurikuler
     const { data: ekskulData } = await supabase.from('anggota_ekskul')
-      .select(`siswa_id, keterangan, data_ekskul ( nama_ekskul )`)
-      .in('siswa_id', targetSiswaIds).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+      .select(`siswa_id, predikat, deskripsi, data_ekskul!inner ( nama_ekskul, tahun_ajaran, semester )`)
+      .in('siswa_id', targetSiswaIds)
+      .eq('data_ekskul.tahun_ajaran', filterTahun)
+      .eq('data_ekskul.semester', filterSemester);
     const { data: kokuData } = await supabase.from('anggota_kokurikuler')
-      .select(`siswa_id, data_kokurikuler ( nama_kegiatan )`)
-      .in('siswa_id', targetSiswaIds).eq('tahun_ajaran', filterTahun).eq('semester', filterSemester);
+      .select(`siswa_id, predikat, deskripsi, data_kokurikuler!inner ( nama_projek, tahun_ajaran, semester )`)
+      .in('siswa_id', targetSiswaIds)
+      .eq('data_kokurikuler.tahun_ajaran', filterTahun)
+      .eq('data_kokurikuler.semester', filterSemester);
     // 6. Fetch Presensi
     const { data: presensiData } = await supabase.from('presensi_siswa')
       .select('siswa_id, status')
